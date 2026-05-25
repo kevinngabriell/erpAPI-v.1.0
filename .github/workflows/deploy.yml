@@ -19,7 +19,7 @@ jobs:
 
       - name: Install PHP extensions
         run: |
-          sudo apt-get install -y php8.3-xml php8.3-zip
+          sudo apt-get install -y php8.3-xml php8.3-zip php8.3-gd php8.3-mbstring php8.3-intl php8.3-bcmath
 
       - name: Install dependencies
         run: |
