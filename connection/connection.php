@@ -1,0 +1,67 @@
+<?php
+class DB {
+  private static ?mysqli $conn = null;
+
+  public static function conn(?string $dbName = null): mysqli {
+    if (self::$conn instanceof mysqli) {
+      if ($dbName) {
+        self::$conn->select_db($dbName);
+      }
+      return self::$conn;
+    }
+
+    $host = '127.0.0.1';
+    //$host = '100.98.160.119';
+    $port = 3306;
+    $user = 'movira_dev';
+    $pass = 'devjayaA9&';
+
+    $defaultDb = $dbName ?: 'migration_temp_venken';
+    $conn = new mysqli($host, $user, $pass, $defaultDb, $port);
+
+    if ($conn->connect_error) {
+      http_response_code(500);
+      header('Content-Type: application/json');
+      echo json_encode(['status_code' => 500, 'message' => 'Database connection failed']);
+      exit;
+    }
+
+    $conn->set_charset('utf8mb4');
+    $conn->query("SET time_zone = '+07:00'");
+
+    self::$conn = $conn;
+    return self::$conn;
+  }
+
+  public static function query(string $sql, array $params = []): mysqli_result|bool {
+    $conn = self::conn();
+
+    if (empty($params)) {
+      $result = $conn->query($sql);
+      if ($result === false) {
+        throw new Exception("Query error: {$conn->error}");
+      }
+      return $result;
+    }
+
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+      throw new Exception("Prepare failed: {$conn->error}");
+    }
+
+    $types = '';
+    foreach ($params as $p) {
+      $types .= is_int($p) ? 'i' : (is_float($p) ? 'd' : 's');
+    }
+
+    $stmt->bind_param($types, ...$params);
+    if (!$stmt->execute()) {
+      throw new Exception("Execute failed: {$stmt->error}");
+    }
+
+    $res = $stmt->get_result();
+    return $res ?: true;
+  }
+}
+
+$connect = DB::conn();

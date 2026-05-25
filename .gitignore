@@ -1,0 +1,16 @@
+# macOS
+.DS_Store
+__MACOSX/
+
+# Editor
+.history/
+
+# Archives
+*.zip
+
+# Composer dependencies (run composer install on server)
+vendor/
+
+# PHP runtime logs
+error_log
+*.log
