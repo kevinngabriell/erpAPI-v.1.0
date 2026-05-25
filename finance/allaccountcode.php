@@ -2,7 +2,7 @@
 // Header access is required
 header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
-header("Access-Control-Allow-Headers: Content-Type");
+header("Access-Control-Allow-Headers: Content-Type, Authorization");
 
 // Display error message
 ini_set('display_errors', '1');
@@ -11,6 +11,14 @@ error_reporting(E_ALL);
 
 // Connection access
 require_once('../connection/connection.php');
+require_once '../auth/middleware.php';
+
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(200);
+    exit;
+}
+
+$authUser = verifyToken();
 
 // Checking call API method
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {

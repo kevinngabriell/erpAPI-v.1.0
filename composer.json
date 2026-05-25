@@ -1,6 +1,7 @@
 {
     "require": {
         "tecnickcom/tcpdf": "^6.4",
-        "phpoffice/phpspreadsheet": "^3.4"
+        "phpoffice/phpspreadsheet": "^3.4",
+        "firebase/php-jwt": "^7.0"
     }
 }
