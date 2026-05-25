@@ -10,6 +10,7 @@ jobs:
     steps:
       - name: Pull latest code
         run: |
+          sudo chown -R $USER:$USER /home/ubuntu/apps/erpAPI-v.1.0
           git config --global --add safe.directory /home/ubuntu/apps/erpAPI-v.1.0
           cd /home/ubuntu/apps/erpAPI-v.1.0
           git pull origin main
