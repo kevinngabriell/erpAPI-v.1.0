@@ -28,7 +28,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                    ELSE 0
                END AS amount
         FROM financeTransaction A1
-        WHERE $ba_ft AND DATE(A1.date) < '$start_date'
+        WHERE $ba_ft AND (DATE(A1.date) < '$start_date' OR (DATE(A1.date) = '$start_date' AND (A1.memo LIKE 'SALDO AWAL%' OR A1.memo = '__SALDO_AWAL__')))
         UNION ALL
         SELECT CASE
                    WHEN A1.supplier IS NOT NULL THEN -A1.paid_amount
@@ -81,7 +81,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             FROM financeTransaction A1
             WHERE $ba_ft
               AND DATE(A1.date) BETWEEN '$start_date' AND '$end_date'
-              AND (A1.memo IS NULL OR A1.memo != '__SALDO_AWAL__')
+              AND (A1.memo IS NULL OR (A1.memo NOT LIKE 'SALDO AWAL%' AND A1.memo != '__SALDO_AWAL__'))
 
             UNION ALL
 
@@ -118,7 +118,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         LEFT JOIN finance_category A3 ON A1.finance_category = A3.category_id
         WHERE $ba_ft
           AND DATE(A1.date) BETWEEN '$start_date' AND '$end_date'
-          AND (A1.memo IS NULL OR A1.memo != '__SALDO_AWAL__')";
+          AND (A1.memo IS NULL OR (A1.memo NOT LIKE 'SALDO AWAL%' AND A1.memo != '__SALDO_AWAL__'))";
 
     $query_two = "SELECT A1.bank, A1.chequeno, A1.paymentdate AS transaction_date,
                          A1.paid_amount, A2.supplier_name, A1.rate

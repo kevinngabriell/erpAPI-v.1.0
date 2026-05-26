@@ -29,7 +29,7 @@ $bbResult = mysqli_query($connect, "
                    ELSE 0
                END AS amount
         FROM financeTransaction A1
-        WHERE $ba_ft AND DATE(A1.date) < '$start_date'
+        WHERE $ba_ft AND (DATE(A1.date) < '$start_date' OR (DATE(A1.date) = '$start_date' AND (A1.memo LIKE 'SALDO AWAL%' OR A1.memo = '__SALDO_AWAL__')))
         UNION ALL
         SELECT CASE
                    WHEN A1.supplier IS NOT NULL THEN -A1.paid_amount
@@ -55,7 +55,7 @@ $result_one = mysqli_query($connect, "
     LEFT JOIN finance_category A3 ON A1.finance_category = A3.category_id
     WHERE $ba_ft
       AND DATE(A1.date) BETWEEN '$start_date' AND '$end_date'
-      AND (A1.memo IS NULL OR A1.memo != '__SALDO_AWAL__')
+      AND (A1.memo IS NULL OR (A1.memo NOT LIKE 'SALDO AWAL%' AND A1.memo != '__SALDO_AWAL__'))
 ");
 
 // Transaction rows — financeItem (supplier / payable)
