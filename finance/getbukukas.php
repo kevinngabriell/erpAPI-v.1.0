@@ -15,10 +15,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $bank_account = mysqli_real_escape_string($connect, $_GET['bank_account'] ?? '');
     $start_date   = mysqli_real_escape_string($connect, $_GET['start_date'] ?? '');
     $end_date     = mysqli_real_escape_string($connect, $_GET['end_date'] ?? '');
+    $accountcode  = mysqli_real_escape_string($connect, $_GET['accountcode'] ?? '');
 
-    // When bank_account is empty/null, match IS NULL rows in DB (e.g. KAS KECIL)
-    $ba_ft = empty($bank_account) ? "(A1.bank_account IS NULL OR A1.bank_account = '')" : "A1.bank_account = '$bank_account'";
-    $ba_fi = empty($bank_account) ? "(A1.bank IS NULL OR A1.bank = '')"                 : "A1.bank = '$bank_account'";
+    if (!empty($bank_account)) {
+        $ba_ft = "A1.bank_account = '$bank_account'";
+        $ba_fi = "A1.bank = '$bank_account'";
+    } else {
+        // When accountcode is provided (e.g. KAS KECIL = 101-001-000), exclude __SALDO_AWAL__
+        // entries that belong to other accounts stored by setaccountbeginningbalance.php
+        $saldo_exclude = !empty($accountcode)
+            ? "AND NOT (A1.memo = '__SALDO_AWAL__' AND A1.accountcode != '' AND A1.accountcode != '$accountcode')"
+            : "";
+        $ba_ft = "(A1.bank_account IS NULL OR A1.bank_account = '') $saldo_exclude";
+        $ba_fi = "(A1.bank IS NULL OR A1.bank = '')";
+    }
 
     // Beginning balance — __SALDO_AWAL__ adjustment is included automatically in the SUM
     $beginningBalanceQuery = "SELECT SUM(amount) AS balance FROM (
@@ -36,7 +46,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                    ELSE 0
                END AS amount
         FROM financeItem A1
-        WHERE $ba_fi AND DATE(A1.paymentdate) < '$start_date'
+        WHERE $ba_fi AND DATE(A1.paymentdate) <= '$start_date'
     ) AS balances";
 
     $beginningBalanceResult = mysqli_query($connect, $beginningBalanceQuery);
@@ -90,7 +100,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             WHERE $ba_fi
               AND A1.supplier IS NOT NULL
               AND A1.paid_amount IS NOT NULL
-              AND DATE(A1.paymentdate) BETWEEN '$start_date' AND '$end_date'
+              AND DATE(A1.paymentdate) > '$start_date' AND DATE(A1.paymentdate) <= '$end_date'
 
             UNION ALL
 
@@ -99,7 +109,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             WHERE $ba_fi
               AND A1.customer IS NOT NULL
               AND A1.paid_amount IS NOT NULL
-              AND DATE(A1.paymentdate) BETWEEN '$start_date' AND '$end_date'
+              AND DATE(A1.paymentdate) > '$start_date' AND DATE(A1.paymentdate) <= '$end_date'
         ) AS combined_results";
 
     $totalResult = mysqli_query($connect, $totalQuery);
@@ -127,7 +137,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         WHERE $ba_fi
           AND A1.supplier IS NOT NULL
           AND A1.paid_amount IS NOT NULL
-          AND DATE(A1.paymentdate) BETWEEN '$start_date' AND '$end_date'";
+          AND DATE(A1.paymentdate) > '$start_date' AND DATE(A1.paymentdate) <= '$end_date'";
 
     $query_three = "SELECT A1.bank, A1.chequeno, A1.paymentdate AS transaction_date,
                            A1.paid_amount, A2.company_name, A1.rate
@@ -136,7 +146,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         WHERE $ba_fi
           AND A1.customer IS NOT NULL
           AND A1.paid_amount IS NOT NULL
-          AND DATE(A1.paymentdate) BETWEEN '$start_date' AND '$end_date'";
+          AND DATE(A1.paymentdate) > '$start_date' AND DATE(A1.paymentdate) <= '$end_date'";
 
     // Fetching results
     $result_one = mysqli_query($connect, $query_one);

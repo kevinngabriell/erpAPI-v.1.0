@@ -13,9 +13,18 @@ use PhpOffice\PhpSpreadsheet\Style\Fill;
 $bank_account = isset($_GET['bank_account']) ? mysqli_real_escape_string($connect, $_GET['bank_account']) : '';
 $start_date   = isset($_GET['start_date'])   ? mysqli_real_escape_string($connect, $_GET['start_date'])   : date('Y-m-01');
 $end_date     = isset($_GET['end_date'])     ? mysqli_real_escape_string($connect, $_GET['end_date'])     : date('Y-m-d');
+$accountcode  = isset($_GET['accountcode'])  ? mysqli_real_escape_string($connect, $_GET['accountcode'])  : '';
 
-$ba_ft = empty($bank_account) ? "(A1.bank_account IS NULL OR A1.bank_account = '')" : "A1.bank_account = '$bank_account'";
-$ba_fi = empty($bank_account) ? "(A1.bank IS NULL OR A1.bank = '')"                 : "A1.bank = '$bank_account'";
+if (!empty($bank_account)) {
+    $ba_ft = "A1.bank_account = '$bank_account'";
+    $ba_fi = "A1.bank = '$bank_account'";
+} else {
+    $saldo_exclude = !empty($accountcode)
+        ? "AND NOT (A1.memo = '__SALDO_AWAL__' AND A1.accountcode != '' AND A1.accountcode != '$accountcode')"
+        : "";
+    $ba_ft = "(A1.bank_account IS NULL OR A1.bank_account = '') $saldo_exclude";
+    $ba_fi = "(A1.bank IS NULL OR A1.bank = '')";
+}
 
 const CAT_PENERIMAAN = '174c61e8-226d-11ef-a';
 const CAT_PEMBAYARAN  = '1d604104-226d-11ef-a';
@@ -37,7 +46,7 @@ $bbResult = mysqli_query($connect, "
                    ELSE 0
                END AS amount
         FROM financeItem A1
-        WHERE $ba_fi AND DATE(A1.paymentdate) < '$start_date'
+        WHERE $ba_fi AND DATE(A1.paymentdate) <= '$start_date'
     ) AS balances
 ");
 $beginningBalance = (float)(mysqli_fetch_assoc($bbResult)['balance'] ?? 0);
@@ -71,7 +80,7 @@ $result_two = mysqli_query($connect, "
     WHERE $ba_fi
       AND A1.supplier IS NOT NULL
       AND A1.paid_amount IS NOT NULL
-      AND DATE(A1.paymentdate) BETWEEN '$start_date' AND '$end_date'
+      AND DATE(A1.paymentdate) > '$start_date' AND DATE(A1.paymentdate) <= '$end_date'
 ");
 
 // Transaction rows — financeItem (customer / receivable)
@@ -87,7 +96,7 @@ $result_three = mysqli_query($connect, "
     WHERE $ba_fi
       AND A1.customer IS NOT NULL
       AND A1.paid_amount IS NOT NULL
-      AND DATE(A1.paymentdate) BETWEEN '$start_date' AND '$end_date'
+      AND DATE(A1.paymentdate) > '$start_date' AND DATE(A1.paymentdate) <= '$end_date'
 ");
 
 $transactions = array_merge(
