@@ -33,6 +33,7 @@ const CAT_PEMBAYARAN  = '1d604104-226d-11ef-a';
 $bbResult = mysqli_query($connect, "
     SELECT SUM(amount) AS balance FROM (
         SELECT CASE
+                   WHEN A1.amount < 0 THEN A1.amount
                    WHEN A1.finance_category = '" . CAT_PENERIMAAN . "' THEN A1.amount
                    WHEN A1.finance_category = '" . CAT_PEMBAYARAN  . "' THEN -A1.amount
                    ELSE 0

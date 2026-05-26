@@ -33,6 +33,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     // Beginning balance — __SALDO_AWAL__ adjustment is included automatically in the SUM
     $beginningBalanceQuery = "SELECT SUM(amount) AS balance FROM (
         SELECT CASE
+                   WHEN A1.amount < 0 THEN A1.amount
                    WHEN A1.finance_category = '174c61e8-226d-11ef-a' THEN A1.amount
                    WHEN A1.finance_category = '1d604104-226d-11ef-a' THEN -A1.amount
                    ELSE 0
@@ -60,6 +61,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     // End balance — __SALDO_AWAL__ adjustment is included automatically in the SUM
     $endBalanceQuery = "SELECT SUM(amount) AS balance FROM (
         SELECT CASE
+                   WHEN A1.amount < 0 THEN A1.amount
                    WHEN A1.finance_category = '174c61e8-226d-11ef-a' THEN A1.amount
                    WHEN A1.finance_category = '1d604104-226d-11ef-a' THEN -A1.amount
                    ELSE 0
