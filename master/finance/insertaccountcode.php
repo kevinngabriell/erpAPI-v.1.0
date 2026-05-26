@@ -15,8 +15,13 @@ require_once('../../connection/connection.php');
 //Checking call API method
 if($_SERVER['REQUEST_METHOD'] === 'POST'){
     
-    $input = json_decode(file_get_contents("php://input"), true);
-    
+    $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
+    if (str_contains($contentType, 'application/json')) {
+        $input = json_decode(file_get_contents("php://input"), true);
+    } else {
+        $input = $_POST;
+    }
+
     $account_name = $input['account_name'] ?? null;
     $code = $input['code'] ?? null;
     $account_name_alias = $input['account_name_alias'] ?? null;
