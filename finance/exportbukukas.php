@@ -14,8 +14,8 @@ $bank_account = isset($_GET['bank_account']) ? mysqli_real_escape_string($connec
 $start_date   = isset($_GET['start_date'])   ? mysqli_real_escape_string($connect, $_GET['start_date'])   : date('Y-m-01');
 $end_date     = isset($_GET['end_date'])     ? mysqli_real_escape_string($connect, $_GET['end_date'])     : date('Y-m-d');
 
-$ba_ft = empty($bank_account) ? "A1.bank_account IS NULL" : "A1.bank_account = '$bank_account'";
-$ba_fi = empty($bank_account) ? "A1.bank IS NULL"         : "A1.bank = '$bank_account'";
+$ba_ft = empty($bank_account) ? "(A1.bank_account IS NULL OR A1.bank_account = '')" : "A1.bank_account = '$bank_account'";
+$ba_fi = empty($bank_account) ? "(A1.bank IS NULL OR A1.bank = '')"                 : "A1.bank = '$bank_account'";
 
 const CAT_PENERIMAAN = '174c61e8-226d-11ef-a';
 const CAT_PEMBAYARAN  = '1d604104-226d-11ef-a';

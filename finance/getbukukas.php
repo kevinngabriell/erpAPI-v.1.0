@@ -17,8 +17,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $end_date     = mysqli_real_escape_string($connect, $_GET['end_date'] ?? '');
 
     // When bank_account is empty/null, match IS NULL rows in DB (e.g. KAS KECIL)
-    $ba_ft = empty($bank_account) ? "A1.bank_account IS NULL" : "A1.bank_account = '$bank_account'";
-    $ba_fi = empty($bank_account) ? "A1.bank IS NULL"         : "A1.bank = '$bank_account'";
+    $ba_ft = empty($bank_account) ? "(A1.bank_account IS NULL OR A1.bank_account = '')" : "A1.bank_account = '$bank_account'";
+    $ba_fi = empty($bank_account) ? "(A1.bank IS NULL OR A1.bank = '')"                 : "A1.bank = '$bank_account'";
 
     // Beginning balance — __SALDO_AWAL__ adjustment is included automatically in the SUM
     $beginningBalanceQuery = "SELECT SUM(amount) AS balance FROM (
