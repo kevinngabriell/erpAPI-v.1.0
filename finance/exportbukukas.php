@@ -14,6 +14,9 @@ $bank_account = isset($_GET['bank_account']) ? mysqli_real_escape_string($connec
 $start_date   = isset($_GET['start_date'])   ? mysqli_real_escape_string($connect, $_GET['start_date'])   : date('Y-m-01');
 $end_date     = isset($_GET['end_date'])     ? mysqli_real_escape_string($connect, $_GET['end_date'])     : date('Y-m-d');
 
+$ba_ft = empty($bank_account) ? "A1.bank_account IS NULL" : "A1.bank_account = '$bank_account'";
+$ba_fi = empty($bank_account) ? "A1.bank IS NULL"         : "A1.bank = '$bank_account'";
+
 const CAT_PENERIMAAN = '174c61e8-226d-11ef-a';
 const CAT_PEMBAYARAN  = '1d604104-226d-11ef-a';
 
@@ -26,7 +29,7 @@ $bbResult = mysqli_query($connect, "
                    ELSE 0
                END AS amount
         FROM financeTransaction A1
-        WHERE A1.bank_account = '$bank_account' AND DATE(A1.date) < '$start_date'
+        WHERE $ba_ft AND DATE(A1.date) < '$start_date'
         UNION ALL
         SELECT CASE
                    WHEN A1.supplier IS NOT NULL THEN -A1.paid_amount
@@ -34,7 +37,7 @@ $bbResult = mysqli_query($connect, "
                    ELSE 0
                END AS amount
         FROM financeItem A1
-        WHERE A1.bank = '$bank_account' AND DATE(A1.paymentdate) < '$start_date'
+        WHERE $ba_fi AND DATE(A1.paymentdate) < '$start_date'
     ) AS balances
 ");
 $beginningBalance = (float)(mysqli_fetch_assoc($bbResult)['balance'] ?? 0);
@@ -50,7 +53,7 @@ $result_one = mysqli_query($connect, "
     FROM financeTransaction A1
     LEFT JOIN account_code A2 ON A1.accountcode = A2.code
     LEFT JOIN finance_category A3 ON A1.finance_category = A3.category_id
-    WHERE A1.bank_account = '$bank_account'
+    WHERE $ba_ft
       AND DATE(A1.date) BETWEEN '$start_date' AND '$end_date'
       AND (A1.memo IS NULL OR A1.memo != '__SALDO_AWAL__')
 ");
@@ -65,7 +68,7 @@ $result_two = mysqli_query($connect, "
            'supplier' AS party_type
     FROM financeItem A1
     LEFT JOIN supplier A2 ON A1.supplier = A2.supplier_id
-    WHERE A1.bank = '$bank_account'
+    WHERE $ba_fi
       AND A1.supplier IS NOT NULL
       AND A1.paid_amount IS NOT NULL
       AND DATE(A1.paymentdate) BETWEEN '$start_date' AND '$end_date'
@@ -81,7 +84,7 @@ $result_three = mysqli_query($connect, "
            'customer' AS party_type
     FROM financeItem A1
     LEFT JOIN customer A2 ON A1.customer = A2.company_id
-    WHERE A1.bank = '$bank_account'
+    WHERE $ba_fi
       AND A1.customer IS NOT NULL
       AND A1.paid_amount IS NOT NULL
       AND DATE(A1.paymentdate) BETWEEN '$start_date' AND '$end_date'

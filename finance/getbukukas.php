@@ -4,10 +4,8 @@ header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type");
 
-// Display error message
-ini_set('display_errors', '1');
-ini_set('display_startup_errors', '1');
-error_reporting(E_ALL);
+ini_set('display_errors', '0');
+error_reporting(0);
 
 // Connection access
 require_once('../connection/connection.php'); // Make sure your connection script is properly included
@@ -18,6 +16,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $start_date   = mysqli_real_escape_string($connect, $_GET['start_date'] ?? '');
     $end_date     = mysqli_real_escape_string($connect, $_GET['end_date'] ?? '');
 
+    // When bank_account is empty/null, match IS NULL rows in DB (e.g. KAS KECIL)
+    $ba_ft = empty($bank_account) ? "A1.bank_account IS NULL" : "A1.bank_account = '$bank_account'";
+    $ba_fi = empty($bank_account) ? "A1.bank IS NULL"         : "A1.bank = '$bank_account'";
+
     // Beginning balance — __SALDO_AWAL__ adjustment is included automatically in the SUM
     $beginningBalanceQuery = "SELECT SUM(amount) AS balance FROM (
         SELECT CASE
@@ -26,7 +28,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                    ELSE 0
                END AS amount
         FROM financeTransaction A1
-        WHERE A1.bank_account = '$bank_account' AND DATE(A1.date) < '$start_date'
+        WHERE $ba_ft AND DATE(A1.date) < '$start_date'
         UNION ALL
         SELECT CASE
                    WHEN A1.supplier IS NOT NULL THEN -A1.paid_amount
@@ -34,7 +36,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                    ELSE 0
                END AS amount
         FROM financeItem A1
-        WHERE A1.bank = '$bank_account' AND DATE(A1.paymentdate) < '$start_date'
+        WHERE $ba_fi AND DATE(A1.paymentdate) < '$start_date'
     ) AS balances";
 
     $beginningBalanceResult = mysqli_query($connect, $beginningBalanceQuery);
@@ -53,7 +55,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                    ELSE 0
                END AS amount
         FROM financeTransaction A1
-        WHERE A1.bank_account = '$bank_account' AND DATE(A1.date) <= '$end_date'
+        WHERE $ba_ft AND DATE(A1.date) <= '$end_date'
         UNION ALL
         SELECT CASE
                    WHEN A1.supplier IS NOT NULL THEN -A1.paid_amount
@@ -61,7 +63,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                    ELSE 0
                END AS amount
         FROM financeItem A1
-        WHERE A1.bank = '$bank_account' AND DATE(A1.paymentdate) <= '$end_date'
+        WHERE $ba_fi AND DATE(A1.paymentdate) <= '$end_date'
     ) AS balances";
 
     $endBalanceResult = mysqli_query($connect, $endBalanceQuery);
@@ -77,7 +79,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         FROM (
             SELECT COUNT(A1.id_transaction) AS total_amount
             FROM financeTransaction A1
-            WHERE A1.bank_account = '$bank_account'
+            WHERE $ba_ft
               AND DATE(A1.date) BETWEEN '$start_date' AND '$end_date'
               AND (A1.memo IS NULL OR A1.memo != '__SALDO_AWAL__')
 
@@ -85,7 +87,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
             SELECT COUNT(A1.id_transaction) AS total_amount
             FROM financeItem A1
-            WHERE A1.bank = '$bank_account'
+            WHERE $ba_fi
               AND A1.supplier IS NOT NULL
               AND A1.paid_amount IS NOT NULL
               AND DATE(A1.paymentdate) BETWEEN '$start_date' AND '$end_date'
@@ -94,7 +96,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
             SELECT COUNT(A1.id_transaction) AS total_amount
             FROM financeItem A1
-            WHERE A1.bank = '$bank_account'
+            WHERE $ba_fi
               AND A1.customer IS NOT NULL
               AND A1.paid_amount IS NOT NULL
               AND DATE(A1.paymentdate) BETWEEN '$start_date' AND '$end_date'
@@ -114,7 +116,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         FROM financeTransaction A1
         LEFT JOIN account_code A2 ON A1.accountcode = A2.code
         LEFT JOIN finance_category A3 ON A1.finance_category = A3.category_id
-        WHERE A1.bank_account = '$bank_account'
+        WHERE $ba_ft
           AND DATE(A1.date) BETWEEN '$start_date' AND '$end_date'
           AND (A1.memo IS NULL OR A1.memo != '__SALDO_AWAL__')";
 
@@ -122,7 +124,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                          A1.paid_amount, A2.supplier_name, A1.rate
         FROM financeItem A1
         LEFT JOIN supplier A2 ON A1.supplier = A2.supplier_id
-        WHERE A1.bank = '$bank_account'
+        WHERE $ba_fi
           AND A1.supplier IS NOT NULL
           AND A1.paid_amount IS NOT NULL
           AND DATE(A1.paymentdate) BETWEEN '$start_date' AND '$end_date'";
@@ -131,7 +133,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                            A1.paid_amount, A2.company_name, A1.rate
         FROM financeItem A1
         LEFT JOIN customer A2 ON A1.customer = A2.company_id
-        WHERE A1.bank = '$bank_account'
+        WHERE $ba_fi
           AND A1.customer IS NOT NULL
           AND A1.paid_amount IS NOT NULL
           AND DATE(A1.paymentdate) BETWEEN '$start_date' AND '$end_date'";
