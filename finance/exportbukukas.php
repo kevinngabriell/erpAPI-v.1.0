@@ -55,13 +55,13 @@ $beginningBalance = (float)(mysqli_fetch_assoc($bbResult)['balance'] ?? 0);
 // Transaction rows — financeTransaction (exclude __SALDO_AWAL__ sentinel)
 $result_one = mysqli_query($connect, "
     SELECT A1.chequeno, A1.date AS transaction_date,
-           A2.account_name_alias AS description,
+           A2.account_code_name_alias AS description,
            A3.category_name,
            A1.finance_category,
            A1.amount AS paid_amount,
            NULL AS party_type
     FROM financeTransaction A1
-    LEFT JOIN account_code A2 ON A1.accountcode = A2.code
+    LEFT JOIN account_code A2 ON A1.accountcode COLLATE utf8mb4_general_ci  = A2.account_code
     LEFT JOIN finance_category A3 ON A1.finance_category = A3.category_id
     WHERE $ba_ft
       AND DATE(A1.date) BETWEEN '$start_date' AND '$end_date'

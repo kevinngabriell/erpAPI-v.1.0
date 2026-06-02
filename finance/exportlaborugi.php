@@ -14,14 +14,14 @@ $start_date = isset($_GET['start_date']) ? mysqli_real_escape_string($connect, $
 $end_date   = isset($_GET['end_date'])   ? mysqli_real_escape_string($connect, $_GET['end_date'])   : date('Y-m-d');
 
 $revenueQuery = "
-    SELECT A2.code, A2.account_name_alias AS account_name, SUM(A1.amount) AS total
-    FROM financeTransaction A1 LEFT JOIN account_code A2 ON A1.accountcode = A2.code
+    SELECT A2.account_code, A2.account_code_name_alias AS account_name, SUM(A1.amount) AS total
+    FROM financeTransaction A1 LEFT JOIN account_code A2 ON A1.accountcode COLLATE utf8mb4_general_ci = A2.account_code
     WHERE A1.finance_category = '174c61e8-226d-11ef-a' AND A1.date BETWEEN '$start_date' AND '$end_date'
     GROUP BY A2.code, A2.account_name_alias ORDER BY A2.code
 ";
 $expenseQuery = "
-    SELECT A2.code, A2.account_name_alias AS account_name, SUM(A1.amount) AS total
-    FROM financeTransaction A1 LEFT JOIN account_code A2 ON A1.accountcode = A2.code
+    SELECT A2.account_code, A2.account_code_name_alias AS account_name, SUM(A1.amount) AS total
+    FROM financeTransaction A1 LEFT JOIN account_code A2 ON A1.accountcode COLLATE utf8mb4_general_ci = A2.account_code
     WHERE A1.finance_category = '1d604104-226d-11ef-a' AND A1.date BETWEEN '$start_date' AND '$end_date'
     GROUP BY A2.code, A2.account_name_alias ORDER BY A2.code
 ";
@@ -62,8 +62,8 @@ $sheet->getStyle("A$r")->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor
 $r++;
 
 foreach ($revenues as $row) {
-    $sheet->setCellValue("A$r", $row['code']);
-    $sheet->setCellValue("B$r", $row['account_name']);
+    $sheet->setCellValue("A$r", $row['account_code']);
+    $sheet->setCellValue("B$r", $row['account_code_name']);
     $sheet->setCellValue("C$r", (float)$row['total']);
     $sheet->getStyle("C$r")->getNumberFormat()->setFormatCode($numFormat);
     $r++;
@@ -87,8 +87,8 @@ $sheet->getStyle("A$r")->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor
 $r++;
 
 foreach ($expenses as $row) {
-    $sheet->setCellValue("A$r", $row['code']);
-    $sheet->setCellValue("B$r", $row['account_name']);
+    $sheet->setCellValue("A$r", $row['account_code']);
+    $sheet->setCellValue("B$r", $row['account_code_name']);
     $sheet->setCellValue("C$r", (float)$row['total']);
     $sheet->getStyle("C$r")->getNumberFormat()->setFormatCode($numFormat);
     $r++;

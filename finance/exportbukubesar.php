@@ -20,14 +20,14 @@ const CAT_PENERIMAAN = '174c61e8-226d-11ef-a';
 const CAT_PEMBAYARAN  = '1d604104-226d-11ef-a';
 
 $query = "
-    SELECT A2.code, A2.account_name, A2.account_name_alias, A1.date, A1.voucher_no, A1.memo,
+    SELECT A2.account_code, A2.account_code_name, A2.account_code_name_alias, A1.date, A1.voucher_no, A1.memo,
            A1.finance_category, A1.amount
     FROM financeTransaction A1
-    LEFT JOIN account_code A2 ON A1.accountcode = A2.code
+    LEFT JOIN account_code A2 ON A1.accountcode COLLATE utf8mb4_general_ci = A2.account_code
     WHERE DATE(A1.date) BETWEEN '$start_date' AND '$end_date'
       AND (A1.memo IS NULL OR A1.memo != '__SALDO_AWAL__')
       $account_filter
-    ORDER BY A2.code, A1.date ASC
+    ORDER BY A2.account_code, A1.date ASC
 ";
 $result       = mysqli_query($connect, $query);
 $transactions = mysqli_fetch_all($result, MYSQLI_ASSOC);
@@ -35,7 +35,7 @@ $transactions = mysqli_fetch_all($result, MYSQLI_ASSOC);
 // Group by account code
 $grouped = [];
 foreach ($transactions as $row) {
-    $code = $row['code'];
+    $code = $row['account_code'];
     if (!isset($grouped[$code])) {
         // Opening balance — __SALDO_AWAL__ adjustment is included automatically in the SUM
         $ob = mysqli_fetch_assoc(mysqli_query($connect,
@@ -45,8 +45,8 @@ foreach ($transactions as $row) {
         ));
 
         $grouped[$code] = [
-            'account_name'  => $row['account_name'],
-            'alias'         => $row['account_name_alias'],
+            'account_name'  => $row['account_code_name'],
+            'alias'         => $row['account_code_name_alias'],
             'opening'       => (float)($ob['ob'] ?? 0),
             'rows'          => []
         ];

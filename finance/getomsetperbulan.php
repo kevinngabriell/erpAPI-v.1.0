@@ -35,7 +35,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         LEFT JOIN salesInvoiceItem A2 ON A1.invoiceNumber = A2.DONumber
         WHERE $date_filter
           $customer_filter
-        GROUP BY YEAR(A1.invoiceDate), MONTH(A1.invoiceDate)
+        GROUP BY YEAR(A1.invoiceDate), MONTH(A1.invoiceDate), MONTHNAME(A1.invoiceDate)
         ORDER BY tahun ASC, bulan ASC
     ";
 

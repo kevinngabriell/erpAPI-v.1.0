@@ -43,7 +43,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $totalItems = $totalRow['total'];
 
     // Query to get paginated results
-    $query = "SELECT A1.amount, A2.account_name, A1.bank_account, A1.id_transaction, A1.date, A1.memo
+    $query = "SELECT A1.amount, A2.account_code_name, A1.bank_account, A1.id_transaction, A1.date, A1.memo
               FROM financeTransaction A1
               LEFT JOIN account_code A2 ON A1.accountcode COLLATE utf8mb4_general_ci = A2.account_code
               WHERE $where
@@ -58,7 +58,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             $array,
             array(
                 'amount' => $row['amount'],
-                'account_name' => $row['account_name'],
+                'account_name' => $row['account_code_name'],
                 'bank_account' => $row['bank_account'],
                 'id_transaction' => $row['id_transaction'],
                 'date' => $row['date'],
