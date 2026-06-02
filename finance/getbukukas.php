@@ -1,14 +1,24 @@
 <?php
-// Header access is required
-header("Access-Control-Allow-Origin: *");
-header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
-header("Access-Control-Allow-Headers: Content-Type");
+require_once('../general.php');
 
 ini_set('display_errors', '0');
 error_reporting(0);
 
 // Connection access
-require_once('../connection/connection.php'); // Make sure your connection script is properly included
+require_once('../connection/connection.php');
+
+$GLOBALS['_log_conn']       = $connect;
+$GLOBALS['_log_user']       = 'guest';
+$GLOBALS['_log_request_id'] = bin2hex(random_bytes(8));
+
+register_shutdown_function(function () {
+    $err = error_get_last();
+    if ($err && in_array($err['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR])) {
+        logApiError(500, $err['message'], $err['file'], $err['line']);
+        if (!headers_sent()) http_response_code(500);
+        echo json_encode(['error' => 'Internal server error', 'detail' => $err['message']]);
+    }
+});
 
 // Checking call API method
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
