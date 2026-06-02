@@ -134,9 +134,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
     // Transaction list — exclude __SALDO_AWAL__ sentinel so it doesn't appear as a row
     $query_one = "SELECT A1.bank_account, A1.chequeno, A1.date AS transaction_date,
-                         A2.account_name_alias, A1.amount, A3.category_name
+                         A2.account_code_name_alias, A1.amount, A3.category_name
         FROM financeTransaction A1
-        LEFT JOIN account_code A2 ON A1.accountcode = A2.code
+        LEFT JOIN account_code A2 ON A1.accountcode = A2.account_code
         LEFT JOIN finance_category A3 ON A1.finance_category = A3.category_id
         WHERE $ba_ft
           AND DATE(A1.date) BETWEEN '$start_date' AND '$end_date'
