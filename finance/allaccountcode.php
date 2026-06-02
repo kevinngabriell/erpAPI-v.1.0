@@ -28,9 +28,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         array_push(
             $array,
             array(
-                'code' => $row['code'],
-                'account_name' => $row['account_name'],
-                'account_name_alias' => $row['account_name_alias']
+                'code' => $row['account_code'],
+                'account_name' => $row['account_code_name'],
+                'account_name_alias' => $row['account_code_name_alias']
             )
         );
     }
