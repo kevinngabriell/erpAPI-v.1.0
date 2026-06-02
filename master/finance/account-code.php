@@ -41,14 +41,14 @@ function createAccountCode($conn, $input, string $userId): void {
     $parent_val = 'NULL';
     if (!empty($input['parent_account_code_id'])) {
         $pid         = mysqli_real_escape_string($conn, trim($input['parent_account_code_id']));
-        $parentCheck = mysqli_query($conn, "SELECT 1 FROM account_code_new WHERE account_code_id = '$pid' LIMIT 1");
+        $parentCheck = mysqli_query($conn, "SELECT 1 FROM account_code WHERE account_code_id = '$pid' LIMIT 1");
         if (mysqli_num_rows($parentCheck) === 0) {
             jsonResponse(404, 'parent_account_code_id not found');
         }
         $parent_val = "'$pid'";
     }
 
-    $dupCheck = mysqli_query($conn, "SELECT 1 FROM account_code_new WHERE account_code = '$account_code' LIMIT 1");
+    $dupCheck = mysqli_query($conn, "SELECT 1 FROM account_code WHERE account_code = '$account_code' LIMIT 1");
     if (mysqli_num_rows($dupCheck) > 0) {
         jsonResponse(400, 'account_code already exists');
     }
@@ -57,7 +57,7 @@ function createAccountCode($conn, $input, string $userId): void {
     $is_active  = isset($input['is_active']) ? (int)(bool)$input['is_active'] : 1;
     $created_by = mysqli_real_escape_string($conn, $userId);
 
-    $insert = "INSERT INTO account_code_new
+    $insert = "INSERT INTO account_code
                (account_code_id, account_code, account_code_name, account_code_name_alias,
                 account_type, parent_account_code_id, is_active, created_by)
                VALUES ('$id', '$account_code', '$account_code_name', $alias_val,
@@ -84,12 +84,12 @@ function getAllAccountCode($conn, string $params = '', int $page = 1, int $limit
         ? "WHERE account_code LIKE '%$params%' OR account_code_name LIKE '%$params%' OR account_code_name_alias LIKE '%$params%'"
         : '';
 
-    $countResult = mysqli_query($conn, "SELECT COUNT(*) AS total FROM account_code_new $where");
+    $countResult = mysqli_query($conn, "SELECT COUNT(*) AS total FROM account_code $where");
     $total       = (int) mysqli_fetch_assoc($countResult)['total'];
 
     $result = mysqli_query($conn, "SELECT account_code_id, account_code, account_code_name,
                                           account_code_name_alias, account_type, parent_account_code_id, is_active
-                                   FROM account_code_new $where
+                                   FROM account_code $where
                                    ORDER BY account_code ASC
                                    LIMIT $limit OFFSET $offset");
 
@@ -119,7 +119,7 @@ function getDetailAccountCode($conn, ?string $account_code_id): void {
     $result = mysqli_query($conn, "SELECT account_code_id, account_code, account_code_name,
                                           account_code_name_alias, account_type, parent_account_code_id,
                                           is_active, created_by, created_at, updated_by, updated_at
-                                   FROM account_code_new WHERE account_code_id = '$id' LIMIT 1");
+                                   FROM account_code WHERE account_code_id = '$id' LIMIT 1");
 
     if ($result && mysqli_num_rows($result) > 0) {
         jsonResponse(200, 'Account code found', mysqli_fetch_assoc($result));
@@ -137,7 +137,7 @@ function updateAccountCode($conn, $input, string $userId): void {
     }
 
     $id    = mysqli_real_escape_string($conn, $input['account_code_id']);
-    $check = mysqli_query($conn, "SELECT 1 FROM account_code_new WHERE account_code_id = '$id' LIMIT 1");
+    $check = mysqli_query($conn, "SELECT 1 FROM account_code WHERE account_code_id = '$id' LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Account code not found');
     }
@@ -147,7 +147,7 @@ function updateAccountCode($conn, $input, string $userId): void {
     if (isset($input['account_code'])) {
         $code = trim(mysqli_real_escape_string($conn, $input['account_code']));
         if ($code === '') jsonResponse(400, 'account_code cannot be empty');
-        $dup = mysqli_query($conn, "SELECT 1 FROM account_code_new WHERE account_code = '$code' AND account_code_id != '$id' LIMIT 1");
+        $dup = mysqli_query($conn, "SELECT 1 FROM account_code WHERE account_code = '$code' AND account_code_id != '$id' LIMIT 1");
         if (mysqli_num_rows($dup) > 0) jsonResponse(400, 'account_code already exists');
         $updates[] = "account_code = '$code'";
     }
@@ -175,7 +175,7 @@ function updateAccountCode($conn, $input, string $userId): void {
         if (!empty($input['parent_account_code_id'])) {
             $pid = mysqli_real_escape_string($conn, trim($input['parent_account_code_id']));
             if ($pid === $id) jsonResponse(400, 'parent_account_code_id cannot reference itself');
-            $parentCheck = mysqli_query($conn, "SELECT 1 FROM account_code_new WHERE account_code_id = '$pid' LIMIT 1");
+            $parentCheck = mysqli_query($conn, "SELECT 1 FROM account_code WHERE account_code_id = '$pid' LIMIT 1");
             if (mysqli_num_rows($parentCheck) === 0) jsonResponse(404, 'parent_account_code_id not found');
             $updates[] = "parent_account_code_id = '$pid'";
         } else {
@@ -194,7 +194,7 @@ function updateAccountCode($conn, $input, string $userId): void {
     $updated_by = mysqli_real_escape_string($conn, $userId);
     $updates[]  = "updated_by = '$updated_by'";
 
-    if (mysqli_query($conn, "UPDATE account_code_new SET " . implode(', ', $updates) . " WHERE account_code_id = '$id'")) {
+    if (mysqli_query($conn, "UPDATE account_code SET " . implode(', ', $updates) . " WHERE account_code_id = '$id'")) {
         jsonResponse(200, 'Account code updated successfully');
     } else {
         jsonResponse(500, 'Failed to update account code');
@@ -208,12 +208,12 @@ function deleteAccountCode($conn, ?string $account_code_id): void {
     }
 
     $id    = mysqli_real_escape_string($conn, $account_code_id);
-    $check = mysqli_query($conn, "SELECT 1 FROM account_code_new WHERE account_code_id = '$id' LIMIT 1");
+    $check = mysqli_query($conn, "SELECT 1 FROM account_code WHERE account_code_id = '$id' LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Account code not found');
     }
 
-    if (mysqli_query($conn, "DELETE FROM account_code_new WHERE account_code_id = '$id'")) {
+    if (mysqli_query($conn, "DELETE FROM account_code WHERE account_code_id = '$id'")) {
         jsonResponse(200, 'Account code deleted successfully');
     } else {
         jsonResponse(500, 'Failed to delete account code');
