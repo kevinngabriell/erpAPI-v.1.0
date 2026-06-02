@@ -27,7 +27,7 @@ class DB {
     }
 
     $conn->set_charset('utf8mb4');
-    $conn->query("SET NAMES utf8mb4 COLLATE utf8mb4_general_ci");
+    $conn->query("SET NAMES utf8mb4 COLLATE utf8mb4_0900_ai_ci");
     $conn->query("SET time_zone = '+07:00'");
 
     self::$conn = $conn;
