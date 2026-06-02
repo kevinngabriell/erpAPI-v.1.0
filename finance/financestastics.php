@@ -28,10 +28,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         customer A3 ON A2.customerID = A3.company_id
     WHERE 
         A2.customerID IS NOT NULL
-    GROUP BY 
+    GROUP BY
         A3.company_id, A3.company_name
-    ORDER BY 
-        A1.insert_dt DESC;
+    ORDER BY
+        MAX(A1.insert_dt) DESC;
     ";
 
     $result = mysqli_query($connect, $query);
@@ -64,10 +64,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         supplier A3 ON A2.supplier = A3.supplier_id
     WHERE 
         A2.supplier IS NOT NULL
-    GROUP BY 
+    GROUP BY
         A3.supplier_id, A3.supplier_name
-    ORDER BY 
-        A1.insert_dt DESC;
+    ORDER BY
+        MAX(A1.insert_dt) DESC;
     ";
 
     $supplierResult = mysqli_query($connect, $supplierQuery);
