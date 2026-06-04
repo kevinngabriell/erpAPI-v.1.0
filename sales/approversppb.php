@@ -1,8 +1,5 @@
 <?php
 // Header access is required
-header("Access-Control-Allow-Origin: *");
-header("Access-Control-Allow-Methods: GET, OPTIONS");
-header("Access-Control-Allow-Headers: Content-Type");
 
 // Display error message
 ini_set('display_errors', '1');
