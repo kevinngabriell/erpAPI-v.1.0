@@ -40,7 +40,7 @@ if($_SERVER['REQUEST_METHOD'] === 'GET'){
             array(
                 'code' => $row['code'],
                 'account_name' => $row['account_name'],
-                'account_name_alias' => $row['account_name_alias']
+                'account_name_alias' => $row['account_code_name_alias']
             )
         );
     }

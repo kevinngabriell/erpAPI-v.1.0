@@ -24,10 +24,10 @@ if($_SERVER['REQUEST_METHOD'] === 'POST'){
 
     $account_name = $input['account_name'] ?? null;
     $code = $input['code'] ?? null;
-    $account_name_alias = $input['account_name_alias'] ?? null;
+    $account_name_alias = $input['account_code_name_alias'] ?? null;
 
     //Search is origin name is already exist 
-    $search_query = "SELECT account_name FROM account_code WHERE code = '$code' OR account_name_alias = '$account_name_alias'";
+    $search_query = "SELECT account_name FROM account_code WHERE code = '$code' OR account_code_name_alias = '$account_name_alias'";
     $result = $connect->query($search_query);
     $row = $result->fetch_assoc();
 
@@ -43,7 +43,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST'){
         );
     //If origin name is not exist
     } else {
-        $origin_query = "INSERT INTO account_code (code, account_name, account_name_alias) 
+        $origin_query = "INSERT INTO account_code (code, account_name, account_code_name_alias) 
                         VALUES ('$code', '$account_name', '$account_name_alias')";
         
         if(mysqli_query($connect, $origin_query)){

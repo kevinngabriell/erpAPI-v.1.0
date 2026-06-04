@@ -64,7 +64,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
     $result = mysqli_query($connect,
         "SELECT A1.id_transaction, A1.accountcode AS account_code,
-                A2.account_name, A2.account_name_alias,
+                A2.account_name, A2.account_code_name_alias,
                 DATE(A1.date) AS as_of_date, A1.finance_category, A1.amount,
                 A1.insertby, A1.insertdt
          FROM financeTransaction A1

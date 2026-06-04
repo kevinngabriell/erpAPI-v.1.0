@@ -16,7 +16,7 @@ require_once('../connection/connection.php');
 if($_SERVER['REQUEST_METHOD'] === 'GET'){
     $id_transaction = $_GET['id_transaction'];
 
-    $query = "SELECT A1.bank_account, A1.voucher_no, A1.chequeno, A1.date, A1.memo, A1.payee, A1.amount, A1.accountcode, A2.account_name_alias, A1.accountamount, A1.accountmemo, A3.bank_name
+    $query = "SELECT A1.bank_account, A1.voucher_no, A1.chequeno, A1.date, A1.memo, A1.payee, A1.amount, A1.accountcode, A2.account_code_name_alias, A1.accountamount, A1.accountmemo, A3.bank_name
         FROM financeTransaction A1
         LEFT JOIN account_code A2 ON A1.accountcode = A2.code
         LEFT JOIN bank_account A3 ON A1.bank_account = A3.bank_number
@@ -37,7 +37,7 @@ if($_SERVER['REQUEST_METHOD'] === 'GET'){
                     'payee' => $row['payee'],
                     'amount' => $row['amount'],
                     'accountcode' => $row['accountcode'],
-                    'account_name_alias' => $row['account_name_alias'],
+                    'account_name_alias' => $row['account_code_name_alias'],
                     'accountamount' => $row['accountamount'],
                     'accountmemo' => $row['accountmemo'],
                     'bank_name' => $row['bank_name']

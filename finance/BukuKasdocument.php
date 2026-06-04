@@ -22,7 +22,7 @@ if (!$bank_account || !$start_date || !$end_date) {
 $query = "SELECT 
             A1.date AS transaction_date, 
             A1.chequeno, 
-            A2.account_name_alias AS description, 
+            A2.account_code_name_alias AS description, 
             CASE WHEN A1.finance_category = '174c61e8-226d-11ef-a' THEN A1.amount ELSE 0 END AS debit, 
             CASE WHEN A1.finance_category = '1d604104-226d-11ef-a' THEN -A1.amount ELSE 0 END AS credit 
           FROM financeTransaction A1

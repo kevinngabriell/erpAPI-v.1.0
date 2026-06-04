@@ -1,16 +1,16 @@
 # Financial Reports API
 
-> **Last updated: 2026-05-21**
-> Changes in this update: added search params to Penerimaan/Pembayaran list endpoints; added new Omset detail & export endpoints.
+> **Last updated: 2026-06-02**
+> Changes in this update: added Export Outstanding Hutang & Piutang (Excel) endpoint.
 
 ---
 
 ## Table of Contents
 
 1. [Omset / Penjualan — Summary per Bulan](#1-omset--penjualan--summary-per-bulan)
-2. [Omset / Penjualan — Detail Invoice per Bulan ⭐ NEW](#2-omset--penjualan--detail-invoice-per-bulan-new)
+2. [Omset / Penjualan — Detail Invoice per Bulan](#2-omset--penjualan--detail-invoice-per-bulan)
 3. [Export Omset Summary (Excel)](#3-export-omset-summary-excel)
-4. [Export Omset Detail Invoice (Excel) ⭐ NEW](#4-export-omset-detail-invoice-excel-new)
+4. [Export Omset Detail Invoice (Excel)](#4-export-omset-detail-invoice-excel)
 5. [Penerimaan (Jurnal)](#5-penerimaan-jurnal)
 6. [Pembayaran (Jurnal)](#6-pembayaran-jurnal)
 7. [Penerimaan Penjualan (Invoice Pelanggan)](#7-penerimaan-penjualan-invoice-pelanggan)
@@ -19,7 +19,8 @@
 10. [Laporan Laba Rugi](#10-laporan-laba-rugi)
 11. [Neraca](#11-neraca)
 12. [Outstanding Hutang & Piutang](#12-outstanding-hutang--piutang)
-13. [Error Responses](#error-responses)
+13. [Export Outstanding Hutang & Piutang (Excel) ⭐ NEW](#13-export-outstanding-hutang--piutang-excel-new)
+14. [Error Responses](#error-responses)
 
 ---
 
@@ -644,6 +645,50 @@ GET /finance/getoutstandingpayments.php?type=all&year=2025&month=5
 
 ---
 
+## 13. Export Outstanding Hutang & Piutang (Excel) ⭐ NEW
+
+**File:** `finance/exportoutstandingpayments.php`
+
+Exports outstanding piutang (receivables) and/or hutang (payables) to Excel. When `type=all`, the file contains two sheets — **Piutang Usaha** and **Hutang Usaha**.
+
+| Property | Value |
+|---|---|
+| **Method** | `GET` |
+| **Endpoint** | `/finance/exportoutstandingpayments.php` |
+| **Response** | `.xlsx` file download |
+
+### Query Parameters
+
+| Parameter | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `type` | `string` | No | `all` | `piutang` \| `hutang` \| `all` |
+| `year` | `integer` | No | — | Filter by invoice year |
+| `month` | `integer` (1–12) | No | — | Filter by invoice month |
+
+### Example Request
+```
+GET /finance/exportoutstandingpayments.php
+GET /finance/exportoutstandingpayments.php?type=piutang
+GET /finance/exportoutstandingpayments.php?type=all&year=2025&month=5
+```
+
+### Excel Output
+
+**Sheet: Piutang Usaha** (when `type=piutang` or `type=all`)
+
+`No` | `No. Invoice` | `Nama Pelanggan` | `Customer ID` | `Tgl. Invoice` | `TOP (Hari)` | `Jatuh Tempo` | `Hari Overdue` | `Currency` | `Kurs` | `Nilai Invoice (IDR)` | `Sudah Dibayar (IDR)` | `Sisa Tagihan (IDR)` | `Status`
+
+**Sheet: Hutang Usaha** (when `type=hutang` or `type=all`)
+
+`No` | `No. Invoice` | `Nama Supplier` | `Supplier ID` | `Tgl. Invoice` | `Hari Sejak Invoice` | `Currency` | `Kurs` | `Nilai Invoice (IDR)` | `Sudah Dibayar (IDR)` | `Sisa Hutang (IDR)`
+
+### Notes
+- Overdue rows on the **Piutang** sheet are highlighted in red (`#FCE4D6`)
+- A **TOTAL** row is appended at the bottom of each sheet
+- Filename format: `Outstanding_Payments.xlsx` / `Outstanding_Payments_2025.xlsx` / `Outstanding_Payments_2025_05.xlsx`
+
+---
+
 ## Error Responses
 
 | StatusCode | Status | Description |
@@ -655,6 +700,9 @@ GET /finance/getoutstandingpayments.php?type=all&year=2025&month=5
 ---
 
 ## Changelog
+
+### 2026-06-02
+- **NEW** `GET /finance/exportoutstandingpayments.php` — Excel export for Outstanding Hutang & Piutang; supports `type`, `year`, `month` filters; two-sheet output when `type=all`; overdue rows highlighted in red
 
 ### 2026-05-21
 - **NEW** `GET /finance/getdetailomset.php` — invoice-level drill-down for Omset per month (supports pagination + search)
