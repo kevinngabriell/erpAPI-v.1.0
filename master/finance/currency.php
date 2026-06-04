@@ -30,7 +30,7 @@ function createCurrency($conn, $input, string $userId): void {
         ? "'" . mysqli_real_escape_string($conn, trim($input['currency_name'])) . "'"
         : 'NULL';
 
-    $dupCheck = mysqli_query($conn, "SELECT 1 FROM currency_new WHERE currency_code = '$currency_code' LIMIT 1");
+    $dupCheck = mysqli_query($conn, "SELECT 1 FROM currency WHERE currency_code = '$currency_code' LIMIT 1");
     if (mysqli_num_rows($dupCheck) > 0) {
         jsonResponse(400, 'currency_code already exists');
     }
@@ -38,7 +38,7 @@ function createCurrency($conn, $input, string $userId): void {
     $id         = generateUUID();
     $created_by = mysqli_real_escape_string($conn, $userId);
 
-    $insert = "INSERT INTO currency_new
+    $insert = "INSERT INTO currency
                (currency_id, currency_code, currency_symbol, currency_name, created_by)
                VALUES ('$id', '$currency_code', '$currency_symbol', $name_val, '$created_by')";
 
@@ -63,11 +63,11 @@ function getAllCurrency($conn, string $params = '', int $page = 1, int $limit = 
         ? "WHERE currency_code LIKE '%$params%' OR currency_name LIKE '%$params%' OR currency_symbol LIKE '%$params%'"
         : '';
 
-    $countResult = mysqli_query($conn, "SELECT COUNT(*) AS total FROM currency_new $where");
+    $countResult = mysqli_query($conn, "SELECT COUNT(*) AS total FROM currency $where");
     $total       = (int) mysqli_fetch_assoc($countResult)['total'];
 
     $result = mysqli_query($conn, "SELECT currency_id, currency_code, currency_symbol, currency_name
-                                   FROM currency_new $where
+                                   FROM currency $where
                                    ORDER BY currency_code ASC
                                    LIMIT $limit OFFSET $offset");
 
@@ -96,7 +96,7 @@ function getDetailCurrency($conn, ?string $currency_id): void {
     $id     = mysqli_real_escape_string($conn, $currency_id);
     $result = mysqli_query($conn, "SELECT currency_id, currency_code, currency_symbol, currency_name,
                                           created_by, created_at, updated_by, updated_at
-                                   FROM currency_new WHERE currency_id = '$id' LIMIT 1");
+                                   FROM currency WHERE currency_id = '$id' LIMIT 1");
 
     if ($result && mysqli_num_rows($result) > 0) {
         jsonResponse(200, 'Currency found', mysqli_fetch_assoc($result));
@@ -112,7 +112,7 @@ function updateCurrency($conn, $input, string $userId): void {
     }
 
     $id    = mysqli_real_escape_string($conn, $input['currency_id']);
-    $check = mysqli_query($conn, "SELECT 1 FROM currency_new WHERE currency_id = '$id' LIMIT 1");
+    $check = mysqli_query($conn, "SELECT 1 FROM currency WHERE currency_id = '$id' LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Currency not found');
     }
@@ -123,7 +123,7 @@ function updateCurrency($conn, $input, string $userId): void {
         $code = strtoupper(trim(mysqli_real_escape_string($conn, $input['currency_code'])));
         if ($code === '') jsonResponse(400, 'currency_code cannot be empty');
         if (strlen($code) !== 3) jsonResponse(400, 'currency_code must be exactly 3 characters');
-        $dup = mysqli_query($conn, "SELECT 1 FROM currency_new WHERE currency_code = '$code' AND currency_id != '$id' LIMIT 1");
+        $dup = mysqli_query($conn, "SELECT 1 FROM currency WHERE currency_code = '$code' AND currency_id != '$id' LIMIT 1");
         if (mysqli_num_rows($dup) > 0) jsonResponse(400, 'currency_code already exists');
         $updates[] = "currency_code = '$code'";
     }
@@ -146,7 +146,7 @@ function updateCurrency($conn, $input, string $userId): void {
     $updated_by = mysqli_real_escape_string($conn, $userId);
     $updates[]  = "updated_by = '$updated_by'";
 
-    if (mysqli_query($conn, "UPDATE currency_new SET " . implode(', ', $updates) . " WHERE currency_id = '$id'")) {
+    if (mysqli_query($conn, "UPDATE currency SET " . implode(', ', $updates) . " WHERE currency_id = '$id'")) {
         jsonResponse(200, 'Currency updated successfully');
     } else {
         jsonResponse(500, 'Failed to update currency');
@@ -160,12 +160,12 @@ function deleteCurrency($conn, ?string $currency_id): void {
     }
 
     $id    = mysqli_real_escape_string($conn, $currency_id);
-    $check = mysqli_query($conn, "SELECT 1 FROM currency_new WHERE currency_id = '$id' LIMIT 1");
+    $check = mysqli_query($conn, "SELECT 1 FROM currency WHERE currency_id = '$id' LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Currency not found');
     }
 
-    if (mysqli_query($conn, "DELETE FROM currency_new WHERE currency_id = '$id'")) {
+    if (mysqli_query($conn, "DELETE FROM currency WHERE currency_id = '$id'")) {
         jsonResponse(200, 'Currency deleted successfully');
     } else {
         jsonResponse(500, 'Failed to delete currency');
