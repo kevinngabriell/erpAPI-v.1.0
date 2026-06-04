@@ -68,7 +68,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 DATE(A1.date) AS as_of_date, A1.finance_category, A1.amount,
                 A1.insertby, A1.insertdt
          FROM financeTransaction A1
-         LEFT JOIN account_code A2 ON A1.accountcode = A2.code
+         LEFT JOIN account_code A2 ON A1.accountcode = A2.account_code
          WHERE " . implode(' AND ', $where) . "
          ORDER BY A1.date DESC, A1.accountcode ASC"
     );
