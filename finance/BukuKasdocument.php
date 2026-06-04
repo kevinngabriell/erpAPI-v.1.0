@@ -26,7 +26,7 @@ $query = "SELECT
             CASE WHEN A1.finance_category = '174c61e8-226d-11ef-a' THEN A1.amount ELSE 0 END AS debit, 
             CASE WHEN A1.finance_category = '1d604104-226d-11ef-a' THEN -A1.amount ELSE 0 END AS credit 
           FROM financeTransaction A1
-          LEFT JOIN account_code A2 ON A1.accountcode COLLATE utf8mb4_general_ci = A2.account_code
+          LEFT JOIN account_code A2 ON A1.accountcode  = A2.account_code
           WHERE A1.bank_account = '$bank_account'
           AND (A1.date BETWEEN '$start_date' AND '$end_date')
           UNION ALL

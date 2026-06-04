@@ -44,7 +44,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             A1.finance_category,
             A1.amount
         FROM financeTransaction A1
-        LEFT JOIN account_code A2 ON A1.accountcode COLLATE utf8mb4_general_ci COLLATE utf8mb4_general_ci = A2.account_code
+        LEFT JOIN account_code A2 ON A1.accountcode   = A2.account_code
         WHERE DATE(A1.date) BETWEEN '$start_date' AND '$end_date'
           AND (A1.memo IS NULL OR A1.memo != '__SALDO_AWAL__')
         $account_filter

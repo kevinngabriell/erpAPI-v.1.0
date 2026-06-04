@@ -15,7 +15,7 @@ if($_SERVER['REQUEST_METHOD'] === 'GET'){
 
     $query = "SELECT A1.bank_account, A1.voucher_no, A1.date, A1.memo, A1.amount, A1.accountcode, A2.account_code_name_alias, A1.accountamount, A1.accountmemo, A3.bank_name
         FROM financeTransaction A1
-        LEFT JOIN account_code A2 ON A1.accountcode COLLATE utf8mb4_general_ci = A2.account_code
+        LEFT JOIN account_code A2 ON A1.accountcode  = A2.account_code
         LEFT JOIN bank_account A3 ON A1.bank_account = A3.bank_number
         WHERE A1.id_transaction = '$id_transaction';";
 

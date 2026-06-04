@@ -61,7 +61,7 @@ $result_one = mysqli_query($connect, "
            A1.amount AS paid_amount,
            NULL AS party_type
     FROM financeTransaction A1
-    LEFT JOIN account_code A2 ON A1.accountcode COLLATE utf8mb4_general_ci COLLATE utf8mb4_general_ci  = A2.account_code
+    LEFT JOIN account_code A2 ON A1.accountcode    = A2.account_code
     LEFT JOIN finance_category A3 ON A1.finance_category = A3.category_id
     WHERE $ba_ft
       AND DATE(A1.date) BETWEEN '$start_date' AND '$end_date'
