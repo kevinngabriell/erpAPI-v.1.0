@@ -1,6 +1,5 @@
 <?php
 
-
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit();
@@ -12,13 +11,6 @@ require_once '../../connection/connection.php';
 require_once '../../auth/middleware.php';
 
 $ACCOUNT_TYPES = ['asset', 'liability', 'equity', 'revenue', 'expense'];
-
-function generateUUID(): string {
-    $data    = random_bytes(16);
-    $data[6] = chr(ord($data[6]) & 0x0f | 0x40);
-    $data[8] = chr(ord($data[8]) & 0x3f | 0x80);
-    return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
-}
 
 // --- CREATE ---
 function createAccountCode($conn, $input, string $userId): void {
