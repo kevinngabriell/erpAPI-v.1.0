@@ -27,7 +27,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST'){
     $payment_date = $_POST["payment_date"];
     $form_no = $_POST["form_no"];
     $bank_number = $_POST["bank_number"];
-    $rate = $_POST["rate"];
+    $rate = !empty($_POST["rate"]) ? (float)$_POST["rate"] : 1;
     $cheque_no = $_POST["cheque_no"];
     $cheque_date = $_POST["cheque_date"];
     $cheque_amount = $_POST["cheque_amount"];    
@@ -39,15 +39,21 @@ if($_SERVER['REQUEST_METHOD'] === 'POST'){
     $currentDateTime->setTimezone($indonesiaTimeZone);
     $currentDateTimeString = $currentDateTime->format("Y-m-d H:i:s");     
     
-    $payment_date_parts = explode(' ', $payment_date);
-    $payment_date_string = $payment_date_parts[1] . ' ' . $payment_date_parts[2] . ' ' . $payment_date_parts[3];
-    $payment_date_obj = DateTime::createFromFormat('M d Y', $payment_date_string);
-    $formatted_payment_date = $payment_date_obj->format("Y-m-d");
-    
-    $cheque_date_parts = explode(' ', $cheque_date);
-    $cheque_date_string = $cheque_date_parts[1] . ' ' . $cheque_date_parts[2] . ' ' . $cheque_date_parts[3];
-    $cheque_date_obj = DateTime::createFromFormat('M d Y', $cheque_date_string);
-    $formatted_cheque_date = $cheque_date_obj->format("Y-m-d");
+    $payment_timestamp = strtotime($payment_date);
+    if (!$payment_timestamp) {
+        http_response_code(400);
+        echo json_encode(["StatusCode" => 400, "Status" => "Error", "message" => "Invalid payment_date format: $payment_date"]);
+        exit;
+    }
+    $formatted_payment_date = date("Y-m-d", $payment_timestamp);
+
+    $formatted_cheque_date = null;
+    if (!empty($cheque_date)) {
+        $cheque_timestamp = strtotime($cheque_date);
+        if ($cheque_timestamp) {
+            $formatted_cheque_date = date("Y-m-d", $cheque_timestamp);
+        }
+    }
 
     for ($i = 1; $i <= $invoice_length; $i++) {
         $invoice_number = $_POST['invoice_number_' . $i];
