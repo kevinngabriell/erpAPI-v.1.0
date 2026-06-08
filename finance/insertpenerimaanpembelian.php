@@ -39,7 +39,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST'){
     $currentDateTime->setTimezone($indonesiaTimeZone);
     $currentDateTimeString = $currentDateTime->format("Y-m-d H:i:s");
 
-    $payment_timestamp = strtotime($payment_date);
+    $payment_timestamp = strtotime(preg_replace('/\s*\(.*\)$/', '', $payment_date));
     if (!$payment_timestamp) {
         http_response_code(400);
         echo json_encode(["StatusCode" => 400, "Status" => "Error", "message" => "Invalid payment_date format: $payment_date"]);
@@ -49,7 +49,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST'){
 
     $formatted_cheque_date = null;
     if (!empty($cheque_date)) {
-        $cheque_timestamp = strtotime($cheque_date);
+        $cheque_timestamp = strtotime(preg_replace('/\s*\(.*\)$/', '', $cheque_date));
         if ($cheque_timestamp) {
             $formatted_cheque_date = date("Y-m-d", $cheque_timestamp);
         }
