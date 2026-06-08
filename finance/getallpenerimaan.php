@@ -25,7 +25,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $end_date   = isset($_GET['end_date'])   ? mysqli_real_escape_string($connect, $_GET['end_date'])   : '';
 
     $where = "A1.finance_category = '174c61e8-226d-11ef-a'";
-    if ($search !== '')     $where .= " AND (A1.memo LIKE '%$search%' OR A1.bank_account LIKE '%$search%' OR A2.account_name LIKE '%$search%')";
+    if ($search !== '')     $where .= " AND (A1.memo LIKE '%$search%' OR A1.bank_account LIKE '%$search%' OR A2.account_code_name LIKE '%$search%')";
     if ($start_date !== '') $where .= " AND A1.date >= '$start_date'";
     if ($end_date !== '')   $where .= " AND A1.date <= '$end_date'";
 
