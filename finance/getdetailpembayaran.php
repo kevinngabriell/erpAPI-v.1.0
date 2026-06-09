@@ -42,6 +42,39 @@ if($_SERVER['REQUEST_METHOD'] === 'GET'){
             );
         }
 
+        // Fall back to financeItem (supplier payments) if not found in financeTransaction
+        if (empty($array)) {
+            $query_fi = "SELECT A1.bank AS bank_account, A1.formno AS voucher_no, A1.chequeno, A1.paymentdate AS date,
+                                A1.memo, A1.penerima AS payee, A1.paid_amount AS amount, A1.supplier AS accountcode,
+                                A2.supplier_name AS account_code_name_alias, A1.paid_amount AS accountamount,
+                                A1.invoice_number AS accountmemo, A3.bank_name
+                         FROM financeItem A1
+                         LEFT JOIN supplier A2 ON A1.supplier = A2.supplier_id
+                         LEFT JOIN bank_account A3 ON A1.bank = A3.bank_number
+                         WHERE A1.id_transaction = '$id_transaction'";
+
+            $result_fi = mysqli_query($connect, $query_fi);
+            while ($row = mysqli_fetch_array($result_fi)) {
+                array_push(
+                    $array,
+                    array(
+                        'bank_account' => $row['bank_account'],
+                        'voucher_no'   => $row['voucher_no'],
+                        'chequeno'     => $row['chequeno'],
+                        'date'         => $row['date'],
+                        'memo'         => $row['memo'],
+                        'payee'        => $row['payee'],
+                        'amount'       => $row['amount'],
+                        'accountcode'  => $row['accountcode'],
+                        'account_name_alias' => $row['account_code_name_alias'],
+                        'accountamount' => $row['accountamount'],
+                        'accountmemo'  => $row['accountmemo'],
+                        'bank_name'    => $row['bank_name']
+                    )
+                );
+            }
+        }
+
         if($array){
             echo json_encode(
                 array(
