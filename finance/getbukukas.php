@@ -57,7 +57,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                    ELSE 0
                END AS amount
         FROM financeItem A1
-        WHERE $ba_fi AND DATE(A1.paymentdate) <= '$start_date'
+        WHERE $ba_fi AND DATE(A1.paymentdate) < '$start_date'
     ) AS balances";
 
     $beginningBalanceResult = mysqli_query($connect, $beginningBalanceQuery);
@@ -112,7 +112,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             WHERE $ba_fi
               AND A1.supplier IS NOT NULL
               AND A1.paid_amount IS NOT NULL
-              AND DATE(A1.paymentdate) > '$start_date' AND DATE(A1.paymentdate) <= '$end_date'
+              AND DATE(A1.paymentdate) >= '$start_date' AND DATE(A1.paymentdate) <= '$end_date'
 
             UNION ALL
 
@@ -121,7 +121,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             WHERE $ba_fi
               AND A1.customer IS NOT NULL
               AND A1.paid_amount IS NOT NULL
-              AND DATE(A1.paymentdate) > '$start_date' AND DATE(A1.paymentdate) <= '$end_date'
+              AND DATE(A1.paymentdate) >= '$start_date' AND DATE(A1.paymentdate) <= '$end_date'
         ) AS combined_results";
 
     $totalResult = mysqli_query($connect, $totalQuery);
@@ -134,10 +134,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
     // Transaction list — exclude __SALDO_AWAL__ sentinel so it doesn't appear as a row
     $query_one = "SELECT A1.bank_account, A1.chequeno, A1.date AS transaction_date,
-                         A2.account_code_name_alias, A1.amount, A3.category_name
+                         A1.memo, A2.account_code_name_alias, A1.amount, A3.category_name,
+                         A1.finance_category
         FROM financeTransaction A1
-        LEFT JOIN account_code A2 ON A1.accountcode   = A2.account_code 
-        LEFT JOIN finance_category A3 ON A1.finance_category = A3.category_id 
+        LEFT JOIN account_code A2 ON A1.accountcode   = A2.account_code
+        LEFT JOIN finance_category A3 ON A1.finance_category = A3.category_id
         WHERE $ba_ft
           AND DATE(A1.date) BETWEEN '$start_date' AND '$end_date'
           AND (A1.memo IS NULL OR (A1.memo NOT LIKE 'SALDO AWAL%' AND A1.memo != '__SALDO_AWAL__'))";
@@ -149,7 +150,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         WHERE $ba_fi
           AND A1.supplier IS NOT NULL
           AND A1.paid_amount IS NOT NULL
-          AND DATE(A1.paymentdate) > '$start_date' AND DATE(A1.paymentdate) <= '$end_date'";
+          AND DATE(A1.paymentdate) >= '$start_date' AND DATE(A1.paymentdate) <= '$end_date'";
 
     $query_three = "SELECT A1.bank, A1.chequeno, A1.paymentdate AS transaction_date,
                            A1.paid_amount, A2.company_name, A1.rate
@@ -158,7 +159,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         WHERE $ba_fi
           AND A1.customer IS NOT NULL
           AND A1.paid_amount IS NOT NULL
-          AND DATE(A1.paymentdate) > '$start_date' AND DATE(A1.paymentdate) <= '$end_date'";
+          AND DATE(A1.paymentdate) >= '$start_date' AND DATE(A1.paymentdate) <= '$end_date'";
 
     // Fetching results
     $result_one = mysqli_query($connect, $query_one);
