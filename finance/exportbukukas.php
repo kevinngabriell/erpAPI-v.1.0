@@ -42,12 +42,12 @@ $bbResult = mysqli_query($connect, "
         WHERE $ba_ft AND (DATE(A1.date) < '$start_date' OR (DATE(A1.date) = '$start_date' AND (A1.memo LIKE 'SALDO AWAL%' OR A1.memo = '__SALDO_AWAL__')))
         UNION ALL
         SELECT CASE
-                   WHEN A1.supplier IS NOT NULL THEN -A1.paid_amount
-                   WHEN A1.customer IS NOT NULL THEN A1.paid_amount
+                   WHEN A1.supplier IS NOT NULL THEN -(A1.paid_amount * COALESCE(A1.rate, 1))
+                   WHEN A1.customer IS NOT NULL THEN  (A1.paid_amount * COALESCE(A1.rate, 1))
                    ELSE 0
                END AS amount
         FROM financeItem A1
-        WHERE $ba_fi AND DATE(A1.paymentdate) <= '$start_date'
+        WHERE $ba_fi AND DATE(A1.paymentdate) < '$start_date'
     ) AS balances
 ");
 $beginningBalance = (float)(mysqli_fetch_assoc($bbResult)['balance'] ?? 0);
@@ -74,14 +74,14 @@ $result_two = mysqli_query($connect, "
            A2.supplier_name AS description,
            NULL AS category_name,
            NULL AS finance_category,
-           A1.paid_amount,
+           A1.paid_amount * COALESCE(A1.rate, 1) AS paid_amount,
            'supplier' AS party_type
     FROM financeItem A1
     LEFT JOIN supplier A2 ON A1.supplier = A2.supplier_id
     WHERE $ba_fi
       AND A1.supplier IS NOT NULL
       AND A1.paid_amount IS NOT NULL
-      AND DATE(A1.paymentdate) > '$start_date' AND DATE(A1.paymentdate) <= '$end_date'
+      AND DATE(A1.paymentdate) >= '$start_date' AND DATE(A1.paymentdate) <= '$end_date'
 ");
 
 // Transaction rows — financeItem (customer / receivable)
@@ -90,14 +90,14 @@ $result_three = mysqli_query($connect, "
            A2.company_name AS description,
            NULL AS category_name,
            NULL AS finance_category,
-           A1.paid_amount,
+           A1.paid_amount * COALESCE(A1.rate, 1) AS paid_amount,
            'customer' AS party_type
     FROM financeItem A1
     LEFT JOIN customer A2 ON A1.customer = A2.company_id
     WHERE $ba_fi
       AND A1.customer IS NOT NULL
       AND A1.paid_amount IS NOT NULL
-      AND DATE(A1.paymentdate) > '$start_date' AND DATE(A1.paymentdate) <= '$end_date'
+      AND DATE(A1.paymentdate) >= '$start_date' AND DATE(A1.paymentdate) <= '$end_date'
 ");
 
 $transactions = array_merge(
