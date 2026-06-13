@@ -40,6 +40,37 @@ if($_SERVER['REQUEST_METHOD'] === 'GET'){
             );
         }
 
+        // Fallback: if not found in financeTransaction, look up in financeItem (customer payments)
+        if (!$array) {
+            $query = "SELECT A1.bank AS bank_account, A1.formno AS voucher_no, A1.paymentdate AS date,
+                             A1.memo, A1.paid_amount AS amount, NULL AS accountcode,
+                             A2.company_name AS account_name_alias, NULL AS accountamount, NULL AS accountmemo,
+                             A3.bank_name
+                      FROM financeItem A1
+                      LEFT JOIN customer A2 ON A1.customer = A2.company_id
+                      LEFT JOIN bank_account A3 ON A1.bank = A3.bank_number
+                      WHERE A1.id_transaction = '$id_transaction' AND A1.customer IS NOT NULL";
+
+            $result = mysqli_query($connect, $query);
+            while ($row = mysqli_fetch_array($result)) {
+                array_push(
+                    $array,
+                    array(
+                        'bank_account' => $row['bank_account'],
+                        'voucher_no' => $row['voucher_no'],
+                        'date' => $row['date'],
+                        'memo' => $row['memo'],
+                        'amount' => $row['amount'],
+                        'accountcode' => $row['accountcode'],
+                        'account_name_alias' => $row['account_name_alias'],
+                        'accountamount' => $row['accountamount'],
+                        'accountmemo' => $row['accountmemo'],
+                        'bank_name' => $row['bank_name']
+                    )
+                );
+            }
+        }
+
         if($array){
             echo json_encode(
                 array(
