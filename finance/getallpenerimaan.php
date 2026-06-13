@@ -31,8 +31,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
     $where_fi = "A1.customer IS NOT NULL AND A1.paymentdate IS NOT NULL AND A1.paid_amount IS NOT NULL";
     if ($search !== '')     $where_fi .= " AND (A1.memo LIKE '%$search%' OR A1.bank LIKE '%$search%' OR A3.company_name LIKE '%$search%')";
-    if ($start_date !== '') $where_fi .= " AND A1.paymentdate > '$start_date'";
-    if ($end_date !== '')   $where_fi .= " AND A1.paymentdate < '$end_date'";
+    if ($start_date !== '') $where_fi .= " AND A1.paymentdate >= '$start_date'";
+    if ($end_date !== '')   $where_fi .= " AND A1.paymentdate <= '$end_date'";
 
     // Query to get total number of items across both sources
     $totalQuery = "SELECT SUM(cnt) AS total FROM (
