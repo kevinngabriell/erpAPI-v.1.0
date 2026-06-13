@@ -52,8 +52,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         WHERE $ba_ft AND (DATE(A1.date) < '$start_date' OR (DATE(A1.date) = '$start_date' AND (A1.memo LIKE 'SALDO AWAL%' OR A1.memo = '__SALDO_AWAL__')))
         UNION ALL
         SELECT CASE
-                   WHEN A1.supplier IS NOT NULL THEN -A1.paid_amount
-                   WHEN A1.customer IS NOT NULL THEN A1.paid_amount
+                   WHEN A1.supplier IS NOT NULL THEN -(A1.paid_amount * COALESCE(NULLIF(A1.rate, 0), 1))
+                   WHEN A1.customer IS NOT NULL THEN  (A1.paid_amount * COALESCE(NULLIF(A1.rate, 0), 1))
                    ELSE 0
                END AS amount
         FROM financeItem A1
@@ -68,33 +68,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     }
     $beginningBalance = (float)(mysqli_fetch_assoc($beginningBalanceResult)['balance'] ?? 0);
 
-    // End balance — __SALDO_AWAL__ adjustment is included automatically in the SUM
-    $endBalanceQuery = "SELECT SUM(amount) AS balance FROM (
-        SELECT CASE
-                   WHEN A1.amount < 0 THEN A1.amount
-                   WHEN A1.finance_category = '174c61e8-226d-11ef-a' THEN A1.amount
-                   WHEN A1.finance_category = '1d604104-226d-11ef-a' THEN -A1.amount
-                   ELSE 0
-               END AS amount
-        FROM financeTransaction A1
-        WHERE $ba_ft AND DATE(A1.date) <= '$end_date'
-        UNION ALL
-        SELECT CASE
-                   WHEN A1.supplier IS NOT NULL THEN -A1.paid_amount
-                   WHEN A1.customer IS NOT NULL THEN A1.paid_amount
-                   ELSE 0
-               END AS amount
-        FROM financeItem A1
-        WHERE $ba_fi AND DATE(A1.paymentdate) <= '$end_date'
-    ) AS balances";
-
-    $endBalanceResult = mysqli_query($connect, $endBalanceQuery);
-    if (!$endBalanceResult) {
-        http_response_code(500);
-        echo json_encode(['error' => mysqli_error($connect)]);
-        exit;
-    }
-    $endBalance = (float)(mysqli_fetch_assoc($endBalanceResult)['balance'] ?? 0);
+    // end_balance is derived after $transactions is built (see below) to guarantee
+    // it matches the frontend's running balance exactly.
+    $endBalance = 0.0;
 
     // Total count — exclude __SALDO_AWAL__ sentinel from the list
     $totalQuery = "SELECT SUM(total_amount) AS total_transactions
@@ -183,6 +159,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     usort($transactions, function($a, $b) {
         return strtotime($a['transaction_date']) - strtotime($b['transaction_date']);
     });
+
+    // Compute end_balance from beginning_balance + in-period net using the same
+    // logic and data as the frontend running balance, so they always match.
+    $endBalance = $beginningBalance;
+    foreach ($transactions as $t) {
+        if (isset($t['finance_category'])) {
+            $amount = (float)($t['amount'] ?? 0);
+            if ($amount < 0) {
+                $endBalance += $amount;
+            } elseif ($t['finance_category'] === '174c61e8-226d-11ef-a') {
+                $endBalance += $amount;
+            } elseif ($t['finance_category'] === '1d604104-226d-11ef-a') {
+                $endBalance -= $amount;
+            }
+        } elseif (isset($t['supplier_name'])) {
+            $rate = (float)($t['rate'] ?? 0);
+            $endBalance -= (float)($t['paid_amount'] ?? 0) * ($rate ?: 1);
+        } elseif (isset($t['company_name'])) {
+            $rate = (float)($t['rate'] ?? 0);
+            $endBalance += (float)($t['paid_amount'] ?? 0) * ($rate ?: 1);
+        }
+    }
 
     // Prepare response
     $response = array(
