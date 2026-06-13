@@ -24,26 +24,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $start_date = isset($_GET['start_date']) ? mysqli_real_escape_string($connect, $_GET['start_date']) : '';
     $end_date   = isset($_GET['end_date'])   ? mysqli_real_escape_string($connect, $_GET['end_date'])   : '';
 
-    $where = "A1.finance_category = '174c61e8-226d-11ef-a'";
-    if ($search !== '')     $where .= " AND (A1.memo LIKE '%$search%' OR A1.bank_account LIKE '%$search%' OR A2.account_code_name LIKE '%$search%')";
-    if ($start_date !== '') $where .= " AND A1.date >= '$start_date'";
-    if ($end_date !== '')   $where .= " AND A1.date <= '$end_date'";
+    $where_ft = "A1.finance_category = '174c61e8-226d-11ef-a'";
+    if ($search !== '')     $where_ft .= " AND (A1.memo LIKE '%$search%' OR A1.bank_account LIKE '%$search%' OR A2.account_code_name LIKE '%$search%')";
+    if ($start_date !== '') $where_ft .= " AND A1.date >= '$start_date'";
+    if ($end_date !== '')   $where_ft .= " AND A1.date <= '$end_date'";
 
-    // Query to get total number of items
-    $totalQuery = "SELECT COUNT(*) as total
-                   FROM financeTransaction A1
-                   LEFT JOIN account_code A2 ON A1.accountcode   = A2.account_code
-                   WHERE $where";
+    $where_fi = "A1.customer IS NOT NULL AND A1.paymentdate IS NOT NULL AND A1.paid_amount IS NOT NULL";
+    if ($search !== '')     $where_fi .= " AND (A1.memo LIKE '%$search%' OR A1.bank LIKE '%$search%' OR A3.company_name LIKE '%$search%')";
+    if ($start_date !== '') $where_fi .= " AND A1.paymentdate >= '$start_date'";
+    if ($end_date !== '')   $where_fi .= " AND A1.paymentdate <= '$end_date'";
+
+    // Query to get total number of items across both sources
+    $totalQuery = "SELECT SUM(cnt) AS total FROM (
+                       SELECT COUNT(*) AS cnt
+                       FROM financeTransaction A1
+                       LEFT JOIN account_code A2 ON A1.accountcode = A2.account_code
+                       WHERE $where_ft
+                       UNION ALL
+                       SELECT COUNT(*) AS cnt
+                       FROM financeItem A1
+                       LEFT JOIN customer A3 ON A1.customer = A3.company_id
+                       WHERE $where_fi
+                   ) AS combined";
     $totalResult = mysqli_query($connect, $totalQuery);
     $totalRow = mysqli_fetch_assoc($totalResult);
     $totalItems = $totalRow['total'];
 
-    // Query to get paginated results
-    $query = "SELECT A1.amount, A2.account_code_name, A1.bank_account, A1.id_transaction, A1.date, A1.memo
-              FROM financeTransaction A1
-              LEFT JOIN account_code A2 ON A1.accountcode   = A2.account_code
-              WHERE $where
-              ORDER BY A1.date DESC
+    // Query to get paginated results from both financeTransaction and financeItem (customer payments)
+    $query = "SELECT amount, account_name, bank_account, id_transaction, date, memo
+              FROM (
+                  SELECT A1.amount, A2.account_code_name AS account_name, A1.bank_account,
+                         A1.id_transaction, A1.date, A1.memo
+                  FROM financeTransaction A1
+                  LEFT JOIN account_code A2 ON A1.accountcode = A2.account_code
+                  WHERE $where_ft
+
+                  UNION ALL
+
+                  SELECT A1.paid_amount AS amount, A3.company_name AS account_name, A1.bank AS bank_account,
+                         A1.id_transaction, A1.paymentdate AS date, A1.memo
+                  FROM financeItem A1
+                  LEFT JOIN customer A3 ON A1.customer = A3.company_id
+                  WHERE $where_fi
+              ) AS combined
+              ORDER BY date DESC
               LIMIT $limit OFFSET $offset";
 
     $result = mysqli_query($connect, $query);
@@ -54,7 +78,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             $array,
             array(
                 'amount' => $row['amount'],
-                'account_name' => $row['account_code_name'],
+                'account_name' => $row['account_name'],
                 'bank_account' => $row['bank_account'],
                 'id_transaction' => $row['id_transaction'],
                 'date' => $row['date'],

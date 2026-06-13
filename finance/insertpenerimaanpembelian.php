@@ -62,10 +62,26 @@ if($_SERVER['REQUEST_METHOD'] === 'POST'){
         $paymount_amount = $_POST['paymount_amount_' . $i];
         $discount_amount = isset($_POST['discount_amount_' . $i]) ? (float)$_POST['discount_amount_' . $i] : 0;
 
-        $due = $invoice_amount - $paymount_amount - $discount_amount;
-
         $insert_query = "INSERT INTO financeItem(id_transaction, `invoice_number`, `paid_amount`, `discount_amount`, `supplier`, `paymentdate`, `formno`, `bank`, `rate`, `chequeno`, `chequedate`, `memo`, `insert_by`, `insert_dt`, penerima) VALUES (UUID() ,'$invoice_number','$paymount_amount','$discount_amount','$supplier_id','$formatted_payment_date','$form_no','$bank_number','$rate','$cheque_no','$formatted_cheque_date','$memo','$username','$currentDateTimeString', '$penerima')";
-        $update_query = "UPDATE financeItem A1 SET A1.due_amount = '$due', A1.update_by = '$username', A1.update_dt = '$currentDateTimeString' WHERE A1.invoice_number = '$invoice_number';";
+
+        // Recalculate due_amount from source of truth: original invoice row minus all actual payments+discounts
+        $update_query = "UPDATE financeItem fi
+            SET fi.due_amount = (
+                SELECT original_due - total_cleared FROM (
+                    SELECT
+                        (SELECT fi2.due_amount FROM financeItem fi2
+                         WHERE fi2.invoice_number = '$invoice_number'
+                           AND fi2.paymentdate IS NULL
+                         ORDER BY fi2.insert_dt ASC LIMIT 1) AS original_due,
+                        SUM(COALESCE(fi3.paid_amount, 0) + COALESCE(fi3.discount_amount, 0)) AS total_cleared
+                    FROM financeItem fi3
+                    WHERE fi3.invoice_number = '$invoice_number'
+                      AND fi3.paymentdate IS NOT NULL
+                ) AS calc
+            ),
+            fi.update_by = '$username',
+            fi.update_dt = '$currentDateTimeString'
+            WHERE fi.invoice_number = '$invoice_number'";
     
         if (mysqli_query($connect, $insert_query) && mysqli_query($connect, $update_query)) {
             http_response_code(200);
