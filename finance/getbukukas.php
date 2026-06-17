@@ -23,8 +23,8 @@ register_shutdown_function(function () {
 // Checking call API method
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $bank_account = mysqli_real_escape_string($connect, $_GET['bank_account'] ?? '');
-    $start_date   = mysqli_real_escape_string($connect, $_GET['start_date'] ?? '');
-    $end_date     = mysqli_real_escape_string($connect, $_GET['end_date'] ?? '');
+    $start_date   = normalizeDate($_GET['start_date'] ?? '');
+    $end_date     = normalizeDate($_GET['end_date'] ?? '');
     $accountcode  = mysqli_real_escape_string($connect, $_GET['accountcode'] ?? '');
 
     if (!empty($bank_account)) {

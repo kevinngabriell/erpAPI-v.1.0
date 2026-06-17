@@ -22,13 +22,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
     // Search params
     $search     = isset($_GET['search'])     ? mysqli_real_escape_string($connect, $_GET['search'])     : '';
-    $start_date = isset($_GET['start_date']) ? mysqli_real_escape_string($connect, $_GET['start_date']) : '';
-    $end_date   = isset($_GET['end_date'])   ? mysqli_real_escape_string($connect, $_GET['end_date'])   : '';
+    $start_date = normalizeDate($_GET['start_date'] ?? '');
+    $end_date   = normalizeDate($_GET['end_date'] ?? '');
 
     $where = "A2.customerID IS NOT NULL AND A1.customer IS NULL";
     if ($search !== '')     $where .= " AND (A3.company_name LIKE '%$search%' OR A1.invoice_number LIKE '%$search%')";
-    if ($start_date !== '') $where .= " AND A2.invoiceDate >= '$start_date'";
-    if ($end_date !== '')   $where .= " AND A2.invoiceDate <= '$end_date'";
+    if ($start_date !== '') $where .= " AND DATE(A2.invoiceDate) >= '$start_date'";
+    if ($end_date !== '')   $where .= " AND DATE(A2.invoiceDate) <= '$end_date'";
 
     // Query to get total number of items
     $totalQuery = "SELECT COUNT(*) as transaction_count

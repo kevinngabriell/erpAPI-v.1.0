@@ -11,8 +11,8 @@ use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
 
 $bank_account = isset($_GET['bank_account']) ? mysqli_real_escape_string($connect, $_GET['bank_account']) : '';
-$start_date   = isset($_GET['start_date'])   ? mysqli_real_escape_string($connect, $_GET['start_date'])   : date('Y-m-01');
-$end_date     = isset($_GET['end_date'])     ? mysqli_real_escape_string($connect, $_GET['end_date'])     : date('Y-m-d');
+$start_date   = isset($_GET['start_date'])   ? normalizeDate($_GET['start_date'])   : date('Y-m-01');
+$end_date     = isset($_GET['end_date'])     ? normalizeDate($_GET['end_date'])     : date('Y-m-d');
 $accountcode  = isset($_GET['accountcode'])  ? mysqli_real_escape_string($connect, $_GET['accountcode'])  : '';
 
 if (!empty($bank_account)) {

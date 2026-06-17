@@ -22,8 +22,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
     // Search params
     $search     = isset($_GET['search'])     ? mysqli_real_escape_string($connect, $_GET['search'])     : '';
-    $start_date = isset($_GET['start_date']) ? mysqli_real_escape_string($connect, $_GET['start_date']) : '';
-    $end_date   = isset($_GET['end_date'])   ? mysqli_real_escape_string($connect, $_GET['end_date'])   : '';
+    $start_date = normalizeDate($_GET['start_date'] ?? '');
+    $end_date   = normalizeDate($_GET['end_date'] ?? '');
 
     $where_ft = "A1.finance_category = '1d604104-226d-11ef-a'";
     if ($search !== '')     $where_ft .= " AND (A1.memo LIKE '%$search%' OR A1.bank_account LIKE '%$search%' OR A2.account_code_name LIKE '%$search%')";

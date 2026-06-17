@@ -21,18 +21,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
     // Search params
     $search     = isset($_GET['search'])     ? mysqli_real_escape_string($connect, $_GET['search'])     : '';
-    $start_date = isset($_GET['start_date']) ? mysqli_real_escape_string($connect, $_GET['start_date']) : '';
-    $end_date   = isset($_GET['end_date'])   ? mysqli_real_escape_string($connect, $_GET['end_date'])   : '';
+    $start_date = normalizeDate($_GET['start_date'] ?? '');
+    $end_date   = normalizeDate($_GET['end_date'] ?? '');
 
     $where_ft = "A1.finance_category = '174c61e8-226d-11ef-a'";
     if ($search !== '')     $where_ft .= " AND (A1.memo LIKE '%$search%' OR A1.bank_account LIKE '%$search%' OR A2.account_code_name LIKE '%$search%')";
-    if ($start_date !== '') $where_ft .= " AND A1.date >= '$start_date'";
-    if ($end_date !== '')   $where_ft .= " AND A1.date <= '$end_date'";
+    if ($start_date !== '') $where_ft .= " AND DATE(A1.date) >= '$start_date'";
+    if ($end_date !== '')   $where_ft .= " AND DATE(A1.date) <= '$end_date'";
 
     $where_fi = "A1.customer IS NOT NULL AND A1.paymentdate IS NOT NULL AND A1.paid_amount IS NOT NULL";
     if ($search !== '')     $where_fi .= " AND (A1.memo LIKE '%$search%' OR A1.bank LIKE '%$search%' OR A3.company_name LIKE '%$search%')";
-    if ($start_date !== '') $where_fi .= " AND A1.paymentdate >= '$start_date'";
-    if ($end_date !== '')   $where_fi .= " AND A1.paymentdate <= '$end_date'";
+    if ($start_date !== '') $where_fi .= " AND DATE(A1.paymentdate) >= '$start_date'";
+    if ($end_date !== '')   $where_fi .= " AND DATE(A1.paymentdate) <= '$end_date'";
 
     // Query to get total number of items across both sources
     $totalQuery = "SELECT SUM(cnt) AS total FROM (

@@ -10,8 +10,8 @@ const CAT_PENERIMAAN = '174c61e8-226d-11ef-a';
 const CAT_PEMBAYARAN  = '1d604104-226d-11ef-a';
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
-    $start_date = isset($_GET['start_date']) ? $_GET['start_date'] : null;
-    $end_date   = isset($_GET['end_date'])   ? $_GET['end_date']   : null;
+    $start_date = normalizeDate($_GET['start_date'] ?? '') ?: null;
+    $end_date   = normalizeDate($_GET['end_date'] ?? '') ?: null;
     $account_code_filter = isset($_GET['account_code']) ? $_GET['account_code'] : null;
 
     if (!$start_date || !$end_date) {
