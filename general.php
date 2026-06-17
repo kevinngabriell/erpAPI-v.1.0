@@ -55,6 +55,17 @@ function getCurrentDateTimeJakarta(): string {
     return $dt->format('Y-m-d H:i:s');
 }
 
+function normalizeDate(string $dateStr): string {
+    if (empty($dateStr)) return '';
+    try {
+        $dt = new DateTime($dateStr);
+        $dt->setTimezone(new DateTimeZone('Asia/Jakarta'));
+        return $dt->format('Y-m-d');
+    } catch (Exception $e) {
+        return substr($dateStr, 0, 10);
+    }
+}
+
 function cleanInput($conn, $value, string $default = '-', array $rejects = ['0', '']): string {
     if (!isset($value) || in_array(trim((string)$value), $rejects, true)) {
         return $default;

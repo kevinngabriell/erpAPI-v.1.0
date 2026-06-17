@@ -66,3 +66,16 @@ class DB {
 }
 
 $connect = DB::conn();
+
+if (!function_exists('normalizeDate')) {
+    function normalizeDate(string $dateStr): string {
+        if (empty($dateStr)) return '';
+        try {
+            $dt = new DateTime($dateStr);
+            $dt->setTimezone(new DateTimeZone('Asia/Jakarta'));
+            return $dt->format('Y-m-d');
+        } catch (Exception $e) {
+            return substr($dateStr, 0, 10);
+        }
+    }
+}
