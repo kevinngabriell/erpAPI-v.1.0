@@ -43,9 +43,10 @@ if($_SERVER['REQUEST_METHOD'] === 'GET'){
         // Fallback: if not found in financeTransaction, look up in financeItem (customer payments)
         if (!$array) {
             $query = "SELECT A1.bank AS bank_account, A1.formno AS voucher_no, A1.paymentdate AS date,
-                             A1.memo, A1.paid_amount AS amount, NULL AS accountcode,
-                             A2.company_name AS account_name_alias, NULL AS accountamount, NULL AS accountmemo,
-                             A3.bank_name
+                             A1.memo, A1.paid_amount AS amount, A1.invoice_number AS accountcode,
+                             A2.company_name AS account_name_alias, A1.paid_amount AS accountamount,
+                             A1.invoice_number AS accountmemo,
+                             A3.bank_name, A1.invoice_number, A1.due_amount
                       FROM financeItem A1
                       LEFT JOIN customer A2 ON A1.customer = A2.company_id
                       LEFT JOIN bank_account A3 ON A1.bank = A3.bank_number
@@ -65,7 +66,9 @@ if($_SERVER['REQUEST_METHOD'] === 'GET'){
                         'account_name_alias' => $row['account_name_alias'],
                         'accountamount' => $row['accountamount'],
                         'accountmemo' => $row['accountmemo'],
-                        'bank_name' => $row['bank_name']
+                        'bank_name' => $row['bank_name'],
+                        'invoice_number' => $row['invoice_number'],
+                        'due_amount' => $row['due_amount']
                     )
                 );
             }

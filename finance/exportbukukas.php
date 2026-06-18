@@ -55,7 +55,8 @@ $beginningBalance = (float)(mysqli_fetch_assoc($bbResult)['balance'] ?? 0);
 // Transaction rows — financeTransaction (exclude __SALDO_AWAL__ sentinel)
 $result_one = mysqli_query($connect, "
     SELECT A1.chequeno, A1.date AS transaction_date,
-           A2.account_code_name_alias AS description,
+           A1.memo,
+           A2.account_code_name_alias,
            A3.category_name,
            A1.finance_category,
            A1.amount AS paid_amount,
@@ -71,7 +72,8 @@ $result_one = mysqli_query($connect, "
 // Transaction rows — financeItem (supplier / payable)
 $result_two = mysqli_query($connect, "
     SELECT A1.chequeno, A1.paymentdate AS transaction_date,
-           A2.supplier_name AS description,
+           A1.memo,
+           A2.supplier_name AS account_code_name_alias,
            NULL AS category_name,
            NULL AS finance_category,
            A1.paid_amount * COALESCE(NULLIF(A1.rate, 0), 1) AS paid_amount,
@@ -87,7 +89,8 @@ $result_two = mysqli_query($connect, "
 // Transaction rows — financeItem (customer / receivable)
 $result_three = mysqli_query($connect, "
     SELECT A1.chequeno, A1.paymentdate AS transaction_date,
-           A2.company_name AS description,
+           A1.memo,
+           A2.company_name AS account_code_name_alias,
            NULL AS category_name,
            NULL AS finance_category,
            A1.paid_amount * COALESCE(NULLIF(A1.rate, 0), 1) AS paid_amount,
@@ -169,9 +172,11 @@ foreach ($transactions as $row) {
 
     $saldo += $debit - $credit;
 
+    $keterangan = !empty($row['memo']) ? $row['memo'] : ($row['account_code_name_alias'] ?? '');
+
     $sheet->setCellValue("A$r", $row['transaction_date']);
     $sheet->setCellValue("B$r", $row['chequeno']);
-    $sheet->setCellValue("C$r", $row['description']);
+    $sheet->setCellValue("C$r", $keterangan);
     $sheet->setCellValue("D$r", $jenis);
     $sheet->setCellValue("E$r", $debit  > 0 ? $debit  : '');
     $sheet->setCellValue("F$r", $credit > 0 ? $credit : '');
