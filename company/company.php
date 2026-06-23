@@ -59,9 +59,16 @@ if ($method === 'GET') {
 
 // ── POST: create new company ────────────────────────────────────────────────
 } elseif ($method === 'POST') {
+    $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
+    if (stripos($contentType, 'application/json') !== false) {
+        $input = json_decode(file_get_contents('php://input'), true) ?? [];
+    } else {
+        $input = $_POST;
+    }
+
     $required = ['company_name', 'company_address', 'company_phone', 'company_web', 'company_industry'];
     foreach ($required as $field) {
-        if (empty($_POST[$field])) {
+        if (empty($input[$field])) {
             http_response_code(400);
             echo json_encode([
                 'StatusCode' => 400,
@@ -72,11 +79,11 @@ if ($method === 'GET') {
         }
     }
 
-    $company_name     = $_POST['company_name'];
-    $company_address  = $_POST['company_address'];
-    $company_phone    = $_POST['company_phone'];
-    $company_web      = $_POST['company_web'];
-    $company_industry = $_POST['company_industry'];
+    $company_name     = $input['company_name'];
+    $company_address  = $input['company_address'];
+    $company_phone    = $input['company_phone'];
+    $company_web      = $input['company_web'];
+    $company_industry = $input['company_industry'];
 
     $stmt = $connect->prepare(
         "INSERT INTO company (company_id, company_name, company_address, company_phone, company_web, company_industry)

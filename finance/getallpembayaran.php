@@ -64,7 +64,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                   LEFT JOIN supplier A2 ON A1.supplier = A2.supplier_id
                   WHERE $where_fi
               ) AS combined
-              ORDER BY date DESC
+              ORDER BY date DESC, id_transaction ASC
               LIMIT $limit OFFSET $offset";
 
     $result = mysqli_query($connect, $query);
