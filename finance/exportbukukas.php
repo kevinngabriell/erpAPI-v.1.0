@@ -117,17 +117,17 @@ $sheet = $ss->getActiveSheet();
 $sheet->setTitle('Buku Kas');
 
 // Title
-$sheet->mergeCells('A1:G1');
+$sheet->mergeCells('A1:I1');
 $sheet->setCellValue('A1', 'BUKU KAS — Rekening: ' . $bank_account);
 $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(13);
 $sheet->getStyle('A1')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
 
-$sheet->mergeCells('A2:G2');
+$sheet->mergeCells('A2:I2');
 $sheet->setCellValue('A2', "Periode: $start_date s/d $end_date");
 $sheet->getStyle('A2')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
 
 // Header
-$headers = ['Tanggal', 'No. Cheque', 'Keterangan', 'Jenis', 'Debit', 'Kredit', 'Saldo'];
+$headers = ['Tanggal', 'No. Cheque', 'Keterangan', 'Keterangan Memo', 'Account Name', 'Jenis', 'Debit', 'Kredit', 'Saldo'];
 $sheet->fromArray($headers, null, 'A4');
 $headerStyle = [
     'font'      => ['bold' => true],
@@ -135,16 +135,16 @@ $headerStyle = [
     'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN]],
     'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER],
 ];
-$sheet->getStyle('A4:G4')->applyFromArray($headerStyle);
+$sheet->getStyle('A4:I4')->applyFromArray($headerStyle);
 
 $r = 5;
 
 // Saldo Awal row
 $sheet->setCellValue("C$r", 'Saldo Awal');
-$sheet->setCellValue("G$r", $beginningBalance);
-$sheet->getStyle("E$r:G$r")->getNumberFormat()->setFormatCode('#,##0.00');
-$sheet->getStyle("A$r:G$r")->getFont()->setItalic(true)->setBold(true);
-$sheet->getStyle("A$r:G$r")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+$sheet->setCellValue("I$r", $beginningBalance);
+$sheet->getStyle("G$r:I$r")->getNumberFormat()->setFormatCode('#,##0.00');
+$sheet->getStyle("A$r:I$r")->getFont()->setItalic(true)->setBold(true);
+$sheet->getStyle("A$r:I$r")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
 $r++;
 
 $saldo = $beginningBalance;
@@ -177,24 +177,26 @@ foreach ($transactions as $row) {
     $sheet->setCellValue("A$r", $row['transaction_date']);
     $sheet->setCellValue("B$r", $row['chequeno']);
     $sheet->setCellValue("C$r", $keterangan);
-    $sheet->setCellValue("D$r", $jenis);
-    $sheet->setCellValue("E$r", $debit  > 0 ? $debit  : '');
-    $sheet->setCellValue("F$r", $credit > 0 ? $credit : '');
-    $sheet->setCellValue("G$r", $saldo);
-    $sheet->getStyle("E$r:G$r")->getNumberFormat()->setFormatCode('#,##0.00');
-    $sheet->getStyle("A$r:G$r")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+    $sheet->setCellValue("D$r", $row['memo'] ?? '');
+    $sheet->setCellValue("E$r", $row['account_code_name_alias'] ?? '');
+    $sheet->setCellValue("F$r", $jenis);
+    $sheet->setCellValue("G$r", $debit  > 0 ? $debit  : '');
+    $sheet->setCellValue("H$r", $credit > 0 ? $credit : '');
+    $sheet->setCellValue("I$r", $saldo);
+    $sheet->getStyle("G$r:I$r")->getNumberFormat()->setFormatCode('#,##0.00');
+    $sheet->getStyle("A$r:I$r")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
     $r++;
 }
 
 // Saldo Akhir row
 $sheet->setCellValue("C$r", 'Saldo Akhir');
-$sheet->setCellValue("G$r", $saldo);
-$sheet->getStyle("A$r:G$r")->getFont()->setBold(true);
-$sheet->getStyle("E$r:G$r")->getNumberFormat()->setFormatCode('#,##0.00');
-$sheet->getStyle("A$r:G$r")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
-$sheet->getStyle("A$r:G$r")->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB('FFFFF2CC');
+$sheet->setCellValue("I$r", $saldo);
+$sheet->getStyle("A$r:I$r")->getFont()->setBold(true);
+$sheet->getStyle("G$r:I$r")->getNumberFormat()->setFormatCode('#,##0.00');
+$sheet->getStyle("A$r:I$r")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+$sheet->getStyle("A$r:I$r")->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB('FFFFF2CC');
 
-foreach (['A', 'B', 'C', 'D', 'E', 'F', 'G'] as $col) {
+foreach (['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'] as $col) {
     $sheet->getColumnDimension($col)->setAutoSize(true);
 }
 
