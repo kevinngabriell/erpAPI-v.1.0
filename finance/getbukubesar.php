@@ -100,6 +100,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         ];
     }
 
+    // If a specific account was requested but has no transactions in the period,
+    // still return it with its opening balance and empty transactions list.
+    if ($account_code_filter && empty($grouped)) {
+        $acctResult = mysqli_query($connect, "
+            SELECT account_code, account_code_name, account_code_name_alias
+            FROM account_code
+            WHERE account_code = '$account_code_filter'
+            LIMIT 1
+        ");
+        $acct = mysqli_fetch_assoc($acctResult);
+        if ($acct) {
+            $code = $acct['account_code'];
+            $openBalResult = mysqli_query($connect, "
+                SELECT SUM(IF(finance_category = '" . CAT_PENERIMAAN . "', amount, -amount)) AS opening_balance
+                FROM financeTransaction
+                WHERE accountcode = '$code' AND DATE(date) < '$start_date'
+            ");
+            $opening_balance = (float)(mysqli_fetch_assoc($openBalResult)['opening_balance'] ?? 0);
+            $grouped[$code] = [
+                'account_code'       => $code,
+                'account_name'       => $acct['account_code_name'],
+                'account_name_alias' => $acct['account_code_name_alias'],
+                'opening_balance'    => $opening_balance,
+                'total_debit'        => 0.0,
+                'total_credit'       => 0.0,
+                'closing_balance'    => $opening_balance,
+                'transactions'       => []
+            ];
+        }
+    }
+
     $data = array_values($grouped);
 
     echo json_encode([
