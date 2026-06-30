@@ -1,109 +1,156 @@
 <?php
-ini_set('display_errors', '1');
-ini_set('display_startup_errors', '1');
-error_reporting(E_ALL);
 
-require_once('../../connection/connection.php');
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(200);
+    exit();
+}
+
+require_once '../../general.php';
+require_once '../../vendor/autoload.php';
+require_once '../../connection/connection.php';
+require_once '../../auth/middleware.php';
+
+// --- GET ALL ---
+function getAllProduct($conn): void {
+    $result = mysqli_query($conn, "SELECT skuID, productName, productDesc FROM product");
+
+    if ($result && mysqli_num_rows($result) > 0) {
+        $data = [];
+        while ($row = mysqli_fetch_assoc($result)) {
+            $data[] = [
+                'skuID'               => $row['skuID'],
+                'Code'                => $row['skuID'],
+                'Product Name'        => $row['productName'],
+                'Product Description' => $row['productDesc'],
+            ];
+        }
+        jsonResponse(200, 'Success', $data);
+    } else {
+        jsonResponse(404, 'No products found');
+    }
+}
+
+// --- GET DETAIL ---
+function getDetailProduct($conn, string $product_code): void {
+    if ($product_code === '') jsonResponse(400, 'product_code is required');
+
+    $code   = mysqli_real_escape_string($conn, $product_code);
+    $result = mysqli_query($conn, "SELECT skuID, productName, productDesc FROM product WHERE skuID = '$code' LIMIT 1");
+
+    if ($result && mysqli_num_rows($result) > 0) {
+        jsonResponse(200, 'Product found', mysqli_fetch_assoc($result));
+    } else {
+        jsonResponse(404, 'Product not found');
+    }
+}
+
+// --- CREATE ---
+function createProduct($conn, array $input, string $userId): void {
+    $required = ['product_code', 'product_name', 'product_desc'];
+    foreach ($required as $field) {
+        if (!isset($input[$field]) || trim((string)$input[$field]) === '') {
+            jsonResponse(400, "$field is required");
+        }
+    }
+
+    $product_code = mysqli_real_escape_string($conn, trim($input['product_code']));
+    $product_name = mysqli_real_escape_string($conn, trim($input['product_name']));
+    $product_desc = mysqli_real_escape_string($conn, trim($input['product_desc']));
+    $insert_by    = mysqli_real_escape_string($conn, $userId);
+    $insert_dt    = getCurrentDateTimeJakarta();
+
+    $dup = mysqli_query($conn, "SELECT 1 FROM product WHERE skuID = '$product_code' LIMIT 1");
+    if (mysqli_num_rows($dup) > 0) jsonResponse(400, 'product_code already exists');
+
+    $query = "INSERT INTO product (skuID, productName, productDesc, insertBy, insertDt)
+              VALUES ('$product_code', '$product_name', '$product_desc', '$insert_by', '$insert_dt')";
+
+    if (mysqli_query($conn, $query)) {
+        jsonResponse(201, 'Product created successfully', ['skuID' => $product_code]);
+    } else {
+        jsonResponse(500, 'Failed to create product');
+    }
+}
+
+// --- UPDATE ---
+function updateProduct($conn, array $input): void {
+    $required = ['product_code_before', 'product_name_before', 'product_desc_before', 'product_code_new', 'product_name_new', 'product_desc_new'];
+    foreach ($required as $field) {
+        if (!isset($input[$field]) || trim((string)$input[$field]) === '') {
+            jsonResponse(400, "$field is required");
+        }
+    }
+
+    $code_new  = mysqli_real_escape_string($conn, trim($input['product_code_new']));
+    $name_new  = mysqli_real_escape_string($conn, trim($input['product_name_new']));
+    $desc_new  = mysqli_real_escape_string($conn, trim($input['product_desc_new']));
+    $code_old  = mysqli_real_escape_string($conn, trim($input['product_code_before']));
+    $name_old  = mysqli_real_escape_string($conn, trim($input['product_name_before']));
+    $desc_old  = mysqli_real_escape_string($conn, trim($input['product_desc_before']));
+
+    $check = mysqli_query($conn, "SELECT 1 FROM product WHERE skuID = '$code_old' AND productName = '$name_old' AND productDesc = '$desc_old' LIMIT 1");
+    if (mysqli_num_rows($check) === 0) jsonResponse(404, 'Product not found');
+
+    $query = "UPDATE product SET skuID = '$code_new', productName = '$name_new', productDesc = '$desc_new'
+              WHERE skuID = '$code_old' AND productName = '$name_old' AND productDesc = '$desc_old'";
+
+    if (mysqli_query($conn, $query)) {
+        jsonResponse(200, 'Product updated successfully');
+    } else {
+        jsonResponse(500, 'Failed to update product');
+    }
+}
+
+// --- DELETE ---
+function deleteProduct($conn, ?string $product_code): void {
+    if (!$product_code) jsonResponse(400, 'product_code is required');
+
+    $code  = mysqli_real_escape_string($conn, $product_code);
+    $check = mysqli_query($conn, "SELECT 1 FROM product WHERE skuID = '$code' LIMIT 1");
+    if (mysqli_num_rows($check) === 0) jsonResponse(404, 'Product not found');
+
+    if (mysqli_query($conn, "DELETE FROM product WHERE skuID = '$code'")) {
+        jsonResponse(200, 'Product deleted successfully');
+    } else {
+        jsonResponse(500, 'Failed to delete product');
+    }
+}
+
+// ── Auth ──────────────────────────────────────────────
+$decoded = verifyToken();
+$userId  = $decoded->sub ?? '';
+
+$conn   = DB::conn();
+$GLOBALS['_log_conn']       = $conn;
+$GLOBALS['_log_user']       = $userId;
+$GLOBALS['_log_request_id'] = bin2hex(random_bytes(8));
 
 $method = $_SERVER['REQUEST_METHOD'];
 
-if ($method === 'OPTIONS') {
-    http_response_code(200);
-    exit;
-}
-
-// GET /master/product/product.php
-//   (no params)       → list all products
-//   ?product_code=X   → detail for one product
-if ($method === 'GET') {
-    $product_code = isset($_GET['product_code']) ? $_GET['product_code'] : null;
-
-    if ($product_code) {
-        $stmt = $connect->prepare("SELECT skuID, productName, productDesc FROM product WHERE skuID = ?");
-        $stmt->bind_param('s', $product_code);
-        $stmt->execute();
-        $result = $stmt->get_result();
-
-        $data = [];
-        while ($row = $result->fetch_assoc()) {
-            $data[] = ['skuID' => $row['skuID'], 'productName' => $row['productName'], 'productDesc' => $row['productDesc']];
+switch ($method) {
+    case 'GET':
+        $product_code = $_GET['product_code'] ?? '';
+        if ($product_code !== '') {
+            getDetailProduct($conn, $product_code);
+        } else {
+            getAllProduct($conn);
         }
-    } else {
-        $result = mysqli_query($connect, "SELECT skuID, productName, productDesc FROM product");
-        $data = [];
-        while ($row = mysqli_fetch_assoc($result)) {
-            $data[] = ['skuID' => $row['skuID'], 'Code' => $row['skuID'], 'Product Name' => $row['productName'], 'Product Description' => $row['productDesc']];
-        }
-    }
+        break;
 
-    if ($data) {
-        echo json_encode(['StatusCode' => 200, 'Status' => 'Success', 'Data' => $data]);
-    } else {
-        http_response_code(400);
-        echo json_encode(['StatusCode' => 400, 'Status' => 'Error Bad Request, Result not found !']);
-    }
+    case 'POST':
+        $input = json_decode(file_get_contents('php://input'), true) ?? [];
+        createProduct($conn, $input, $userId);
+        break;
 
-// POST /master/product/product.php → insert new product
-} elseif ($method === 'POST') {
-    $product_code = $_POST['product_code'];
-    $product_name = $_POST['product_name'];
-    $product_desc = $_POST['product_desc'];
-    $username     = $_POST['username'];
+    case 'PUT':
+        $input = json_decode(file_get_contents('php://input'), true) ?? [];
+        updateProduct($conn, $input);
+        break;
 
-    $currentDateTime = new DateTime();
-    $currentDateTime->setTimezone(new DateTimeZone('Asia/Jakarta'));
-    $currentDateTimeString = $currentDateTime->format('Y-m-d H:i:s');
+    case 'DELETE':
+        deleteProduct($conn, $_GET['product_code'] ?? null);
+        break;
 
-    $stmt = $connect->prepare("INSERT INTO product (skuID, productName, productDesc, insertBy, insertDt) VALUES (?, ?, ?, ?, ?)");
-    $stmt->bind_param('sssss', $product_code, $product_name, $product_desc, $username, $currentDateTimeString);
-
-    if ($stmt->execute()) {
-        http_response_code(200);
-        echo json_encode(['StatusCode' => 200, 'Status' => 'Success', 'message' => 'Success: Data inserted successfully']);
-    } else {
-        http_response_code(500);
-        echo json_encode(['StatusCode' => 500, 'Status' => 'Error', 'message' => 'Error: Unable to insert data - ' . $connect->error]);
-    }
-
-// PATCH /master/product/product.php → update product
-} elseif ($method === 'PATCH') {
-    $body = json_decode(file_get_contents('php://input'), true);
-
-    $product_code_new    = $body['product_code_new'];
-    $product_name_new    = $body['product_name_new'];
-    $product_desc_new    = $body['product_desc_new'];
-    $product_code_before = $body['product_code_before'];
-    $product_name_before = $body['product_name_before'];
-    $product_desc_before = $body['product_desc_before'];
-
-    $stmt = $connect->prepare("UPDATE product SET skuID = ?, productName = ?, productDesc = ? WHERE skuID = ? AND productName = ? AND productDesc = ?");
-    $stmt->bind_param('ssssss', $product_code_new, $product_name_new, $product_desc_new, $product_code_before, $product_name_before, $product_desc_before);
-
-    if ($stmt->execute()) {
-        http_response_code(200);
-        echo json_encode(['StatusCode' => 200, 'Status' => 'Success', 'message' => 'Success: Product Data updated successfully']);
-    } else {
-        http_response_code(500);
-        echo json_encode(['StatusCode' => 500, 'Status' => 'Error', 'message' => 'Error: Unable to update data - ' . $connect->error]);
-    }
-
-// DELETE /master/product/product.php → delete product
-} elseif ($method === 'DELETE') {
-    $body = json_decode(file_get_contents('php://input'), true);
-    $product_code = $body['product_code'];
-
-    $stmt = $connect->prepare("DELETE FROM product WHERE skuID = ?");
-    $stmt->bind_param('s', $product_code);
-
-    if ($stmt->execute()) {
-        http_response_code(200);
-        echo json_encode(['StatusCode' => 200, 'Status' => 'Success', 'message' => 'Success: Data deleted successfully']);
-    } else {
-        http_response_code(500);
-        echo json_encode(['StatusCode' => 500, 'Status' => 'Error', 'message' => 'Error: Unable to delete data - ' . $connect->error]);
-    }
-
-} else {
-    http_response_code(405);
-    echo json_encode(['StatusCode' => 405, 'Status' => 'Error', 'message' => 'Method not allowed. Allowed: GET, POST, PATCH, DELETE']);
+    default:
+        jsonResponse(405, 'Method Not Allowed');
 }

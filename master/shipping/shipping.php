@@ -1,19 +1,17 @@
 <?php
-ini_set('display_errors', '1');
-ini_set('display_startup_errors', '1');
-error_reporting(E_ALL);
 
-require_once('../../connection/connection.php');
-
-$method = $_SERVER['REQUEST_METHOD'];
-
-if ($method === 'OPTIONS') {
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
-    exit;
+    exit();
 }
 
-// GET /master/shipping/shipping.php → list all shipment schedules
-if ($method === 'GET') {
+require_once '../../general.php';
+require_once '../../vendor/autoload.php';
+require_once '../../connection/connection.php';
+require_once '../../auth/middleware.php';
+
+// --- GET ALL ---
+function getAllShipping($conn): void {
     $query = "SELECT * FROM shipment ORDER BY
         CASE
             WHEN shipment_name LIKE '%early january%'   THEN 1
@@ -43,35 +41,56 @@ if ($method === 'GET') {
             ELSE 99
         END";
 
-    $result = mysqli_query($connect, $query);
-    $data = [];
-    while ($row = mysqli_fetch_assoc($result)) {
-        $data[] = ['shipment_id' => $row['shipment_id'], 'shipment_name' => $row['shipment_name']];
-    }
+    $result = mysqli_query($conn, $query);
 
-    if ($data) {
-        echo json_encode(['StatusCode' => 200, 'Status' => 'Success', 'Data' => $data]);
+    if ($result && mysqli_num_rows($result) > 0) {
+        $data = [];
+        while ($row = mysqli_fetch_assoc($result)) {
+            $data[] = ['shipment_id' => $row['shipment_id'], 'shipment_name' => $row['shipment_name']];
+        }
+        jsonResponse(200, 'Success', $data);
     } else {
-        http_response_code(400);
-        echo json_encode(['StatusCode' => 400, 'Status' => 'Error Bad Request, Result not found !']);
+        jsonResponse(404, 'No shipment schedules found');
+    }
+}
+
+// --- CREATE ---
+function createShipping($conn, array $input): void {
+    if (empty($input['shipping_name']) || trim($input['shipping_name']) === '') {
+        jsonResponse(400, 'shipping_name is required');
     }
 
-// POST /master/shipping/shipping.php → insert new shipment schedule
-} elseif ($method === 'POST') {
-    $shipping_name = $_POST['shipping_name'];
+    $shipping_name = mysqli_real_escape_string($conn, trim($input['shipping_name']));
+    $id            = generateUUID();
 
-    $stmt = $connect->prepare("INSERT INTO shipment (shipment_id, shipment_name) VALUES (UUID(), ?)");
-    $stmt->bind_param('s', $shipping_name);
-
-    if ($stmt->execute()) {
-        http_response_code(200);
-        echo json_encode(['StatusCode' => 200, 'Status' => 'Success', 'message' => 'Success: Data inserted successfully']);
+    if (mysqli_query($conn, "INSERT INTO shipment (shipment_id, shipment_name) VALUES ('$id', '$shipping_name')")) {
+        jsonResponse(201, 'Shipment schedule created successfully', ['shipment_id' => $id]);
     } else {
-        http_response_code(500);
-        echo json_encode(['StatusCode' => 500, 'Status' => 'Error', 'message' => 'Error: Unable to insert data - ' . $connect->error]);
+        jsonResponse(500, 'Failed to create shipment schedule');
     }
+}
 
-} else {
-    http_response_code(405);
-    echo json_encode(['StatusCode' => 405, 'Status' => 'Error', 'message' => 'Method not allowed. Allowed: GET, POST']);
+// ── Auth ──────────────────────────────────────────────
+$decoded = verifyToken();
+$userId  = $decoded->sub ?? '';
+
+$conn   = DB::conn();
+$GLOBALS['_log_conn']       = $conn;
+$GLOBALS['_log_user']       = $userId;
+$GLOBALS['_log_request_id'] = bin2hex(random_bytes(8));
+
+$method = $_SERVER['REQUEST_METHOD'];
+
+switch ($method) {
+    case 'GET':
+        getAllShipping($conn);
+        break;
+
+    case 'POST':
+        $input = json_decode(file_get_contents('php://input'), true) ?? [];
+        createShipping($conn, $input);
+        break;
+
+    default:
+        jsonResponse(405, 'Method Not Allowed');
 }

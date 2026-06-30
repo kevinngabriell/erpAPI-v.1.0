@@ -1,64 +1,26 @@
 <?php
-ini_set('display_errors', '1');
-ini_set('display_startup_errors', '1');
-error_reporting(E_ALL);
 
-require_once('../../connection/connection.php');
-
-$method = $_SERVER['REQUEST_METHOD'];
-
-if ($method === 'OPTIONS') {
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
-    exit;
+    exit();
 }
 
-// GET /master/customer/customer.php
-//   ?company=X                   → list all customers for company
-//   ?company_id=X                → detail for one customer
-//   ?company_id=X&type=address   → address + TOP only
-if ($method === 'GET') {
-    $company    = isset($_GET['company'])    ? $_GET['company']    : null;
-    $company_id = isset($_GET['company_id']) ? $_GET['company_id'] : null;
-    $type       = isset($_GET['type'])       ? $_GET['type']       : null;
+require_once '../../general.php';
+require_once '../../vendor/autoload.php';
+require_once '../../connection/connection.php';
+require_once '../../auth/middleware.php';
 
-    if ($company_id && $type === 'address') {
-        $stmt = $connect->prepare("SELECT company_address, company_top FROM customer WHERE company_id = ?");
-        $stmt->bind_param('s', $company_id);
-        $stmt->execute();
-        $result = $stmt->get_result();
+// --- GET ALL ---
+function getAllCustomer($conn, string $company): void {
+    if ($company === '') jsonResponse(400, 'company is required');
 
+    $company = mysqli_real_escape_string($conn, $company);
+    $result  = mysqli_query($conn, "SELECT company_id, company_name, company_address, company_phone
+                                    FROM customer WHERE company = '$company' ORDER BY company_name ASC");
+
+    if ($result && mysqli_num_rows($result) > 0) {
         $data = [];
-        while ($row = $result->fetch_assoc()) {
-            $data[] = ['company_address' => $row['company_address'], 'company_top' => $row['company_top']];
-        }
-
-    } elseif ($company_id) {
-        $stmt = $connect->prepare("SELECT company_id, company_name, company_address, company_phone, company_pic_name, company_pic_contact, company_top FROM customer WHERE company_id = ?");
-        $stmt->bind_param('s', $company_id);
-        $stmt->execute();
-        $result = $stmt->get_result();
-
-        $data = [];
-        while ($row = $result->fetch_assoc()) {
-            $data[] = [
-                'company_id'          => $row['company_id'],
-                'company_name'        => $row['company_name'],
-                'company_address'     => $row['company_address'],
-                'company_phone'       => $row['company_phone'],
-                'company_pic_name'    => $row['company_pic_name'],
-                'company_pic_contact' => $row['company_pic_contact'],
-                'company_top'         => $row['company_top'],
-            ];
-        }
-
-    } elseif ($company) {
-        $stmt = $connect->prepare("SELECT company_id, company_name, company_address, company_phone FROM customer WHERE company = ? ORDER BY company_name ASC");
-        $stmt->bind_param('s', $company);
-        $stmt->execute();
-        $result = $stmt->get_result();
-
-        $data = [];
-        while ($row = $result->fetch_assoc()) {
+        while ($row = mysqli_fetch_assoc($result)) {
             $data[] = [
                 'company_id'      => $row['company_id'],
                 'Company Name'    => $row['company_name'],
@@ -66,65 +28,121 @@ if ($method === 'GET') {
                 'Company Phone'   => $row['company_phone'],
             ];
         }
-
+        jsonResponse(200, 'Success', $data);
     } else {
-        http_response_code(400);
-        echo json_encode(['StatusCode' => 400, 'Status' => 'Error', 'message' => 'Missing required parameter: company or company_id']);
-        exit;
+        jsonResponse(404, 'No customers found');
+    }
+}
+
+// --- GET DETAIL ---
+function getDetailCustomer($conn, string $company_id, string $type = ''): void {
+    if ($company_id === '') jsonResponse(400, 'company_id is required');
+
+    $id = mysqli_real_escape_string($conn, $company_id);
+
+    if ($type === 'address') {
+        $result = mysqli_query($conn, "SELECT company_address, company_top FROM customer WHERE company_id = '$id' LIMIT 1");
+    } else {
+        $result = mysqli_query($conn, "SELECT company_id, company_name, company_address, company_phone,
+                                              company_pic_name, company_pic_contact, company_top
+                                       FROM customer WHERE company_id = '$id' LIMIT 1");
     }
 
-    if ($data) {
-        echo json_encode(['StatusCode' => 200, 'Status' => 'Success', 'Data' => $data]);
+    if ($result && mysqli_num_rows($result) > 0) {
+        jsonResponse(200, 'Customer found', mysqli_fetch_assoc($result));
     } else {
-        http_response_code(400);
-        echo json_encode(['StatusCode' => 400, 'Status' => 'Error Bad Request, Result not found !']);
+        jsonResponse(404, 'Customer not found');
+    }
+}
+
+// --- CREATE ---
+function createCustomer($conn, array $input): void {
+    $required = ['company_id', 'company_name', 'company_address', 'company_phone', 'company_pic_name', 'company_pic_contact', 'company_top'];
+    foreach ($required as $field) {
+        if (!isset($input[$field]) || trim((string)$input[$field]) === '') {
+            jsonResponse(400, "$field is required");
+        }
     }
 
-// POST /master/customer/customer.php → insert new customer
-} elseif ($method === 'POST') {
-    $company_id          = $_POST['company_id'];
-    $company_name        = $_POST['company_name'];
-    $company_address     = $_POST['company_address'];
-    $company_phone       = $_POST['company_phone'];
-    $company_pic_name    = $_POST['company_pic_name'];
-    $company_pic_contact = $_POST['company_pic_contact'];
-    $company_top         = $_POST['company_top'];
+    $company_id          = mysqli_real_escape_string($conn, trim($input['company_id']));
+    $company_name        = mysqli_real_escape_string($conn, trim($input['company_name']));
+    $company_address     = mysqli_real_escape_string($conn, trim($input['company_address']));
+    $company_phone       = mysqli_real_escape_string($conn, trim($input['company_phone']));
+    $company_pic_name    = mysqli_real_escape_string($conn, trim($input['company_pic_name']));
+    $company_pic_contact = mysqli_real_escape_string($conn, trim($input['company_pic_contact']));
+    $company_top         = mysqli_real_escape_string($conn, trim($input['company_top']));
 
-    $stmt = $connect->prepare("INSERT INTO customer (company_id, company, company_name, company_address, company_phone, company_pic_name, company_pic_contact, company_top) VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?)");
-    $stmt->bind_param('sssssss', $company_id, $company_name, $company_address, $company_phone, $company_pic_name, $company_pic_contact, $company_top);
+    $id = generateUUID();
+    $insert = "INSERT INTO customer (company_id, company, company_name, company_address, company_phone, company_pic_name, company_pic_contact, company_top)
+               VALUES ('$id', '$company_id', '$company_name', '$company_address', '$company_phone', '$company_pic_name', '$company_pic_contact', '$company_top')";
 
-    if ($stmt->execute()) {
-        http_response_code(200);
-        echo json_encode(['StatusCode' => 200, 'Status' => 'Success', 'message' => 'Success: Data inserted successfully']);
+    if (mysqli_query($conn, $insert)) {
+        jsonResponse(201, 'Customer created successfully', ['company_id' => $id]);
     } else {
-        http_response_code(500);
-        echo json_encode(['StatusCode' => 500, 'Status' => 'Error', 'message' => 'Error: Unable to insert data - ' . $connect->error]);
+        jsonResponse(500, 'Failed to create customer');
+    }
+}
+
+// --- UPDATE ---
+function updateCustomer($conn, array $input, string $userId): void {
+    if (empty($input['company_id'])) jsonResponse(400, 'company_id is required');
+
+    $id    = mysqli_real_escape_string($conn, $input['company_id']);
+    $check = mysqli_query($conn, "SELECT 1 FROM customer WHERE company_id = '$id' LIMIT 1");
+    if (mysqli_num_rows($check) === 0) jsonResponse(404, 'Customer not found');
+
+    $updates = [];
+    $fields  = ['company_name', 'company_address', 'company_phone', 'company_pic_name', 'company_pic_contact', 'company_top'];
+    foreach ($fields as $f) {
+        if (isset($input[$f])) {
+            $v         = mysqli_real_escape_string($conn, trim($input[$f]));
+            $updates[] = "$f = '$v'";
+        }
     }
 
-// PATCH /master/customer/customer.php → update existing customer
-} elseif ($method === 'PATCH') {
-    $body = json_decode(file_get_contents('php://input'), true);
+    if (empty($updates)) jsonResponse(400, 'No fields provided for update');
 
-    $company_id          = $body['company_id'];
-    $company_name        = $body['company_name'];
-    $company_address     = $body['company_address'];
-    $company_phone       = $body['company_phone'];
-    $company_pic_name    = $body['company_pic_name'];
-    $company_pic_contact = $body['company_pic_contact'];
-    $company_top         = $body['company_top'];
-
-    $stmt = $connect->prepare("UPDATE customer SET company_name = ?, company_address = ?, company_phone = ?, company_pic_name = ?, company_pic_contact = ?, company_top = ? WHERE company_id = ?");
-    $stmt->bind_param('sssssss', $company_name, $company_address, $company_phone, $company_pic_name, $company_pic_contact, $company_top, $company_id);
-
-    if ($stmt->execute()) {
-        http_response_code(200);
-        echo json_encode(['StatusCode' => 200, 'Status' => 'Success', 'message' => 'Success: Data updated successfully']);
+    if (mysqli_query($conn, "UPDATE customer SET " . implode(', ', $updates) . " WHERE company_id = '$id'")) {
+        jsonResponse(200, 'Customer updated successfully');
     } else {
-        http_response_code(500);
-        echo json_encode(['StatusCode' => 500, 'Status' => 'Error', 'message' => 'Error: Unable to update data - ' . $connect->error]);
+        jsonResponse(500, 'Failed to update customer');
     }
+}
 
-} else {
-    http_response_code(405);
-    echo json_encode(['StatusCode' => 405, 'Status' => 'Error', 'message' => 'Method not allowed. Allowed: GET, POST, PATCH']);
+// ── Auth ──────────────────────────────────────────────
+$decoded = verifyToken();
+$userId  = $decoded->sub ?? '';
+
+$conn   = DB::conn();
+$GLOBALS['_log_conn']       = $conn;
+$GLOBALS['_log_user']       = $userId;
+$GLOBALS['_log_request_id'] = bin2hex(random_bytes(8));
+
+$method = $_SERVER['REQUEST_METHOD'];
+
+switch ($method) {
+    case 'GET':
+        $company_id = $_GET['company_id'] ?? '';
+        $company    = $_GET['company']    ?? '';
+        $type       = $_GET['type']       ?? '';
+
+        if ($company_id !== '') {
+            getDetailCustomer($conn, $company_id, $type);
+        } else {
+            getAllCustomer($conn, $company);
+        }
+        break;
+
+    case 'POST':
+        $input = json_decode(file_get_contents('php://input'), true) ?? [];
+        createCustomer($conn, $input);
+        break;
+
+    case 'PUT':
+        $input = json_decode(file_get_contents('php://input'), true) ?? [];
+        updateCustomer($conn, $input, $userId);
+        break;
+
+    default:
+        jsonResponse(405, 'Method Not Allowed');
 }
