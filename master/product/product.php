@@ -10,28 +10,25 @@ require_once '../../vendor/autoload.php';
 require_once '../../connection/connection.php';
 require_once '../../auth/middleware.php';
 
-// --- GET ALL ---
-// Searchable by: skuID (product code), productName, productDesc
-// ?params=search  &page=1  &limit=10
-function getAllProduct($conn, string $params = '', int $page = 1, int $limit = 10): void {
-    $params = mysqli_real_escape_string($conn, $params);
+function getAllProduct($conn, string $search = '', int $page = 1, int $limit = 10): void {
+    $search = mysqli_real_escape_string($conn, $search);
     $page   = max(1, $page);
     $limit  = min(100, max(1, $limit));
     $offset = ($page - 1) * $limit;
 
-    $where = $params !== ''
-        ? "WHERE skuID LIKE '%$params%' OR productName LIKE '%$params%' OR productDesc LIKE '%$params%'"
+    $where = $search !== ''
+        ? "WHERE skuID LIKE '%$search%' OR productName LIKE '%$search%' OR productDesc LIKE '%$search%'"
         : '';
 
-    $countResult = mysqli_query($conn, "SELECT COUNT(*) AS total FROM product $where");
-    $total       = (int) mysqli_fetch_assoc($countResult)['total'];
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM product $where");
+    $total        = (int) mysqli_fetch_assoc($count_result)['total'];
 
     $result = mysqli_query($conn, "SELECT skuID, productName, productDesc FROM product $where ORDER BY productName ASC LIMIT $limit OFFSET $offset");
 
     if ($result && mysqli_num_rows($result) > 0) {
-        $rows = [];
+        $data = [];
         while ($row = mysqli_fetch_assoc($result)) {
-            $rows[] = [
+            $data[] = [
                 'skuID'               => $row['skuID'],
                 'Code'                => $row['skuID'],
                 'Product Name'        => $row['productName'],
@@ -39,7 +36,7 @@ function getAllProduct($conn, string $params = '', int $page = 1, int $limit = 1
             ];
         }
         jsonResponse(200, 'Success', [
-            'rows'       => $rows,
+            'data'       => $data,
             'pagination' => [
                 'total'       => $total,
                 'page'        => $page,
@@ -52,7 +49,6 @@ function getAllProduct($conn, string $params = '', int $page = 1, int $limit = 1
     }
 }
 
-// --- GET DETAIL ---
 function getDetailProduct($conn, string $product_code): void {
     if ($product_code === '') jsonResponse(400, 'product_code is required');
 
@@ -66,8 +62,7 @@ function getDetailProduct($conn, string $product_code): void {
     }
 }
 
-// --- CREATE ---
-function createProduct($conn, array $input, string $userId): void {
+function createProduct($conn, array $input, string $username): void {
     $required = ['product_code', 'product_name', 'product_desc'];
     foreach ($required as $field) {
         if (!isset($input[$field]) || trim((string)$input[$field]) === '') {
@@ -78,11 +73,11 @@ function createProduct($conn, array $input, string $userId): void {
     $product_code = mysqli_real_escape_string($conn, trim($input['product_code']));
     $product_name = mysqli_real_escape_string($conn, trim($input['product_name']));
     $product_desc = mysqli_real_escape_string($conn, trim($input['product_desc']));
-    $insert_by    = mysqli_real_escape_string($conn, $userId);
+    $insert_by    = mysqli_real_escape_string($conn, $username);
     $insert_dt    = getCurrentDateTimeJakarta();
 
     $dup = mysqli_query($conn, "SELECT 1 FROM product WHERE skuID = '$product_code' LIMIT 1");
-    if (mysqli_num_rows($dup) > 0) jsonResponse(400, 'product_code already exists');
+    if (mysqli_num_rows($dup) > 0) jsonResponse(409, 'product_code already exists');
 
     $query = "INSERT INTO product (skuID, productName, productDesc, insertBy, insertDt)
               VALUES ('$product_code', '$product_name', '$product_desc', '$insert_by', '$insert_dt')";
@@ -94,7 +89,6 @@ function createProduct($conn, array $input, string $userId): void {
     }
 }
 
-// --- UPDATE ---
 function updateProduct($conn, array $input): void {
     $required = ['product_code_before', 'product_name_before', 'product_desc_before', 'product_code_new', 'product_name_new', 'product_desc_new'];
     foreach ($required as $field) {
@@ -123,7 +117,6 @@ function updateProduct($conn, array $input): void {
     }
 }
 
-// --- DELETE ---
 function deleteProduct($conn, ?string $product_code): void {
     if (!$product_code) jsonResponse(400, 'product_code is required');
 
@@ -138,46 +131,49 @@ function deleteProduct($conn, ?string $product_code): void {
     }
 }
 
-// ── Auth ──────────────────────────────────────────────
-$decoded = verifyToken();
-$userId  = $decoded->sub ?? '';
+$decoded  = verifyToken();
+$username = $decoded->sub ?? '';
 
-$conn   = DB::conn();
+$conn = DB::conn();
 $GLOBALS['_log_conn']       = $conn;
-$GLOBALS['_log_user']       = $userId;
+$GLOBALS['_log_user']       = $username;
 $GLOBALS['_log_request_id'] = bin2hex(random_bytes(8));
 
 $method = $_SERVER['REQUEST_METHOD'];
 
-switch ($method) {
-    case 'GET':
-        $product_code = $_GET['product_code'] ?? '';
-        if ($product_code !== '') {
-            getDetailProduct($conn, $product_code);
-        } else {
-            getAllProduct(
-                $conn,
-                $_GET['params'] ?? '',
-                (int)($_GET['page']  ?? 1),
-                (int)($_GET['limit'] ?? 10)
-            );
-        }
-        break;
+try {
+    switch ($method) {
+        case 'GET':
+            $product_code = $_GET['product_code'] ?? '';
+            if ($product_code !== '') {
+                getDetailProduct($conn, $product_code);
+            } else {
+                getAllProduct(
+                    $conn,
+                    $_GET['params'] ?? '',
+                    (int)($_GET['page']  ?? 1),
+                    (int)($_GET['limit'] ?? 10)
+                );
+            }
+            break;
 
-    case 'POST':
-        $input = json_decode(file_get_contents('php://input'), true) ?? [];
-        createProduct($conn, $input, $userId);
-        break;
+        case 'POST':
+            $input = json_decode(file_get_contents('php://input'), true) ?? [];
+            createProduct($conn, $input, $username);
+            break;
 
-    case 'PUT':
-        $input = json_decode(file_get_contents('php://input'), true) ?? [];
-        updateProduct($conn, $input);
-        break;
+        case 'PUT':
+            $input = json_decode(file_get_contents('php://input'), true) ?? [];
+            updateProduct($conn, $input);
+            break;
 
-    case 'DELETE':
-        deleteProduct($conn, $_GET['product_code'] ?? null);
-        break;
+        case 'DELETE':
+            deleteProduct($conn, $_GET['product_code'] ?? null);
+            break;
 
-    default:
-        jsonResponse(405, 'Method Not Allowed');
+        default:
+            jsonResponse(405, 'Method Not Allowed');
+    }
+} catch (Exception $e) {
+    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
 }

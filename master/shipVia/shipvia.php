@@ -10,26 +10,23 @@ require_once '../../vendor/autoload.php';
 require_once '../../connection/connection.php';
 require_once '../../auth/middleware.php';
 
-// --- GET ALL ---
-// Searchable by: shipName
-// ?params=search  &page=1  &limit=10
-function getAllShipVia($conn, string $params = '', int $page = 1, int $limit = 10): void {
-    $params = mysqli_real_escape_string($conn, $params);
+function getAllShipVia($conn, string $search = '', int $page = 1, int $limit = 10): void {
+    $search = mysqli_real_escape_string($conn, $search);
     $page   = max(1, $page);
     $limit  = min(100, max(1, $limit));
     $offset = ($page - 1) * $limit;
 
-    $where = $params !== '' ? "WHERE shipName LIKE '%$params%'" : '';
+    $where = $search !== '' ? "WHERE shipName LIKE '%$search%'" : '';
 
-    $countResult = mysqli_query($conn, "SELECT COUNT(*) AS total FROM shipVia $where");
-    $total       = (int) mysqli_fetch_assoc($countResult)['total'];
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM shipVia $where");
+    $total        = (int) mysqli_fetch_assoc($count_result)['total'];
 
     $result = mysqli_query($conn, "SELECT shipID, shipName FROM shipVia $where ORDER BY shipName ASC LIMIT $limit OFFSET $offset");
 
     if ($result && mysqli_num_rows($result) > 0) {
-        $rows = mysqli_fetch_all($result, MYSQLI_ASSOC);
+        $data = mysqli_fetch_all($result, MYSQLI_ASSOC);
         jsonResponse(200, 'Success', [
-            'rows'       => $rows,
+            'data'       => $data,
             'pagination' => [
                 'total'       => $total,
                 'page'        => $page,
@@ -42,7 +39,6 @@ function getAllShipVia($conn, string $params = '', int $page = 1, int $limit = 1
     }
 }
 
-// --- CREATE ---
 function createShipVia($conn, array $input): void {
     if (empty($input['shipvia_name']) || trim($input['shipvia_name']) === '') {
         jsonResponse(400, 'shipvia_name is required');
@@ -58,32 +54,35 @@ function createShipVia($conn, array $input): void {
     }
 }
 
-// ── Auth ──────────────────────────────────────────────
-$decoded = verifyToken();
-$userId  = $decoded->sub ?? '';
+$decoded  = verifyToken();
+$username = $decoded->sub ?? '';
 
-$conn   = DB::conn();
+$conn = DB::conn();
 $GLOBALS['_log_conn']       = $conn;
-$GLOBALS['_log_user']       = $userId;
+$GLOBALS['_log_user']       = $username;
 $GLOBALS['_log_request_id'] = bin2hex(random_bytes(8));
 
 $method = $_SERVER['REQUEST_METHOD'];
 
-switch ($method) {
-    case 'GET':
-        getAllShipVia(
-            $conn,
-            $_GET['params'] ?? '',
-            (int)($_GET['page']  ?? 1),
-            (int)($_GET['limit'] ?? 10)
-        );
-        break;
+try {
+    switch ($method) {
+        case 'GET':
+            getAllShipVia(
+                $conn,
+                $_GET['params'] ?? '',
+                (int)($_GET['page']  ?? 1),
+                (int)($_GET['limit'] ?? 10)
+            );
+            break;
 
-    case 'POST':
-        $input = json_decode(file_get_contents('php://input'), true) ?? [];
-        createShipVia($conn, $input);
-        break;
+        case 'POST':
+            $input = json_decode(file_get_contents('php://input'), true) ?? [];
+            createShipVia($conn, $input);
+            break;
 
-    default:
-        jsonResponse(405, 'Method Not Allowed');
+        default:
+            jsonResponse(405, 'Method Not Allowed');
+    }
+} catch (Exception $e) {
+    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
 }
