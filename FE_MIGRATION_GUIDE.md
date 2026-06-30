@@ -15,40 +15,49 @@ There are **4 things that changed on every single endpoint**. Fix these first.
 Old endpoints had **no auth**. Every new endpoint requires a JWT token.
 
 ```js
+const token = localStorage.getItem('token');
+
 // BEFORE — no auth header
-axios.get('/master/payment/getallpayment.php')
+const response = await fetch(`${API_BASE_URL}master/payment/getallpayment.php`);
 
 // AFTER — must send token
-axios.get('/master/payment/payment.php', {
-  headers: { Authorization: `Bearer ${token}` }
-})
+const response = await fetch(`${API_BASE_URL}master/payment/payment.php`, {
+    headers: { 'Authorization': `Bearer ${token}` },
+});
 ```
 
-If this header is missing or the token is expired you get `401 Unauthorized`.
+If the header is missing or the token is expired you get `401 Unauthorized`.
 
 ---
 
 ### 2. Change Request Body Format: FormData → JSON
 
 Old POST/PUT endpoints read `$_POST` (form data).
-New endpoints read `php://input` (JSON body).
+New endpoints read a JSON body.
 
 ```js
+const token = localStorage.getItem('token');
+
 // BEFORE — FormData
-const form = new FormData()
-form.append('supplier_name', 'PT ABC')
-axios.post('/master/supplier/insertsupplier.php', form)
+const form = new FormData();
+form.append('supplier_name', 'PT ABC');
+const response = await fetch(`${API_BASE_URL}master/supplier/insertsupplier.php`, {
+    method: 'POST',
+    body: form,
+});
 
 // AFTER — JSON body
-axios.post('/master/supplier/supplier.php', {
-  supplier_name: 'PT ABC',
-  // ... other fields
-}, {
-  headers: {
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${token}`
-  }
-})
+const response = await fetch(`${API_BASE_URL}master/supplier/supplier.php`, {
+    method: 'POST',
+    headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+        supplier_name: 'PT ABC',
+        // ... other fields
+    }),
+});
 ```
 
 ---
@@ -56,36 +65,40 @@ axios.post('/master/supplier/supplier.php', {
 ### 3. Update How You Read List Responses (pagination wrapper)
 
 Old list responses returned the array directly inside `Data`.
-New list responses wrap rows inside `Data.rows` and add pagination.
+New list responses wrap rows inside `Data.data` and add pagination.
 
 ```js
+const token = localStorage.getItem('token');
+
 // BEFORE — data is a flat array
-const response = await axios.get('/master/payment/getallpayment.php')
-const items = response.data.Data  // array
+const response = await fetch(`${API_BASE_URL}master/payment/getallpayment.php`);
+const json = await response.json();
+const items = json.Data;  // array
 
 // AFTER — data is wrapped
-const response = await axios.get('/master/payment/payment.php', { headers })
-const items = response.data.Data.rows       // array
-const total = response.data.Data.pagination.total
-const totalPages = response.data.Data.pagination.total_pages
+const response = await fetch(`${API_BASE_URL}master/payment/payment.php`, {
+    headers: { 'Authorization': `Bearer ${token}` },
+});
+const json = await response.json();
+const items    = json.Data.data;                    // array
+const total    = json.Data.pagination.total;
+const totalPages = json.Data.pagination.total_pages;
 ```
 
 ---
 
-### 4. Response Field Names Changed on Some Endpoints
+### 4. `company_id` Removed from Request Body (customer & supplier only)
 
-Some old endpoints returned display-style keys. New ones use consistent snake_case DB column names.
+Old endpoints required you to pass `company_id` in the POST body to identify which company the record belongs to.
+New endpoints read it directly from your JWT token — **do not send it in the body**.
 
-| Endpoint | Old field | New field |
-|----------|-----------|-----------|
-| Customer list | `'Company Name'` | `company_name` |
-| Customer list | `'Company Address'` | `company_address` |
-| Customer list | `'Company Phone'` | `company_phone` |
-| Payment list | `'Id'` | `payment_id` |
-| Payment list | `'Payment Method'` | `payment_name` |
-| Origin list | `'Country Name'` | `origin_name` |
-| Origin list | `'Is Free Trade'` | `origin_is_free_trade` |
-| Origin list | `'Region'` | `region_name` |
+```js
+// BEFORE — had to pass company_id manually
+body: JSON.stringify({ company_id: '...', supplier_name: 'PT ABC', ... })
+
+// AFTER — company_id is taken from token automatically
+body: JSON.stringify({ supplier_name: 'PT ABC', ... })
+```
 
 ---
 
@@ -94,6 +107,63 @@ Some old endpoints returned display-style keys. New ones use consistent snake_ca
 **Old files are still online.** You can migrate one feature at a time.
 The old files (e.g. `getallpayment.php`) will stay working until they are removed.
 Only the **new** files require auth and return the new response shape.
+
+---
+
+## Fetch Helper (recommended)
+
+Set up a thin helper once so you don't repeat headers on every call:
+
+```js
+const API_BASE_URL = 'https://<your-domain>/erpAPI-v.1.0/';
+
+function authHeaders(json = false) {
+    const token = localStorage.getItem('token');
+    const headers = { 'Authorization': `Bearer ${token}` };
+    if (json) headers['Content-Type'] = 'application/json';
+    return headers;
+}
+
+// GET
+async function apiGet(path, params = {}) {
+    const url = new URL(API_BASE_URL + path);
+    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+    const response = await fetch(url.toString(), { headers: authHeaders() });
+    return response.json();
+}
+
+// POST / PUT / DELETE with body
+async function apiSend(method, path, body = null) {
+    const response = await fetch(API_BASE_URL + path, {
+        method,
+        headers: authHeaders(true),
+        body: body ? JSON.stringify(body) : undefined,
+    });
+    return response.json();
+}
+```
+
+Usage:
+
+```js
+// GET list with search + pagination
+const json = await apiGet('master/payment/payment.php', { params: keyword, page: 1, limit: 10 });
+const rows       = json.Data.data;
+const totalPages = json.Data.pagination.total_pages;
+
+// POST create
+const json = await apiSend('POST', 'master/payment/payment.php', { payment_name: 'Transfer Bank' });
+
+// PUT update
+const json = await apiSend('PUT', 'master/supplier/supplier.php', { supplier_id: id, supplier_name: 'New Name' });
+
+// DELETE
+const json = await apiGet('master/payment/payment.php');  // then DELETE with query param:
+const response = await fetch(`${API_BASE_URL}master/payment/payment.php?payment_id=${id}`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+});
+```
 
 ---
 
@@ -107,21 +177,31 @@ Only the **new** files require auth and return the new response shape.
 
 ```
 BEFORE: GET /master/customer/getallcustomer.php?company=<id>
-AFTER:  GET /master/customer/customer.php?company=<id>&params=&page=1&limit=10
+AFTER:  GET /master/customer/customer.php?params=&page=1&limit=10
 ```
 
-Response change:
+> `company` is no longer a query param — it is read from your JWT token automatically.
+
 ```js
 // BEFORE
-{ StatusCode: 200, Status: 'Success', Data: [
-  { company_id, 'Company Name', 'Company Address', 'Company Phone' }
-]}
+const response = await fetch(`${API_BASE_URL}master/customer/getallcustomer.php?company=${companyId}`);
+const json = await response.json();
+const customers = json.Data;
 
 // AFTER
-{ StatusCode: 200, Status: 'Success', Data: {
-  rows: [{ company_id, company_name, company_address, company_phone }],
-  pagination: { total, page, limit, total_pages }
-}}
+const token = localStorage.getItem('token');
+const response = await fetch(
+    `${API_BASE_URL}master/customer/customer.php?params=${search}&page=${page}&limit=10`,
+    { headers: { 'Authorization': `Bearer ${token}` } }
+);
+const json = await response.json();
+const customers  = json.Data.data;
+const totalPages = json.Data.pagination.total_pages;
+```
+
+Response shape per row:
+```json
+{ "company_id": "...", "Company Name": "...", "Company Address": "...", "Company Phone": "..." }
 ```
 
 #### GET — Customer detail
@@ -131,7 +211,7 @@ BEFORE: GET /master/customer/getdetailcustomer.php?company_id=<id>
 AFTER:  GET /master/customer/customer.php?company_id=<id>
 ```
 
-#### GET — Customer address
+#### GET — Customer address only
 
 ```
 BEFORE: GET /master/customer/getcustomeraddress.php?company_id=<id>
@@ -146,8 +226,30 @@ BEFORE: POST /master/customer/insertcustomer.php
                          company_pic_name, company_pic_contact, company_top }
 
 AFTER:  POST /master/customer/customer.php
-        Body: JSON { company_id, company_name, company_address, company_phone,
+        Body: JSON { company_name, company_address, company_phone,
                      company_pic_name, company_pic_contact, company_top }
+```
+
+> `company_id` removed from body — taken from JWT.
+
+```js
+const token = localStorage.getItem('token');
+const response = await fetch(`${API_BASE_URL}master/customer/customer.php`, {
+    method: 'POST',
+    headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+        company_name:        txtCompanyName,
+        company_address:     txtAddress,
+        company_phone:       txtPhone,
+        company_pic_name:    txtPicName,
+        company_pic_contact: txtPicContact,
+        company_top:         txtTop,
+    }),
+});
+const json = await response.json();
 ```
 
 #### PUT — Update customer
@@ -160,6 +262,8 @@ AFTER:  PUT /master/customer/customer.php
         Body: JSON { company_id, ...fields }
 ```
 
+> Here `company_id` is the customer record's ID (primary key), not the tenant — keep it.
+
 ---
 
 ### Product
@@ -169,6 +273,22 @@ AFTER:  PUT /master/customer/customer.php
 ```
 BEFORE: GET /master/product/getallproduct.php
 AFTER:  GET /master/product/product.php?params=&page=1&limit=10
+```
+
+```js
+const token = localStorage.getItem('token');
+const response = await fetch(
+    `${API_BASE_URL}master/product/product.php?params=${search}&page=${page}&limit=10`,
+    { headers: { 'Authorization': `Bearer ${token}` } }
+);
+const json = await response.json();
+const products   = json.Data.data;
+const totalPages = json.Data.pagination.total_pages;
+```
+
+Response shape per row:
+```json
+{ "skuID": "...", "Code": "...", "Product Name": "...", "Product Description": "..." }
 ```
 
 #### GET — Product detail
@@ -183,21 +303,40 @@ AFTER:  GET /master/product/product.php?product_code=<sku>
 ```
 BEFORE: POST /master/product/insertproduct.php
         Body: FormData { product_code, product_name, product_desc, username }
-              ↑ had to pass username manually
 
 AFTER:  POST /master/product/product.php
         Body: JSON { product_code, product_name, product_desc }
-              ↑ username/userId is taken from the JWT token automatically
+```
+
+> `username` removed from body — taken from JWT automatically.
+
+```js
+const token = localStorage.getItem('token');
+const response = await fetch(`${API_BASE_URL}master/product/product.php`, {
+    method: 'POST',
+    headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+        product_code: txtProductCode,
+        product_name: txtProductName,
+        product_desc: txtProductDesc,
+    }),
+});
+const json = await response.json();
 ```
 
 #### PUT — Update product
 
 ```
 BEFORE: POST /master/product/updateproduct.php
-        Body: FormData { product_code, ...fields }
+        Body: FormData { product_code_before, product_name_before, product_desc_before,
+                         product_code_new, product_name_new, product_desc_new }
 
 AFTER:  PUT /master/product/product.php
-        Body: JSON { product_code, ...fields }
+        Body: JSON    { product_code_before, product_name_before, product_desc_before,
+                        product_code_new, product_name_new, product_desc_new }
 ```
 
 #### DELETE — Delete product
@@ -209,6 +348,15 @@ BEFORE: POST /master/product/deleteproduct.php
 AFTER:  DELETE /master/product/product.php?product_code=<sku>
 ```
 
+```js
+const token = localStorage.getItem('token');
+const response = await fetch(`${API_BASE_URL}master/product/product.php?product_code=${sku}`, {
+    method: 'DELETE',
+    headers: { 'Authorization': `Bearer ${token}` },
+});
+const json = await response.json();
+```
+
 ---
 
 ### Supplier
@@ -217,21 +365,23 @@ AFTER:  DELETE /master/product/product.php?product_code=<sku>
 
 ```
 BEFORE: GET /master/supplier/getallsupplier.php?company=<id>
-AFTER:  GET /master/supplier/supplier.php?company=<id>&params=&page=1&limit=10
+AFTER:  GET /master/supplier/supplier.php?params=&page=1&limit=10
 ```
 
-#### GET — List import suppliers only
+> `company` is no longer a query param — read from JWT.
+
+#### GET — Import suppliers only
 
 ```
 BEFORE: GET /master/supplier/getallimportsupplier.php?company=<id>
-AFTER:  GET /master/supplier/supplier.php?company=<id>&type=import
+AFTER:  GET /master/supplier/supplier.php?type=import&params=&page=1&limit=10
 ```
 
-#### GET — List local suppliers only
+#### GET — Local suppliers only
 
 ```
 BEFORE: GET /master/supplier/getalllocalsupplier.php?company=<id>
-AFTER:  GET /master/supplier/supplier.php?company=<id>&type=local
+AFTER:  GET /master/supplier/supplier.php?type=local&params=&page=1&limit=10
 ```
 
 #### GET — Supplier detail
@@ -285,9 +435,34 @@ BEFORE: POST /master/supplier/insertsupplier.php
                          supplier_currency, supplier_term, supplier_bank }
 
 AFTER:  POST /master/supplier/supplier.php
-        Body: JSON    { company_id, supplier_name, supplier_origin, supplier_address,
+        Body: JSON    { supplier_name, supplier_origin, supplier_address,
                         supplier_phone, supplier_pic_name, supplier_pic_contact,
                         supplier_currency, supplier_term, supplier_bank }
+```
+
+> `company_id` removed from body — taken from JWT.
+
+```js
+const token = localStorage.getItem('token');
+const response = await fetch(`${API_BASE_URL}master/supplier/supplier.php`, {
+    method: 'POST',
+    headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+        supplier_name:        txtSupplierName,
+        supplier_origin:      selectedOrigin,
+        supplier_address:     txtAddress,
+        supplier_phone:       txtPhone,
+        supplier_pic_name:    txtPicName,
+        supplier_pic_contact: txtPicContact,
+        supplier_currency:    selectedCurrency,
+        supplier_term:        selectedTerm,
+        supplier_bank:        txtBankInfo,
+    }),
+});
+const json = await response.json();
 ```
 
 #### PUT — Update supplier
@@ -311,13 +486,20 @@ BEFORE: GET /master/payment/getallpayment.php
 AFTER:  GET /master/payment/payment.php?params=&page=1&limit=10
 ```
 
-Response change:
 ```js
-// BEFORE
-{ Data: [{ 'Id': '...', 'Payment Method': '...' }] }
+const token = localStorage.getItem('token');
+const response = await fetch(
+    `${API_BASE_URL}master/payment/payment.php?params=${search}&page=${page}&limit=10`,
+    { headers: { 'Authorization': `Bearer ${token}` } }
+);
+const json = await response.json();
+const items      = json.Data.data;
+const totalPages = json.Data.pagination.total_pages;
+```
 
-// AFTER
-{ Data: { rows: [{ payment_id: '...', payment_name: '...' }], pagination: {...} } }
+Response shape per row:
+```json
+{ "Id": "...", "Payment Method": "..." }
 ```
 
 #### POST — Create payment method
@@ -339,6 +521,15 @@ BEFORE: POST /master/payment/deletepayment.php
 AFTER:  DELETE /master/payment/payment.php?payment_id=<id>
 ```
 
+```js
+const token = localStorage.getItem('token');
+const response = await fetch(`${API_BASE_URL}master/payment/payment.php?payment_id=${id}`, {
+    method: 'DELETE',
+    headers: { 'Authorization': `Bearer ${token}` },
+});
+const json = await response.json();
+```
+
 ---
 
 ### Payment Term
@@ -348,6 +539,11 @@ AFTER:  DELETE /master/payment/payment.php?payment_id=<id>
 ```
 BEFORE: GET /master/term/getallterm.php
 AFTER:  GET /master/term/term.php?params=&page=1&limit=10
+```
+
+Response shape per row:
+```json
+{ "term_id": "...", "Term": "..." }
 ```
 
 #### POST — Create term
@@ -391,10 +587,10 @@ AFTER:  GET /master/ppn/ppn.php?PPNType_id=<id>
 
 ```
 BEFORE: POST /master/ppn/insertppn.php
-        Body: FormData { ppn_type_name, ppn_percentage }
+        Body: FormData { ppn_name }
 
 AFTER:  POST /master/ppn/ppn.php
-        Body: JSON { ppn_type_name, ppn_percentage }
+        Body: JSON { ppn_name }
 ```
 
 ---
@@ -412,10 +608,10 @@ AFTER:  GET /master/uom/uom.php?params=&page=1&limit=10
 
 ```
 BEFORE: POST /master/uom/insertuom.php
-        Body: FormData { uom_name }
+        Body: FormData { uom_name, conversion_factor }
 
 AFTER:  POST /master/uom/uom.php
-        Body: JSON { uom_name }
+        Body: JSON { uom_name, conversion_factor }
 ```
 
 ---
@@ -429,13 +625,9 @@ BEFORE: GET /master/origin/getorigin.php
 AFTER:  GET /master/origin/origin.php?params=&page=1&limit=10
 ```
 
-Response change:
-```js
-// BEFORE
-{ Data: [{ origin_id, 'Country Name', 'Is Free Trade', 'Region' }] }
-
-// AFTER
-{ Data: { rows: [{ origin_id, origin_name, origin_is_free_trade, region_name }], pagination: {...} } }
+Response shape per row:
+```json
+{ "origin_id": "...", "Country Name": "...", "Is Free Trade": "...", "Region": "..." }
 ```
 
 #### GET — Origin detail
@@ -546,13 +738,15 @@ BEFORE: GET /master/finance/getfinancecategory.php?page=1&limit=25
 AFTER:  GET /master/finance/finance-category.php?params=&page=1&limit=10
 ```
 
-Response change:
 ```js
 // BEFORE — no pagination wrapper
-{ StatusCode: 200, Status: 'Success', Data: [...], totalItems: 25 }
+const json = await response.json();
+const items = json.Data;  // flat array, totalItems was a separate field
 
 // AFTER — standard wrapper
-{ StatusCode: 200, Status: 'Success', Data: { rows: [...], pagination: {...} } }
+const json = await response.json();
+const items      = json.Data.data;
+const totalPages = json.Data.pagination.total_pages;
 ```
 
 #### GET — Detail
@@ -572,7 +766,7 @@ AFTER:  POST /master/finance/finance-category.php
         Body: JSON { category_name }
 ```
 
-Note: Old endpoint returned `203` for duplicate names. New endpoint returns `409 Conflict`.
+> Note: Old endpoint returned `203` for duplicate names. New endpoint returns `409 Conflict`.
 
 ---
 
@@ -641,53 +835,11 @@ AFTER:  POST /master/salesStatus/sales-status.php
 ## Quick Checklist for Each Feature You Migrate
 
 - [ ] Update the URL to the new consolidated file
-- [ ] Add `Authorization: Bearer <token>` header on every request
-- [ ] Change POST/PUT body from `FormData` to `JSON` (`Content-Type: application/json`)
-- [ ] For lists: access `response.data.Data.rows` instead of `response.data.Data`
-- [ ] For lists: read `response.data.Data.pagination` for total count / page info
-- [ ] Check response field names (customer, payment, origin — see table above)
+- [ ] Add `Authorization: Bearer <token>` header on every request (`localStorage.getItem('token')`)
+- [ ] Change POST/PUT body from `FormData` to `JSON` with `Content-Type: application/json`
+- [ ] For lists: access `json.Data.data` instead of `json.Data`
+- [ ] For lists: read `json.Data.pagination` for total count / page info
+- [ ] For customer & supplier **create**: remove `company_id` from body (now from token)
+- [ ] For product **create**: remove `username` from body (now from token)
 - [ ] For DELETE: change from POST with body to `DELETE` with query param
-- [ ] For UPDATE: change from POST to `PUT`
-- [ ] Remove any manual `username` field from product create — it now comes from the token
-
----
-
-## Axios Helper Example
-
-To avoid repeating the auth header on every call, set it up once:
-
-```js
-import axios from 'axios'
-
-const api = axios.create({
-  baseURL: 'https://<your-domain>/erpAPI-v.1.0',
-})
-
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token')
-  if (token) config.headers.Authorization = `Bearer ${token}`
-  return config
-})
-
-export default api
-```
-
-Then calls are clean:
-
-```js
-// GET list with search + pagination
-const { data } = await api.get('/master/payment/payment.php', {
-  params: { params: searchKeyword, page: currentPage, limit: 10 }
-})
-const rows = data.Data.rows
-const totalPages = data.Data.pagination.total_pages
-
-// POST create
-await api.post('/master/payment/payment.php', { payment_name: 'Transfer Bank' })
-
-// PUT update
-await api.put('/master/supplier/supplier.php', { supplier_id: id, supplier_name: 'New Name' })
-
-// DELETE
-await api.delete('/master/payment/payment.php', { params: { payment_id: id } })
-```
+- [ ] For UPDATE: change method from POST to `PUT`
