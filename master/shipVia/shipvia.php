@@ -11,15 +11,32 @@ require_once '../../connection/connection.php';
 require_once '../../auth/middleware.php';
 
 // --- GET ALL ---
-function getAllShipVia($conn): void {
-    $result = mysqli_query($conn, "SELECT shipID, shipName FROM shipVia ORDER BY shipName ASC");
+// Searchable by: shipName
+// ?params=search  &page=1  &limit=10
+function getAllShipVia($conn, string $params = '', int $page = 1, int $limit = 10): void {
+    $params = mysqli_real_escape_string($conn, $params);
+    $page   = max(1, $page);
+    $limit  = min(100, max(1, $limit));
+    $offset = ($page - 1) * $limit;
+
+    $where = $params !== '' ? "WHERE shipName LIKE '%$params%'" : '';
+
+    $countResult = mysqli_query($conn, "SELECT COUNT(*) AS total FROM shipVia $where");
+    $total       = (int) mysqli_fetch_assoc($countResult)['total'];
+
+    $result = mysqli_query($conn, "SELECT shipID, shipName FROM shipVia $where ORDER BY shipName ASC LIMIT $limit OFFSET $offset");
 
     if ($result && mysqli_num_rows($result) > 0) {
-        $data = [];
-        while ($row = mysqli_fetch_assoc($result)) {
-            $data[] = ['shipID' => $row['shipID'], 'shipName' => $row['shipName']];
-        }
-        jsonResponse(200, 'Success', $data);
+        $rows = mysqli_fetch_all($result, MYSQLI_ASSOC);
+        jsonResponse(200, 'Success', [
+            'rows'       => $rows,
+            'pagination' => [
+                'total'       => $total,
+                'page'        => $page,
+                'limit'       => $limit,
+                'total_pages' => (int) ceil($total / $limit),
+            ],
+        ]);
     } else {
         jsonResponse(404, 'No ship-via options found');
     }
@@ -54,7 +71,12 @@ $method = $_SERVER['REQUEST_METHOD'];
 
 switch ($method) {
     case 'GET':
-        getAllShipVia($conn);
+        getAllShipVia(
+            $conn,
+            $_GET['params'] ?? '',
+            (int)($_GET['page']  ?? 1),
+            (int)($_GET['limit'] ?? 10)
+        );
         break;
 
     case 'POST':

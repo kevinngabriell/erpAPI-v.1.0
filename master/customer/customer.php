@@ -11,24 +11,50 @@ require_once '../../connection/connection.php';
 require_once '../../auth/middleware.php';
 
 // --- GET ALL ---
-function getAllCustomer($conn, string $company): void {
+// Searchable by: company_name, company_address, company_phone
+// ?company=X  &params=search  &page=1  &limit=10
+function getAllCustomer($conn, string $company, string $params = '', int $page = 1, int $limit = 10): void {
     if ($company === '') jsonResponse(400, 'company is required');
 
     $company = mysqli_real_escape_string($conn, $company);
-    $result  = mysqli_query($conn, "SELECT company_id, company_name, company_address, company_phone
-                                    FROM customer WHERE company = '$company' ORDER BY company_name ASC");
+    $params  = mysqli_real_escape_string($conn, $params);
+    $page    = max(1, $page);
+    $limit   = min(100, max(1, $limit));
+    $offset  = ($page - 1) * $limit;
+
+    $search = $params !== ''
+        ? "AND (company_name LIKE '%$params%' OR company_address LIKE '%$params%' OR company_phone LIKE '%$params%')"
+        : '';
+
+    $where = "WHERE company = '$company' $search";
+
+    $countResult = mysqli_query($conn, "SELECT COUNT(*) AS total FROM customer $where");
+    $total       = (int) mysqli_fetch_assoc($countResult)['total'];
+
+    $result = mysqli_query($conn, "SELECT company_id, company_name, company_address, company_phone
+                                   FROM customer $where
+                                   ORDER BY company_name ASC
+                                   LIMIT $limit OFFSET $offset");
 
     if ($result && mysqli_num_rows($result) > 0) {
-        $data = [];
+        $rows = [];
         while ($row = mysqli_fetch_assoc($result)) {
-            $data[] = [
+            $rows[] = [
                 'company_id'      => $row['company_id'],
                 'Company Name'    => $row['company_name'],
                 'Company Address' => $row['company_address'],
                 'Company Phone'   => $row['company_phone'],
             ];
         }
-        jsonResponse(200, 'Success', $data);
+        jsonResponse(200, 'Success', [
+            'rows'       => $rows,
+            'pagination' => [
+                'total'       => $total,
+                'page'        => $page,
+                'limit'       => $limit,
+                'total_pages' => (int) ceil($total / $limit),
+            ],
+        ]);
     } else {
         jsonResponse(404, 'No customers found');
     }
@@ -129,7 +155,13 @@ switch ($method) {
         if ($company_id !== '') {
             getDetailCustomer($conn, $company_id, $type);
         } else {
-            getAllCustomer($conn, $company);
+            getAllCustomer(
+                $conn,
+                $company,
+                $_GET['params'] ?? '',
+                (int)($_GET['page']  ?? 1),
+                (int)($_GET['limit'] ?? 10)
+            );
         }
         break;
 

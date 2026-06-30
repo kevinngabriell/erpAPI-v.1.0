@@ -11,15 +11,32 @@ require_once '../../connection/connection.php';
 require_once '../../auth/middleware.php';
 
 // --- GET ALL ---
-function getAllGender($conn): void {
-    $result = mysqli_query($conn, "SELECT id, gender_name FROM gender ORDER BY gender_name ASC");
+// Searchable by: gender_name
+// ?params=search  &page=1  &limit=10
+function getAllGender($conn, string $params = '', int $page = 1, int $limit = 10): void {
+    $params = mysqli_real_escape_string($conn, $params);
+    $page   = max(1, $page);
+    $limit  = min(100, max(1, $limit));
+    $offset = ($page - 1) * $limit;
+
+    $where = $params !== '' ? "WHERE gender_name LIKE '%$params%'" : '';
+
+    $countResult = mysqli_query($conn, "SELECT COUNT(*) AS total FROM gender $where");
+    $total       = (int) mysqli_fetch_assoc($countResult)['total'];
+
+    $result = mysqli_query($conn, "SELECT id, gender_name FROM gender $where ORDER BY gender_name ASC LIMIT $limit OFFSET $offset");
 
     if ($result && mysqli_num_rows($result) > 0) {
-        $data = [];
-        while ($row = mysqli_fetch_assoc($result)) {
-            $data[] = ['id' => $row['id'], 'gender_name' => $row['gender_name']];
-        }
-        jsonResponse(200, 'Success', $data);
+        $rows = mysqli_fetch_all($result, MYSQLI_ASSOC);
+        jsonResponse(200, 'Success', [
+            'rows'       => $rows,
+            'pagination' => [
+                'total'       => $total,
+                'page'        => $page,
+                'limit'       => $limit,
+                'total_pages' => (int) ceil($total / $limit),
+            ],
+        ]);
     } else {
         jsonResponse(404, 'No genders found');
     }
@@ -54,7 +71,12 @@ $method = $_SERVER['REQUEST_METHOD'];
 
 switch ($method) {
     case 'GET':
-        getAllGender($conn);
+        getAllGender(
+            $conn,
+            $_GET['params'] ?? '',
+            (int)($_GET['page']  ?? 1),
+            (int)($_GET['limit'] ?? 10)
+        );
         break;
 
     case 'POST':

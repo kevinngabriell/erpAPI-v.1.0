@@ -11,22 +11,48 @@ require_once '../../connection/connection.php';
 require_once '../../auth/middleware.php';
 
 // --- GET ALL ---
-function getAllOrigin($conn): void {
-    $result = mysqli_query($conn, "SELECT A1.origin_id, A1.origin_name, A1.origin_is_free_trade, A2.region_name
-                                   FROM origin A1 JOIN region A2 ON A2.region_id = A1.origin_region
-                                   ORDER BY A1.origin_name ASC");
+// Searchable by: origin_name, region_name
+// ?params=search  &page=1  &limit=10
+function getAllOrigin($conn, string $params = '', int $page = 1, int $limit = 10): void {
+    $params = mysqli_real_escape_string($conn, $params);
+    $page   = max(1, $page);
+    $limit  = min(100, max(1, $limit));
+    $offset = ($page - 1) * $limit;
+
+    $where = $params !== ''
+        ? "WHERE A1.origin_name LIKE '%$params%' OR A2.region_name LIKE '%$params%'"
+        : '';
+
+    $baseFrom = "FROM origin A1 JOIN region A2 ON A2.region_id = A1.origin_region";
+
+    $countResult = mysqli_query($conn, "SELECT COUNT(*) AS total $baseFrom $where");
+    $total       = (int) mysqli_fetch_assoc($countResult)['total'];
+
+    $result = mysqli_query($conn,
+        "SELECT A1.origin_id, A1.origin_name, A1.origin_is_free_trade, A2.region_name
+         $baseFrom $where
+         ORDER BY A1.origin_name ASC LIMIT $limit OFFSET $offset"
+    );
 
     if ($result && mysqli_num_rows($result) > 0) {
-        $data = [];
+        $rows = [];
         while ($row = mysqli_fetch_assoc($result)) {
-            $data[] = [
-                'origin_id'           => $row['origin_id'],
-                'Country Name'        => $row['origin_name'],
-                'Is Free Trade'       => $row['origin_is_free_trade'],
-                'Region'              => $row['region_name'],
+            $rows[] = [
+                'origin_id'       => $row['origin_id'],
+                'Country Name'    => $row['origin_name'],
+                'Is Free Trade'   => $row['origin_is_free_trade'],
+                'Region'          => $row['region_name'],
             ];
         }
-        jsonResponse(200, 'Success', $data);
+        jsonResponse(200, 'Success', [
+            'rows'       => $rows,
+            'pagination' => [
+                'total'       => $total,
+                'page'        => $page,
+                'limit'       => $limit,
+                'total_pages' => (int) ceil($total / $limit),
+            ],
+        ]);
     } else {
         jsonResponse(404, 'No origins found');
     }
@@ -76,14 +102,9 @@ function createOrigin($conn, array $input): void {
     $origin_is_free_trade = mysqli_real_escape_string($conn, trim($input['origin_is_free_trade']));
 
     $dup = mysqli_query($conn, "SELECT 1 FROM origin WHERE origin_name = '$origin_name' LIMIT 1");
-    if (mysqli_num_rows($dup) > 0) {
-        jsonResponse(409, 'Origin already exists in database');
-    }
+    if (mysqli_num_rows($dup) > 0) jsonResponse(409, 'Origin already exists in database');
 
-    $query = "INSERT IGNORE INTO origin (origin_id, origin_name, origin_region, origin_is_free_trade)
-              VALUES (NULL, '$origin_name', '$origin_region', '$origin_is_free_trade')";
-
-    if (mysqli_query($conn, $query)) {
+    if (mysqli_query($conn, "INSERT IGNORE INTO origin (origin_id, origin_name, origin_region, origin_is_free_trade) VALUES (NULL, '$origin_name', '$origin_region', '$origin_is_free_trade')")) {
         jsonResponse(201, 'Origin created successfully');
     } else {
         jsonResponse(500, 'Failed to create origin');
@@ -134,7 +155,12 @@ switch ($method) {
         } elseif ($supplier_id !== '') {
             getOriginBySupplier($conn, $supplier_id);
         } else {
-            getAllOrigin($conn);
+            getAllOrigin(
+                $conn,
+                $_GET['params'] ?? '',
+                (int)($_GET['page']  ?? 1),
+                (int)($_GET['limit'] ?? 10)
+            );
         }
         break;
 

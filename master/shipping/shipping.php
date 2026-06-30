@@ -11,8 +11,21 @@ require_once '../../connection/connection.php';
 require_once '../../auth/middleware.php';
 
 // --- GET ALL ---
-function getAllShipping($conn): void {
-    $query = "SELECT * FROM shipment ORDER BY
+// Searchable by: shipment_name
+// ?params=search  &page=1  &limit=10
+// When no search term, ordered chronologically by month/period name.
+function getAllShipping($conn, string $params = '', int $page = 1, int $limit = 10): void {
+    $params = mysqli_real_escape_string($conn, $params);
+    $page   = max(1, $page);
+    $limit  = min(100, max(1, $limit));
+    $offset = ($page - 1) * $limit;
+
+    $where = $params !== '' ? "WHERE shipment_name LIKE '%$params%'" : '';
+
+    $countResult = mysqli_query($conn, "SELECT COUNT(*) AS total FROM shipment $where");
+    $total       = (int) mysqli_fetch_assoc($countResult)['total'];
+
+    $orderBy = "ORDER BY
         CASE
             WHEN shipment_name LIKE '%early january%'   THEN 1
             WHEN shipment_name LIKE '%mid january%'     THEN 2
@@ -41,14 +54,19 @@ function getAllShipping($conn): void {
             ELSE 99
         END";
 
-    $result = mysqli_query($conn, $query);
+    $result = mysqli_query($conn, "SELECT shipment_id, shipment_name FROM shipment $where $orderBy LIMIT $limit OFFSET $offset");
 
     if ($result && mysqli_num_rows($result) > 0) {
-        $data = [];
-        while ($row = mysqli_fetch_assoc($result)) {
-            $data[] = ['shipment_id' => $row['shipment_id'], 'shipment_name' => $row['shipment_name']];
-        }
-        jsonResponse(200, 'Success', $data);
+        $rows = mysqli_fetch_all($result, MYSQLI_ASSOC);
+        jsonResponse(200, 'Success', [
+            'rows'       => $rows,
+            'pagination' => [
+                'total'       => $total,
+                'page'        => $page,
+                'limit'       => $limit,
+                'total_pages' => (int) ceil($total / $limit),
+            ],
+        ]);
     } else {
         jsonResponse(404, 'No shipment schedules found');
     }
@@ -83,7 +101,12 @@ $method = $_SERVER['REQUEST_METHOD'];
 
 switch ($method) {
     case 'GET':
-        getAllShipping($conn);
+        getAllShipping(
+            $conn,
+            $_GET['params'] ?? '',
+            (int)($_GET['page']  ?? 1),
+            (int)($_GET['limit'] ?? 10)
+        );
         break;
 
     case 'POST':

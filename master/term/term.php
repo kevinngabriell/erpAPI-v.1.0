@@ -11,15 +11,35 @@ require_once '../../connection/connection.php';
 require_once '../../auth/middleware.php';
 
 // --- GET ALL ---
-function getAllTerm($conn): void {
-    $result = mysqli_query($conn, "SELECT term_id, term_name FROM term ORDER BY term_name ASC");
+// Searchable by: term_name
+// ?params=search  &page=1  &limit=10
+function getAllTerm($conn, string $params = '', int $page = 1, int $limit = 10): void {
+    $params = mysqli_real_escape_string($conn, $params);
+    $page   = max(1, $page);
+    $limit  = min(100, max(1, $limit));
+    $offset = ($page - 1) * $limit;
+
+    $where = $params !== '' ? "WHERE term_name LIKE '%$params%'" : '';
+
+    $countResult = mysqli_query($conn, "SELECT COUNT(*) AS total FROM term $where");
+    $total       = (int) mysqli_fetch_assoc($countResult)['total'];
+
+    $result = mysqli_query($conn, "SELECT term_id, term_name FROM term $where ORDER BY term_name ASC LIMIT $limit OFFSET $offset");
 
     if ($result && mysqli_num_rows($result) > 0) {
-        $data = [];
+        $rows = [];
         while ($row = mysqli_fetch_assoc($result)) {
-            $data[] = ['term_id' => $row['term_id'], 'Term' => $row['term_name']];
+            $rows[] = ['term_id' => $row['term_id'], 'Term' => $row['term_name']];
         }
-        jsonResponse(200, 'Success', $data);
+        jsonResponse(200, 'Success', [
+            'rows'       => $rows,
+            'pagination' => [
+                'total'       => $total,
+                'page'        => $page,
+                'limit'       => $limit,
+                'total_pages' => (int) ceil($total / $limit),
+            ],
+        ]);
     } else {
         jsonResponse(404, 'No terms found');
     }
@@ -69,7 +89,12 @@ $method = $_SERVER['REQUEST_METHOD'];
 
 switch ($method) {
     case 'GET':
-        getAllTerm($conn);
+        getAllTerm(
+            $conn,
+            $_GET['params'] ?? '',
+            (int)($_GET['page']  ?? 1),
+            (int)($_GET['limit'] ?? 10)
+        );
         break;
 
     case 'POST':

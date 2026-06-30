@@ -10,46 +10,59 @@ require_once '../../vendor/autoload.php';
 require_once '../../connection/connection.php';
 require_once '../../auth/middleware.php';
 
-// --- GET ALL (with optional type filter) ---
-// ?company=X             → all suppliers
-// ?company=X&type=import → import suppliers (origin != 10)
-// ?company=X&type=local  → local suppliers  (origin = 10)
-function getAllSupplier($conn, string $company, string $type = ''): void {
+// --- GET ALL ---
+// Searchable by: supplier_name, supplier_phone, supplier_pic_name
+// ?company=X  &type=import|local  &params=search  &page=1  &limit=10
+function getAllSupplier($conn, string $company, string $type = '', string $params = '', int $page = 1, int $limit = 10): void {
     if ($company === '') jsonResponse(400, 'company is required');
 
-    $c = mysqli_real_escape_string($conn, $company);
+    $c      = mysqli_real_escape_string($conn, $company);
+    $params = mysqli_real_escape_string($conn, $params);
+    $page   = max(1, $page);
+    $limit  = min(100, max(1, $limit));
+    $offset = ($page - 1) * $limit;
+
+    $search = $params !== ''
+        ? "AND (A1.supplier_name LIKE '%$params%' OR A1.supplier_phone LIKE '%$params%' OR A1.supplier_pic_name LIKE '%$params%')"
+        : '';
 
     if ($type === 'import') {
-        $sql = "SELECT A1.supplier_id, A1.supplier_name, A1.supplier_phone, A2.origin_name,
-                       A1.supplier_pic_name, A1.supplier_pic_contact, A1.supplier_origin,
-                       A1.supplier_currency, A1.supplier_term, A1.supplier_bank_information
-                FROM supplier A1 JOIN origin A2 ON A2.origin_id = A1.supplier_origin
-                WHERE A1.company = '$c' AND supplier_origin != '10' ORDER BY A1.supplier_name ASC";
+        $typeFilter = "AND supplier_origin != '10'";
+        $selectExtra = 'A1.supplier_currency, A1.supplier_term, A1.supplier_bank_information,';
     } elseif ($type === 'local') {
-        $sql = "SELECT A1.supplier_id, A1.supplier_name, A1.supplier_phone, A2.origin_name,
-                       A1.supplier_pic_name, A1.supplier_pic_contact, A1.supplier_origin,
-                       A1.supplier_currency, A1.supplier_term, A1.supplier_bank_information
-                FROM supplier A1 JOIN origin A2 ON A2.origin_id = A1.supplier_origin
-                WHERE A1.company = '$c' AND supplier_origin = '10' ORDER BY A1.supplier_name ASC";
+        $typeFilter = "AND supplier_origin = '10'";
+        $selectExtra = 'A1.supplier_currency, A1.supplier_term, A1.supplier_bank_information,';
     } else {
-        $sql = "SELECT A1.supplier_id, A1.supplier_name, A1.supplier_phone, A2.origin_name,
-                       A1.supplier_pic_name, A1.supplier_pic_contact, A1.supplier_origin, A3.currency_name
-                FROM supplier A1
-                JOIN origin A2 ON A2.origin_id = A1.supplier_origin
-                JOIN currency A3 ON A1.supplier_currency = A3.currency_id
-                WHERE A1.company = '$c' ORDER BY A1.supplier_name ASC";
+        $typeFilter  = '';
+        $selectExtra = 'A3.currency_name,';
     }
 
-    $result = mysqli_query($conn, $sql);
+    $baseFrom  = "FROM supplier A1 JOIN origin A2 ON A2.origin_id = A1.supplier_origin";
+    $baseFrom .= ($type === '' ? " JOIN currency A3 ON A1.supplier_currency = A3.currency_id" : '');
+    $baseWhere = "WHERE A1.company = '$c' $typeFilter $search";
+
+    $countResult = mysqli_query($conn, "SELECT COUNT(*) AS total $baseFrom $baseWhere");
+    $total       = (int) mysqli_fetch_assoc($countResult)['total'];
+
+    $result = mysqli_query($conn,
+        "SELECT A1.supplier_id, A1.supplier_name, A1.supplier_phone, A2.origin_name,
+                A1.supplier_pic_name, A1.supplier_pic_contact, A1.supplier_origin, $selectExtra
+                A1.supplier_currency
+         $baseFrom $baseWhere
+         ORDER BY A1.supplier_name ASC LIMIT $limit OFFSET $offset"
+    );
 
     if ($result && mysqli_num_rows($result) > 0) {
-        $data = [];
-        while ($row = mysqli_fetch_assoc($result)) {
-            $data[] = $type
-                ? ['supplier_id' => $row['supplier_id'], 'Supplier' => $row['supplier_name'], 'Phone Number' => $row['supplier_phone'], 'Origin' => $row['origin_name'], 'PIC' => $row['supplier_pic_name'], 'PIC Contact' => $row['supplier_pic_contact'], 'supplier_origin' => $row['supplier_origin'], 'supplier_currency' => $row['supplier_currency'], 'supplier_term' => $row['supplier_term']]
-                : ['supplier_id' => $row['supplier_id'], 'Supplier' => $row['supplier_name'], 'Phone Number' => $row['supplier_phone'], 'Origin' => $row['origin_name'], 'PIC' => $row['supplier_pic_name'], 'PIC Contact' => $row['supplier_pic_contact'], 'Currency' => $row['currency_name']];
-        }
-        jsonResponse(200, 'Success', $data);
+        $rows = mysqli_fetch_all($result, MYSQLI_ASSOC);
+        jsonResponse(200, 'Success', [
+            'rows'       => $rows,
+            'pagination' => [
+                'total'       => $total,
+                'page'        => $page,
+                'limit'       => $limit,
+                'total_pages' => (int) ceil($total / $limit),
+            ],
+        ]);
     } else {
         jsonResponse(404, 'No suppliers found');
     }
@@ -77,30 +90,25 @@ function getDetailSupplier($conn, string $supplier_id, string $type = ''): void 
                     LEFT JOIN purchaseStatus A5 ON A1.POStatus = A5.PO_Status_ID
                     WHERE A1.POSupplier = '$id'";
             break;
-
         case 'currency':
             $sql = "SELECT A1.supplier_currency, A2.currency_name
                     FROM supplier A1 LEFT JOIN currency A2 ON A1.supplier_currency = A2.currency_id
                     WHERE A1.supplier_id = '$id' LIMIT 1";
             break;
-
         case 'origin':
             $sql = "SELECT A1.supplier_origin, A2.origin_name
                     FROM supplier A1 LEFT JOIN origin A2 ON A1.supplier_origin = A2.origin_id
                     WHERE A1.supplier_id = '$id' LIMIT 1";
             break;
-
         case 'term':
             $sql = "SELECT A1.supplier_term, A2.term_name
                     FROM supplier A1 LEFT JOIN term A2 ON A1.supplier_term = A2.term_id
                     WHERE A1.supplier_id = '$id' LIMIT 1";
             break;
-
         case 'pic':
             $sql = "SELECT supplier_pic_name, supplier_origin, supplier_currency, supplier_term
                     FROM supplier WHERE supplier_id = '$id' LIMIT 1";
             break;
-
         default:
             $sql = "SELECT A1.supplier_id, A1.supplier_name, A1.supplier_phone, A1.supplier_address,
                            A1.supplier_pic_name, A1.supplier_pic_contact, A1.supplier_origin,
@@ -128,17 +136,17 @@ function createSupplier($conn, array $input, string $userId): void {
         }
     }
 
-    $company_id          = mysqli_real_escape_string($conn, trim($input['company_id']));
-    $supplier_name       = mysqli_real_escape_string($conn, trim($input['supplier_name']));
-    $supplier_origin     = mysqli_real_escape_string($conn, trim($input['supplier_origin']));
-    $supplier_address    = mysqli_real_escape_string($conn, trim($input['supplier_address']));
-    $supplier_phone      = mysqli_real_escape_string($conn, trim($input['supplier_phone']));
-    $supplier_pic_name   = mysqli_real_escape_string($conn, trim($input['supplier_pic_name']));
-    $supplier_pic_contact= mysqli_real_escape_string($conn, trim($input['supplier_pic_contact']));
-    $supplier_currency   = mysqli_real_escape_string($conn, trim($input['supplier_currency']));
-    $supplier_term       = mysqli_real_escape_string($conn, trim($input['supplier_term']));
-    $supplier_bank       = mysqli_real_escape_string($conn, trim($input['supplier_bank']));
-    $id                  = generateUUID();
+    $company_id           = mysqli_real_escape_string($conn, trim($input['company_id']));
+    $supplier_name        = mysqli_real_escape_string($conn, trim($input['supplier_name']));
+    $supplier_origin      = mysqli_real_escape_string($conn, trim($input['supplier_origin']));
+    $supplier_address     = mysqli_real_escape_string($conn, trim($input['supplier_address']));
+    $supplier_phone       = mysqli_real_escape_string($conn, trim($input['supplier_phone']));
+    $supplier_pic_name    = mysqli_real_escape_string($conn, trim($input['supplier_pic_name']));
+    $supplier_pic_contact = mysqli_real_escape_string($conn, trim($input['supplier_pic_contact']));
+    $supplier_currency    = mysqli_real_escape_string($conn, trim($input['supplier_currency']));
+    $supplier_term        = mysqli_real_escape_string($conn, trim($input['supplier_term']));
+    $supplier_bank        = mysqli_real_escape_string($conn, trim($input['supplier_bank']));
+    $id                   = generateUUID();
 
     $insert = "INSERT INTO supplier
                (supplier_id, company, supplier_name, supplier_origin, supplier_address, supplier_phone,
@@ -205,7 +213,14 @@ switch ($method) {
         if ($supplier_id !== '') {
             getDetailSupplier($conn, $supplier_id, $type);
         } else {
-            getAllSupplier($conn, $company, $type);
+            getAllSupplier(
+                $conn,
+                $company,
+                $type,
+                $_GET['params'] ?? '',
+                (int)($_GET['page']  ?? 1),
+                (int)($_GET['limit'] ?? 10)
+            );
         }
         break;
 
