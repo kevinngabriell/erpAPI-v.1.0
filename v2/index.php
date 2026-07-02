@@ -19,8 +19,10 @@ switch ($module) {
 
     case 'account':
         $actionMap = [
-            'login'    => 'login.php',
-            'register' => 'register.php',
+            'login'            => 'login.php',
+            'register'         => 'register.php',
+            'forgot-password'  => 'forgot-password.php',
+            'reset-password'   => 'reset-password.php',
         ];
         $file = isset($actionMap[$action]) ? __DIR__ . '/auth/' . $actionMap[$action] : null;
         if (!$file) jsonResponse(404, 'Route not found');
