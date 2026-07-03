@@ -28,7 +28,7 @@ function writeRegisterLog($conn, string $action, ?string $user_id, string $usern
 
 function registerUser($conn, $input): void {
     // 1. Required field validation
-    $required = ['first_name', 'last_name', 'email', 'phone_number', 'password', 'password_confirmation', 'position_id', 'company_code', 'otp_code'];
+    $required = ['first_name', 'last_name', 'email', 'phone_number', 'password', 'password_confirmation', 'company_code', 'otp_code'];
     foreach ($required as $field) {
         if (!isset($input[$field]) || trim((string)$input[$field]) === '') {
             authResponse(400, "The {$field} field is required.");
@@ -43,7 +43,6 @@ function registerUser($conn, $input): void {
     $phone_number = strip_tags(trim($input['phone_number']));
     $password     = $input['password'];
     $password_confirmation = $input['password_confirmation'];
-    $position_id  = strip_tags(trim($input['position_id']));
     $company_code = strtoupper(strip_tags(trim($input['company_code'])));
     $otp_code     = strip_tags(trim($input['otp_code']));
     $language     = isset($input['language']) && in_array($input['language'], ['id', 'en'], true)
@@ -182,61 +181,28 @@ function registerUser($conn, $input): void {
 
     $otp_id = $otp_row['otp_id'];
 
-    // 10. Validate position_id and get position_name
+    // 10. Resolve default role — position is no longer chosen at registration;
+    // a super admin assigns position (and, if needed, role) during account approval.
     $stmt = $conn->prepare(
-        "SELECT position_id, position_name
-         FROM " . APP_SCHEMA . ".aluria_positions
-         WHERE position_id = ? AND is_active = 1
+        "SELECT app_role_id FROM " . CORE_SCHEMA . ".app_role
+         WHERE app_id = 'aluria'
+         ORDER BY created_at ASC
          LIMIT 1"
     );
-    $stmt->bind_param('s', $position_id);
     $stmt->execute();
-    $position_row = $stmt->get_result()->fetch_assoc();
+    $fallback_row     = $stmt->get_result()->fetch_assoc();
+    $default_role_id  = $fallback_row['app_role_id'] ?? null;
     $stmt->close();
-
-    if (!$position_row) {
-        writeRegisterLog($conn, 'register_failed', null, $email);
-        authResponse(400, 'Invalid position selected.', 'REG_006');
-        return;
-    }
-
-    $position_name = $position_row['position_name'];
-
-    // 11. Resolve default role from position
-    $stmt = $conn->prepare(
-        "SELECT app_role_id FROM " . APP_SCHEMA . ".aluria_position_role_defaults
-         WHERE position_id = ?
-         LIMIT 1"
-    );
-    $stmt->bind_param('s', $position_id);
-    $stmt->execute();
-    $role_row = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-
-    $default_role_id = $role_row['app_role_id'] ?? null;
-
-    if (!$default_role_id) {
-        $stmt = $conn->prepare(
-            "SELECT app_role_id FROM " . CORE_SCHEMA . ".app_role
-             WHERE app_id = 'aluria'
-             ORDER BY created_at ASC
-             LIMIT 1"
-        );
-        $stmt->execute();
-        $fallback_row    = $stmt->get_result()->fetch_assoc();
-        $default_role_id = $fallback_row['app_role_id'] ?? null;
-        $stmt->close();
-    }
 
     if (!$default_role_id) {
         authResponse(500, 'An unexpected error occurred. Please try again.');
         return;
     }
 
-    // 12. Hash password
+    // 11. Hash password
     $password_hash = password_hash($password, PASSWORD_BCRYPT, ['cost' => 12]);
 
-    // 13. Transaction
+    // 12. Transaction
     $conn->begin_transaction();
 
     try {
@@ -276,13 +242,13 @@ function registerUser($conn, $input): void {
         $stmt = $conn->prepare(
             "INSERT INTO " . CORE_SCHEMA . ".app_user
              (user_id, username, password, account_status, app_id, app_role_id, company_id,
-              first_name, last_name, phone_number, language, email, position_id, created_at)
-             VALUES (?, ?, ?, ?, 'aluria', ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+              first_name, last_name, phone_number, language, email, created_at)
+             VALUES (?, ?, ?, ?, 'aluria', ?, ?, ?, ?, ?, ?, ?, ?)"
         );
         $stmt->bind_param(
-            'sssssssssssss',
+            'ssssssssssss',
             $user_id, $username, $password_hash, $account_status, $app_role_id, $company_id,
-            $first_name, $last_name, $phone_number, $language, $email, $position_id, $now
+            $first_name, $last_name, $phone_number, $language, $email, $now
         );
         $stmt->execute();
         $stmt->close();
@@ -304,7 +270,7 @@ function registerUser($conn, $input): void {
         return;
     }
 
-    // 14. Audit log
+    // 13. Audit log
     writeRegisterLog($conn, 'register_success', $user_id, $email);
 
     authResponse(201, 'Registration successful. Your account is pending approval by your company administrator.', null, [
@@ -312,8 +278,6 @@ function registerUser($conn, $input): void {
         'email'          => $email,
         'first_name'     => $first_name,
         'last_name'      => $last_name,
-        'position_id'    => $position_id,
-        'position_name'  => $position_name,
         'account_status' => $account_status,
         'company_name'   => $company_name,
     ]);
