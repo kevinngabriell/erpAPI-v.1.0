@@ -1,6 +1,6 @@
 # Account API
 
-> **Last updated:** 2026-06-27 WIB
+> **Last updated:** 2026-07-04 WIB
 > **Base URL:** `/api/v2/account`
 > **Auth:** No auth required on any endpoint in this module
 
@@ -94,7 +94,7 @@ Registers a new user into an **existing** company. The company must already exis
 
 On success:
 - If this is the **first user** of the company: account is immediately `verified` and assigned the **Business Owner** role.
-- If subsequent user: account status is `pending` and must be approved by a company admin.
+- If subsequent user: account is created with the default fallback role and status `pending`. **`position_id` and (if needed) `app_role_id` are no longer chosen at registration** — a super admin assigns them as part of the existing account-approval step, since a new registrant has no way to look up valid position IDs.
 
 No JWT is issued on registration. The user must log in after approval.
 
@@ -108,7 +108,6 @@ No JWT is issued on registration. The user must log in after approval.
 | `phone_number` | string | Yes | Indonesian format: starts with `08` or `+62`, 10–15 digits total. |
 | `password` | string | Yes | See password policy below. |
 | `password_confirmation` | string | Yes | Must exactly match `password`. |
-| `position_id` | string | Yes | Must exist in `aluria_positions` and be active. |
 | `company_code` | string | Yes | Must match an active Aluria company. Case-insensitive. |
 | `otp_code` | string | Yes | 6-digit numeric string. Must be valid, unused, and not expired. |
 | `language` | string | No | `"id"` or `"en"`. Defaults to `"id"`. |
@@ -133,8 +132,6 @@ No JWT is issued on registration. The user must log in after approval.
     "email": "sari@example.com",
     "first_name": "Sari",
     "last_name": "Dewi",
-    "position_id": "pos_admin_sales",
-    "position_name": "Admin Sales",
     "account_status": "pending",
     "company_name": "PT Maju Bersama"
   }
@@ -158,7 +155,6 @@ No JWT is issued on registration. The user must log in after approval.
 | 400 | `REG_007` | `Password must not contain your name or email address.` | Name/email substring in password |
 | 400 | `REG_008` | `Password and confirmation do not match.` | `password !== password_confirmation` |
 | 400 | `REG_004` | `Invalid or expired OTP code.` | OTP not found, expired, already used, or wrong code |
-| 400 | `REG_006` | `Invalid position selected.` | `position_id` not found or inactive |
 | 404 | `REG_001` | `Company not found. Please check your company code.` | `company_code` not found |
 | 409 | `REG_003` | `An account with this email already exists.` | Email already registered |
 | 422 | `REG_002` | `This company account is not active.` | Company found but not active |
@@ -190,3 +186,4 @@ All error responses include an optional `error_code` field for frontend localisa
 - **Token expiry is 8 hours.** There is no refresh token endpoint; the user must log in again after expiry.
 - **Email enumeration prevention.** The login endpoint returns the same `AUTH_001` message whether the email does not exist or the password is wrong. Do not try to infer existence from the response.
 - **Rate limit counters are server-side only.** The remaining attempt count is never exposed in the response.
+- **Position is assigned post-registration.** A newly registered (non-first) user has no `position_id` or specific role until a company admin approves the account and assigns them, since the registrant has no way to look up valid position IDs at signup time.
