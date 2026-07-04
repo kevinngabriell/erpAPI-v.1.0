@@ -7,6 +7,16 @@ Intended audience: frontend developers.
 
 ---
 
+## [2026-07-03] — Account (Auth)
+
+### Changed
+- `POST /api/v2/account/register` — Removed the `position_id` field from the registration request. A new registrant no longer self-selects an internal position at signup (they have no way to look up valid IDs); every non-first user now gets the same fallback role and lands in `pending` status. A super admin assigns `position_id` (and role, if needed) as part of the existing approval step.
+
+### Notes for frontend
+- Registration forms should drop the position picker. The response payload for register no longer includes `position_id` / `position_name`.
+
+---
+
 ## [2026-06-27] — Account (Auth)
 
 ### Added
