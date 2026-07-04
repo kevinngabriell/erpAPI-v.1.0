@@ -1,9 +1,18 @@
 <?php
 
-// CORS
+if (!defined('APP_ENV')) {
+    define('APP_ENV', $_ENV['APP_ENV'] ?? getenv('APP_ENV') ?: 'development');
+}
+
+if (APP_ENV === 'development') {
+    header('Access-Control-Allow-Origin: *');
+    header('Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS');
+    header('Access-Control-Allow-Headers: Authorization, Content-Type');
+    header('Access-Control-Max-Age: 86400');
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(200);
+    http_response_code(204);
     exit;
 }
 
@@ -23,6 +32,7 @@ function logApiError(int $httpStatus, string $message, string $file = '', int $l
     $msg       = mysqli_real_escape_string($conn, $message);
     $fileSafe  = mysqli_real_escape_string($conn, $file);
     $userId    = mysqli_real_escape_string($conn, $GLOBALS['_log_user'] ?? '');
+    $companyId = mysqli_real_escape_string($conn, $GLOBALS['_log_company_id'] ?? '');
     $requestId = mysqli_real_escape_string($conn, $GLOBALS['_log_request_id'] ?? '');
     $ip        = mysqli_real_escape_string($conn, $_SERVER['REMOTE_ADDR'] ?? '');
     $ua        = mysqli_real_escape_string($conn, substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 255));
@@ -30,9 +40,9 @@ function logApiError(int $httpStatus, string $message, string $file = '', int $l
     mysqli_query($conn,
         "INSERT INTO api_error_log
          (error_id, error_level, http_status, endpoint, method, error_message,
-          file, line, user_identifier, request_id, ip_address, user_agent)
+          file, line, user_identifier, company_id, request_id, ip_address, user_agent)
          VALUES ('$errorId','$level',$httpStatus,'$endpoint','$method','$msg',
-                 '$fileSafe',$line,'$userId','$requestId','$ip','$ua')"
+                 '$fileSafe',$line,'$userId','$companyId','$requestId','$ip','$ua')"
     );
 }
 
