@@ -16,10 +16,13 @@ function loadEnv(string $path): void {
 
 loadEnv(__DIR__ . '/.env');
 
+date_default_timezone_set('Asia/Jakarta');
+
 define('APP_ENV',     $_ENV['APP_ENV']     ?? 'development');
 define('JWT_SECRET',  $_ENV['JWT_SECRET']  ?? '');
 define('CORE_SCHEMA', $_ENV['CORE_SCHEMA'] ?? 'movira_core_dev');
 define('APP_SCHEMA',  $_ENV['APP_SCHEMA']  ?? 'aluria_dev');
+define('APP_ID',       $_ENV['APP_ID']      ?? '');
 
 define('WAHA_BASE_URL', $_ENV['WAHA_BASE_URL'] ?? '');
 define('WAHA_SESSION',  $_ENV['WAHA_SESSION']  ?? '');

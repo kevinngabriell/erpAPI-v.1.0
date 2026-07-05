@@ -8,12 +8,13 @@ header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
 header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
 
-function writeForgotPasswordLog($conn, string $action, ?string $user_id, string $username): void {
-    $log_id = generateUUID();
-    $ip     = substr(getUserIP(), 0, 45);
-    $ua     = substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 500);
-    $module = 'auth';
-    $now    = date('Y-m-d H:i:s');
+function writeSendOtpLog($conn, string $action, string $username): void {
+    $log_id   = generateUUID();
+    $ip       = substr(getUserIP(), 0, 45);
+    $ua       = substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 500);
+    $module   = 'auth';
+    $now      = date('Y-m-d H:i:s');
+    $user_id  = null;
 
     $stmt = $conn->prepare(
         "INSERT INTO " . CORE_SCHEMA . ".log (id, action, ip_address, module, resource_id, `timestamp`, user_agent, username)
@@ -26,60 +27,63 @@ function writeForgotPasswordLog($conn, string $action, ?string $user_id, string 
     }
 }
 
-function requestPasswordReset($conn, $input): void {
+function requestRegisterOtp($conn, $input): void {
     // 1. Required field validation
-    if (!isset($input['email']) || trim((string)$input['email']) === '') {
-        authResponse(400, 'The email field is required.');
-        return;
+    foreach (['email', 'phone_number'] as $field) {
+        if (!isset($input[$field]) || trim((string)$input[$field]) === '') {
+            authResponse(400, "The {$field} field is required.");
+            return;
+        }
     }
 
-    $email = strtolower(strip_tags(trim($input['email'])));
+    $email        = strtolower(strip_tags(trim($input['email'])));
+    $phone_number = strip_tags(trim($input['phone_number']));
 
     if (!filter_var($email, FILTER_VALIDATE_EMAIL) || strlen($email) > 50) {
         authResponse(400, 'The email field must be a valid email address (max 50 characters).');
         return;
     }
+    if (!preg_match('/^(\+62|08)[0-9]{8,13}$/', $phone_number)) {
+        authResponse(400, 'The phone_number field must be a valid Indonesian number starting with 08 or +62.');
+        return;
+    }
 
     // 2. IP rate limit — 10 per hour
     $ip = getUserIP();
-    if (checkRateLimitByIP($conn, $ip, 'forgot_password', 10, 60)) {
+    if (checkRateLimitByIP($conn, $ip, 'send_otp', 10, 60)) {
         authResponse(429, 'Too many requests. Please try again later.', 'RATE_003');
         return;
     }
 
     // 3. Email rate limit — 3 per hour
-    if (checkRateLimitByEmail($conn, $email, 'forgot_password', 3, 60)) {
+    if (checkRateLimitByEmail($conn, $email, 'send_otp', 3, 60)) {
         authResponse(429, 'Too many requests. Please try again later.', 'RATE_003');
         return;
     }
 
-    // Anti-enumeration: this response is returned whether or not the email exists
-    $generic_message = 'If this email is registered, a WhatsApp message with your reset code has been sent to the phone number on file.';
-
-    // 4. Look up user
+    // 4. Reject if this email is already a registered account
     $stmt = $conn->prepare(
-        "SELECT user_id, phone_number
-         FROM " . CORE_SCHEMA . ".app_user
+        "SELECT user_id FROM " . CORE_SCHEMA . ".app_user
          WHERE email = ? AND app_id = '" . APP_ID . "'
          LIMIT 1"
     );
     $stmt->bind_param('s', $email);
     $stmt->execute();
-    $user_row = $stmt->get_result()->fetch_assoc();
+    $dup = $stmt->get_result()->fetch_assoc();
     $stmt->close();
 
-    if (!$user_row || empty($user_row['phone_number'])) {
-        writeForgotPasswordLog($conn, 'forgot_password_requested', null, $email);
-        authResponse(200, $generic_message);
+    if ($dup) {
+        writeSendOtpLog($conn, 'send_otp_failed', $email);
+        authResponse(409, 'An account with this email already exists.', 'REG_003');
         return;
     }
 
     $now = date('Y-m-d H:i:s');
 
-    // 5. Invalidate any previously issued, still-unused codes for this email
+    // 5. Invalidate any previously issued, still-unused register codes for this email
     $stmt = $conn->prepare(
         "UPDATE " . CORE_SCHEMA . ".otp_codes SET is_used = 1, used_at = ?
-         WHERE identifier = ? AND purpose = 'forgot_password' AND is_used = 0"
+         WHERE identifier = ? AND purpose = 'register' AND is_used = 0"
     );
     $stmt->bind_param('ss', $now, $email);
     $stmt->execute();
@@ -92,26 +96,26 @@ function requestPasswordReset($conn, $input): void {
 
     $stmt = $conn->prepare(
         "INSERT INTO " . CORE_SCHEMA . ".otp_codes (otp_id, identifier, otp_code, purpose, expire_at, is_used, attempt_count, created_at)
-         VALUES (?, ?, ?, 'forgot_password', ?, 0, 0, ?)"
+         VALUES (?, ?, ?, 'register', ?, 0, 0, ?)"
     );
     $stmt->bind_param('sssss', $otp_id, $email, $otp_code, $expire_at, $now);
     $stmt->execute();
     $stmt->close();
 
-    // 7. Send the OTP via WhatsApp — delivery failure never fails the request or leaks status to the caller
-    $chat_id   = buildWhatsAppChatId($user_row['phone_number']);
+    // 7. Send the OTP via WhatsApp — delivery failure never fails the request
+    $chat_id   = buildWhatsAppChatId($phone_number);
     $wa_result = sendWhatsAppText(
         $chat_id,
-        "Your Aluria password reset code is: {$otp_code}\n\nThis code expires in 10 minutes. If you didn't request this, you can ignore this message."
+        "Your Aluria registration code is: {$otp_code}\n\nThis code expires in 10 minutes. If you didn't request this, you can ignore this message."
     );
     if (!($wa_result['success'] ?? false)) {
-        error_log('Forgot-password WhatsApp send failed for ' . $email . ': ' . json_encode($wa_result));
+        error_log('Send-otp WhatsApp send failed for ' . $email . ': ' . json_encode($wa_result));
     }
 
     // 8. Audit log
-    writeForgotPasswordLog($conn, 'forgot_password_requested', $user_row['user_id'], $email);
+    writeSendOtpLog($conn, 'send_otp_requested', $email);
 
-    authResponse(200, $generic_message);
+    authResponse(200, 'A WhatsApp message with your registration code has been sent to the phone number provided.');
 }
 
 try {
@@ -121,7 +125,7 @@ try {
     switch ($method) {
         case 'POST':
             $input = json_decode(file_get_contents('php://input'), true) ?? [];
-            requestPasswordReset($conn, $input);
+            requestRegisterOtp($conn, $input);
             break;
         default:
             authResponse(405, 'Method not allowed');

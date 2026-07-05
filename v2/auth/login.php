@@ -68,7 +68,7 @@ function loginUser($conn, $input): void {
                ON s.app_company_id = u.company_id
               AND s.app_id = u.app_id
               AND s.subscription_status = 'active'
-         WHERE u.email = ? AND u.app_id = 'aluria'
+         WHERE u.email = ? AND u.app_id = '" . APP_ID . "'
          LIMIT 1"
     );
 
@@ -133,7 +133,7 @@ function loginUser($conn, $input): void {
         'email'          => $row['email'],
         'first_name'     => $row['first_name'],
         'last_name'      => $row['last_name'],
-        'app_id'         => 'aluria',
+        'app_id'         => APP_ID,
         'app_role_id'    => $row['app_role_id'],
         'company_id'     => $row['company_id'],
         'position_id'    => $row['position_id'],

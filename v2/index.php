@@ -21,6 +21,7 @@ switch ($module) {
         $actionMap = [
             'login'            => 'login.php',
             'register'         => 'register.php',
+            'send-otp'         => 'send-otp.php',
             'forgot-password'  => 'forgot-password.php',
             'reset-password'   => 'reset-password.php',
         ];

@@ -101,7 +101,7 @@ function registerUser($conn, $input): void {
     $stmt = $conn->prepare(
         "SELECT company_id, company_name, status
          FROM " . CORE_SCHEMA . ".app_company
-         WHERE UPPER(company_code) = ? AND app_id = 'aluria'
+         WHERE UPPER(company_code) = ? AND app_id = '" . APP_ID . "'
          LIMIT 1"
     );
     if (!$stmt) {
@@ -130,7 +130,7 @@ function registerUser($conn, $input): void {
     // 8. Email uniqueness within this app
     $stmt = $conn->prepare(
         "SELECT user_id FROM " . CORE_SCHEMA . ".app_user
-         WHERE email = ? AND app_id = 'aluria'
+         WHERE email = ? AND app_id = '" . APP_ID . "'
          LIMIT 1"
     );
     $stmt->bind_param('s', $email);
@@ -185,7 +185,7 @@ function registerUser($conn, $input): void {
     // a super admin assigns position (and, if needed, role) during account approval.
     $stmt = $conn->prepare(
         "SELECT app_role_id FROM " . CORE_SCHEMA . ".app_role
-         WHERE app_id = 'aluria'
+         WHERE app_id = '" . APP_ID . "'
          ORDER BY created_at ASC
          LIMIT 1"
     );
@@ -209,7 +209,7 @@ function registerUser($conn, $input): void {
         // Detect first user in this company for Business Owner logic
         $stmt = $conn->prepare(
             "SELECT COUNT(*) AS existing_users FROM " . CORE_SCHEMA . ".app_user
-             WHERE company_id = ? AND app_id = 'aluria'"
+             WHERE company_id = ? AND app_id = '" . APP_ID . "'"
         );
         $stmt->bind_param('s', $company_id);
         $stmt->execute();
@@ -221,7 +221,7 @@ function registerUser($conn, $input): void {
             // First user — assign Business Owner role, set immediately active
             $stmt = $conn->prepare(
                 "SELECT app_role_id FROM " . CORE_SCHEMA . ".app_role
-                 WHERE app_id = 'aluria' AND role_name = 'Business Owner'
+                 WHERE app_id = '" . APP_ID . "' AND role_name = 'Business Owner'
                  LIMIT 1"
             );
             $stmt->execute();
@@ -243,7 +243,7 @@ function registerUser($conn, $input): void {
             "INSERT INTO " . CORE_SCHEMA . ".app_user
              (user_id, username, password, account_status, app_id, app_role_id, company_id,
               first_name, last_name, phone_number, language, email, created_at)
-             VALUES (?, ?, ?, ?, 'aluria', ?, ?, ?, ?, ?, ?, ?, ?)"
+             VALUES (?, ?, ?, ?, '" . APP_ID . "', ?, ?, ?, ?, ?, ?, ?, ?)"
         );
         $stmt->bind_param(
             'ssssssssssss',
