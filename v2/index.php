@@ -24,6 +24,7 @@ switch ($module) {
             'send-otp'         => 'send-otp.php',
             'forgot-password'  => 'forgot-password.php',
             'reset-password'   => 'reset-password.php',
+            'my-permissions'   => 'my-permissions.php',
         ];
         $file = isset($actionMap[$action]) ? __DIR__ . '/auth/' . $actionMap[$action] : null;
         if (!$file) jsonResponse(404, 'Route not found');

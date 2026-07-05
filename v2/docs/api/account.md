@@ -1,8 +1,8 @@
 # Account API
 
-> **Last updated:** 2026-07-04 WIB
+> **Last updated:** 2026-07-05 WIB
 > **Base URL:** `/api/v2/account`
-> **Auth:** No auth required on any endpoint in this module
+> **Auth:** No auth required, except `GET /my-permissions` which requires `Authorization: Bearer <token>`
 
 ---
 
@@ -13,6 +13,7 @@
 | POST | `/api/v2/account/login` | Authenticate a user and receive a JWT |
 | POST | `/api/v2/account/send-otp` | Send a registration OTP via WhatsApp |
 | POST | `/api/v2/account/register` | Register a new user into an existing company |
+| GET | `/api/v2/account/my-permissions` | Get the flat permission map for the logged-in user's role |
 
 ---
 
@@ -202,6 +203,44 @@ No JWT is issued on registration. The user must log in after approval.
 | 422 | `REG_002` | `This company account is not active.` | Company found but not active |
 | 429 | `REG_005` | `Too many OTP attempts. Request a new code.` | OTP `attempt_count >= 5` |
 | 429 | `RATE_003` | `Too many registration attempts. Please try again later.` | IP or email rate limit hit |
+| 500 | — | `An unexpected error occurred. Please try again.` | Server error |
+
+---
+
+### GET `/api/v2/account/my-permissions`
+
+Returns the flat permission map for the app role assigned to the authenticated user. Use this to decide what the dashboard should show, since the permission map is not embedded in the JWT.
+
+#### Auth
+
+Requires `Authorization: Bearer <token>`.
+
+#### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Permissions retrieved successfully",
+  "data": {
+    "app_role_id": "role_xyz789",
+    "permissions": {
+      "customers.view": true,
+      "customers.create": true,
+      "policies.view": true
+    }
+  }
+}
+```
+
+`permissions` is a flat object keyed by `permission_key` (from `app_permission`); every key present is granted. A role with no permissions assigned returns an empty object, not an error.
+
+#### Failure responses
+
+| Code | `error_code` | `status_message` | When |
+|---|---|---|---|
+| 401 | — | `No token provided` / `Invalid token` / `Session expired...` | Missing, malformed, or expired Bearer token |
+| 403 | `AUTH_007` | `No role assigned to this account.` | JWT has no `app_role_id` claim |
+| 405 | — | `Method not allowed` | Non-GET request |
 | 500 | — | `An unexpected error occurred. Please try again.` | Server error |
 
 ---

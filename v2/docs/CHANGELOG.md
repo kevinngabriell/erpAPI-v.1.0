@@ -7,6 +7,18 @@ Intended audience: frontend developers.
 
 ---
 
+## [2026-07-05] — Account (Auth)
+
+### Added
+- `GET /api/v2/account/my-permissions` — Returns the flat permission map for the authenticated user's `app_role_id`. Requires `Authorization: Bearer <token>`; every other endpoint in this module stays unauthenticated.
+
+### Notes for frontend
+- Call this right after login (or on app load, using the stored token) to resolve `app_role_id` into an actual permission map for gating dashboard features.
+- Response shape: `data.permissions` is a flat object — `{ "module.action": true, ... }`. Absence of a key means not granted; there are no `false` values.
+- A role with zero permissions assigned returns `data.permissions: {}`, not an error.
+
+---
+
 ## [2026-07-03] — Account (Auth)
 
 ### Changed
