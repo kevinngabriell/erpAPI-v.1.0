@@ -18,7 +18,7 @@ loadEnv(__DIR__ . '/.env');
 
 date_default_timezone_set('Asia/Jakarta');
 
-define('APP_ENV',     $_ENV['APP_ENV']     ?? 'development');
+define('APP_ENV',     getenv('APP_ENV') ?: ($_ENV['APP_ENV'] ?? 'development'));
 define('JWT_SECRET',  $_ENV['JWT_SECRET']  ?? '');
 define('CORE_SCHEMA', $_ENV['CORE_SCHEMA'] ?? 'movira_core_dev');
 define('APP_SCHEMA',  $_ENV['APP_SCHEMA']  ?? 'aluria_dev');
