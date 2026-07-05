@@ -7,6 +7,18 @@ Intended audience: frontend developers.
 
 ---
 
+## [2026-07-05] — Dashboard
+
+### Added
+- `GET /api/v2/dashboard` — New module. Returns the logged-in user's profile, company, permission map, and a `widgets` object gated per-widget by a `dashboard.{domain}.view` permission key.
+
+### Notes for frontend
+- This is a skeleton: no widget currently returns real data, only `null` placeholders for whichever widgets the caller's role is permitted to see. Business-data widgets (sales, purchase, warehouse, finance) will populate as each domain migrates from the legacy schema to v2.
+- Treat a missing key in `data.widgets` as "this role can't see that section" — not an error.
+- `data.permissions` duplicates `GET /account/my-permissions` inline so the dashboard screen only needs one request.
+
+---
+
 ## [2026-07-05] — Account (Auth)
 
 ### Added
