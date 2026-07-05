@@ -1,0 +1,68 @@
+<?php
+require_once __DIR__ . '/config.php';
+
+// Production CORS is handled at the web server (nginx/Apache) level.
+if (APP_ENV === 'development') {
+    header('Access-Control-Allow-Origin: *');
+    header('Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS');
+    header('Access-Control-Allow-Headers: Authorization, Content-Type');
+    header('Access-Control-Max-Age: 86400');
+
+    if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+        http_response_code(204);
+        exit;
+    }
+}
+
+header('Content-Type: application/json');
+
+require_once __DIR__ . '/connection/db.php';
+require_once __DIR__ . '/helpers/jwt.php';
+
+$conn = getConn();
+
+function jsonResponse($code, $message, $data = []): void {
+    http_response_code($code);
+    echo json_encode([
+        'status_code'    => $code,
+        'status_message' => $message,
+        'data'           => $data
+    ]);
+    exit;
+}
+
+function cleanInput(string $value): string {
+    global $conn;
+    return mysqli_real_escape_string($conn, trim($value));
+}
+
+function input(): array {
+    return json_decode(file_get_contents('php://input'), true) ?? [];
+}
+
+function requireAuth(): array {
+    try {
+        return JWT::fromRequest();
+    } catch (Exception $e) {
+        jsonResponse(401, $e->getMessage());
+        exit;
+    }
+}
+
+function generateUUID(): string {
+    return sprintf(
+        '%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
+        mt_rand(0, 0xffff), mt_rand(0, 0xffff),
+        mt_rand(0, 0xffff),
+        mt_rand(0, 0x0fff) | 0x4000,
+        mt_rand(0, 0x3fff) | 0x8000,
+        mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)
+    );
+}
+
+function getUserIP(): string {
+    return $_SERVER['HTTP_X_FORWARDED_FOR']
+        ?? $_SERVER['HTTP_X_REAL_IP']
+        ?? $_SERVER['REMOTE_ADDR']
+        ?? '';
+}

@@ -1,0 +1,15 @@
+RewriteEngine On
+
+# CORS headers on every response (including errors)
+Header always set Access-Control-Allow-Origin "*"
+Header always set Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+Header always set Access-Control-Allow-Headers "Authorization, Content-Type"
+Header always set Access-Control-Max-Age "86400"
+
+# Return 200 immediately for OPTIONS preflight — never reaches PHP
+RewriteCond %{REQUEST_METHOD} OPTIONS
+RewriteRule ^ - [R=200,L]
+
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [QSA,L]

@@ -21,6 +21,11 @@ ini_set('display_errors', '1');
 ini_set('display_startup_errors', '1');
 error_reporting(E_ALL);
 
+// WhatsApp notifications (WAHA - WhatsApp HTTP API)
+if (!defined('WAHA_BASE_URL')) define('WAHA_BASE_URL', 'https://waha.getmovira.com');
+if (!defined('WAHA_SESSION'))  define('WAHA_SESSION',  'movira_prod');
+if (!defined('WAHA_API_KEY'))  define('WAHA_API_KEY',  'AZGSGUOZIoF4qSvHC6roINaxEkMXr1qO');
+
 function logApiError(int $httpStatus, string $message, string $file = '', int $line = 0): void {
     $conn = $GLOBALS['_log_conn'] ?? null;
     if (!$conn) return;
