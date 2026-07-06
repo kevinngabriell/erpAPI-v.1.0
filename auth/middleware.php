@@ -44,6 +44,7 @@ function verifyToken(): object {
         ]);
         exit;
     } catch (Exception $e) {
+        error_log('JWT verify failed (' . get_class($e) . '): ' . $e->getMessage());
         http_response_code(401);
         echo json_encode([
             'StatusCode' => 401,
