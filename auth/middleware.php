@@ -4,6 +4,7 @@ use Firebase\JWT\JWT;
 use Firebase\JWT\Key;
 use Firebase\JWT\ExpiredException;
 use Firebase\JWT\SignatureInvalidException;
+use Firebase\JWT\BeforeValidException;
 
 require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/JWTConfig.php';
@@ -25,6 +26,8 @@ function verifyToken(): object {
 
     $token = substr($authHeader, 7);
 
+    JWT::$leeway = JWT_LEEWAY_SECONDS;
+
     try {
         return JWT::decode($token, new Key(JWT_SECRET, JWT_ALGORITHM));
     } catch (ExpiredException $e) {
@@ -41,6 +44,15 @@ function verifyToken(): object {
             'StatusCode' => 401,
             'Status'     => 'Unauthorized',
             'message'    => 'Invalid token signature'
+        ]);
+        exit;
+    } catch (BeforeValidException $e) {
+        error_log('JWT verify failed (clock skew): ' . $e->getMessage());
+        http_response_code(401);
+        echo json_encode([
+            'StatusCode' => 401,
+            'Status'     => 'Unauthorized',
+            'message'    => 'Token not yet valid, please retry'
         ]);
         exit;
     } catch (Exception $e) {
