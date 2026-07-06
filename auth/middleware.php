@@ -1,12 +1,7 @@
 <?php
 
-use Firebase\JWT\JWT;
-use Firebase\JWT\Key;
-use Firebase\JWT\ExpiredException;
-use Firebase\JWT\SignatureInvalidException;
-
-require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/JWTConfig.php';
+require_once __DIR__ . '/../v2/helpers/jwt.php';
 
 function verifyToken(): object {
     $authHeader = $_SERVER['HTTP_AUTHORIZATION']
@@ -26,31 +21,29 @@ function verifyToken(): object {
     $token = substr($authHeader, 7);
 
     try {
-        return JWT::decode($token, new Key(JWT_SECRET, JWT_ALGORITHM));
-    } catch (ExpiredException $e) {
-        http_response_code(401);
-        echo json_encode([
-            'StatusCode' => 401,
-            'Status'     => 'Unauthorized',
-            'message'    => 'Session expired. Please log in again.'
-        ]);
-        exit;
-    } catch (SignatureInvalidException $e) {
-        http_response_code(401);
-        echo json_encode([
-            'StatusCode' => 401,
-            'Status'     => 'Unauthorized',
-            'message'    => 'Invalid token signature'
-        ]);
-        exit;
+        $payload = JWT::decode($token);
     } catch (Exception $e) {
-        error_log('JWT verify failed (' . get_class($e) . '): ' . $e->getMessage());
+        $known = [
+            'Token expired'                          => 'Session expired. Please log in again.',
+            'Invalid token signature'                 => 'Invalid token signature',
+        ];
+        $message = $known[$e->getMessage()] ?? 'Invalid token';
+        if (!isset($known[$e->getMessage()])) {
+            error_log('JWT verify failed: ' . $e->getMessage());
+        }
         http_response_code(401);
         echo json_encode([
             'StatusCode' => 401,
             'Status'     => 'Unauthorized',
-            'message'    => 'Invalid token'
+            'message'    => $message
         ]);
         exit;
     }
+
+    // Legacy modules read these camelCase/short field names; alias them onto the
+    // current token shape (user_id/username/company_id) so callers don't change.
+    $payload['sub']       = $payload['sub']       ?? ($payload['username'] ?? $payload['user_id'] ?? '');
+    $payload['companyId'] = $payload['companyId'] ?? ($payload['company_id'] ?? '');
+
+    return (object) $payload;
 }
