@@ -28,8 +28,8 @@ function getAllSupplier($conn, string $company_id, string $type = '', string $se
         $extra_cols = 'A3.currency_name,';
     }
 
-    $currency_join = ($type === '') ? ' JOIN currency A3 ON A1.supplier_currency = A3.currency_id' : '';
-    $from_clause   = "FROM supplier A1 JOIN origin A2 ON A2.origin_id = A1.supplier_origin$currency_join";
+    $currency_join = ($type === '') ? ' LEFT JOIN currency A3 ON A1.supplier_currency = A3.currency_id' : '';
+    $from_clause   = "FROM supplier A1 LEFT JOIN origin A2 ON A2.origin_id = A1.supplier_origin$currency_join";
 
     $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total $from_clause WHERE $where");
     $total        = (int) mysqli_fetch_assoc($count_result)['total'];
