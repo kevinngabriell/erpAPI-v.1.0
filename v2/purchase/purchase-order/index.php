@@ -1,0 +1,372 @@
+<?php
+
+require_once __DIR__ . '/../../general.php';
+require_once __DIR__ . '/../../connection/db.php';
+require_once __DIR__ . '/../../helpers/audit_log.php';
+
+const PURCHASE_ORDER_SHIPMENT_METHODS = ['FOB', 'CIF', 'EXW', 'CFR', 'CIP', 'DAP', 'DDP', 'FCA'];
+
+function getAllPurchaseOrders($conn, $company_id, $params) {
+    $page   = max(1, (int)($params['page']  ?? 1));
+    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $offset = ($page - 1) * $limit;
+    $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
+
+    $where = "company_id = '$company_id' AND deleted_at IS NULL";
+    if ($search) {
+        $where .= " AND po_display_number LIKE '%$search%'";
+    }
+    if (isset($params['status_id']) && trim($params['status_id']) !== '') {
+        $status_id = mysqli_real_escape_string($conn, $params['status_id']);
+        $where .= " AND status_id = '$status_id'";
+    }
+    if (isset($params['supplier_id']) && trim($params['supplier_id']) !== '') {
+        $supplier_id = mysqli_real_escape_string($conn, $params['supplier_id']);
+        $where .= " AND supplier_id = '$supplier_id'";
+    }
+
+    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".purchase_order WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".purchase_order WHERE $where");
+    $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
+
+    if ($result && mysqli_num_rows($result) > 0) {
+        jsonResponse(200, 'Purchase orders found', [
+            'data'       => mysqli_fetch_all($result, MYSQLI_ASSOC),
+            'pagination' => [
+                'total'       => $total,
+                'page'        => $page,
+                'limit'       => $limit,
+                'total_pages' => (int)ceil($total / $limit),
+            ],
+        ]);
+    } else {
+        jsonResponse(404, 'No purchase orders found');
+    }
+}
+
+function createPurchaseOrder($conn, $input, $username, $company_id) {
+    $required = ['po_display_number', 'po_date', 'supplier_id', 'status_id', 'items'];
+    foreach ($required as $field) {
+        if (!isset($input[$field]) || (is_string($input[$field]) && trim($input[$field]) === '')) {
+            jsonResponse(400, "$field is required");
+            return;
+        }
+    }
+
+    if (!is_array($input['items']) || count($input['items']) === 0) {
+        jsonResponse(400, 'items must be a non-empty array');
+        return;
+    }
+
+    $shipment_method = null;
+    if (isset($input['shipment_method']) && trim($input['shipment_method']) !== '') {
+        $shipment_method = strtoupper(trim($input['shipment_method']));
+        if (!in_array($shipment_method, PURCHASE_ORDER_SHIPMENT_METHODS, true)) {
+            jsonResponse(400, 'shipment_method must be one of ' . implode(', ', PURCHASE_ORDER_SHIPMENT_METHODS));
+            return;
+        }
+    }
+
+    foreach ($input['items'] as $item) {
+        $item_required = ['product_name', 'quantity', 'packaging_size', 'unit_price'];
+        foreach ($item_required as $field) {
+            if (!isset($item[$field]) || (is_string($item[$field]) && trim($item[$field]) === '')) {
+                jsonResponse(400, "items.$field is required");
+                return;
+            }
+        }
+    }
+
+    $po_display_number = trim(mysqli_real_escape_string($conn, $input['po_display_number']));
+    $po_date            = mysqli_real_escape_string($conn, $input['po_date']);
+    $supplier_id        = mysqli_real_escape_string($conn, $input['supplier_id']);
+    $status_id          = mysqli_real_escape_string($conn, $input['status_id']);
+
+    $dup = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".purchase_order WHERE company_id = '$company_id' AND po_display_number = '$po_display_number' AND deleted_at IS NULL LIMIT 1");
+    if (mysqli_num_rows($dup) > 0) {
+        jsonResponse(409, 'Purchase order already exists');
+        return;
+    }
+
+    $shipment_method_sql  = $shipment_method !== null ? "'$shipment_method'" : 'NULL';
+    $shipment_date_sql    = isset($input['shipment_date']) && trim($input['shipment_date']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['shipment_date']) . "'" : 'NULL';
+    $term_id_sql          = isset($input['term_id']) && trim($input['term_id']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['term_id']) . "'" : 'NULL';
+    $payment_method_id_sql = isset($input['payment_method_id']) && trim($input['payment_method_id']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['payment_method_id']) . "'" : 'NULL';
+    $origin_id_sql        = isset($input['origin_id']) && trim($input['origin_id']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['origin_id']) . "'" : 'NULL';
+    $shipping_marks_sql   = isset($input['shipping_marks']) && trim($input['shipping_marks']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['shipping_marks']) . "'" : 'NULL';
+    $remarks_sql          = isset($input['remarks']) && trim($input['remarks']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['remarks']) . "'" : 'NULL';
+    $type_id_sql          = isset($input['type_id']) && trim($input['type_id']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['type_id']) . "'" : 'NULL';
+    $currency_id_sql      = isset($input['currency_id']) && trim($input['currency_id']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['currency_id']) . "'" : 'NULL';
+    $ppn_type_id_sql      = isset($input['ppn_type_id']) && trim($input['ppn_type_id']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['ppn_type_id']) . "'" : 'NULL';
+    $container_number_sql = isset($input['container_number']) && trim($input['container_number']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['container_number']) . "'" : 'NULL';
+    $bl_number_sql        = isset($input['bl_number']) && trim($input['bl_number']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['bl_number']) . "'" : 'NULL';
+    $vessel_name_sql      = isset($input['vessel_name']) && trim($input['vessel_name']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['vessel_name']) . "'" : 'NULL';
+    $etd_date_sql         = isset($input['etd_date']) && trim($input['etd_date']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['etd_date']) . "'" : 'NULL';
+    $eta_date_sql         = isset($input['eta_date']) && trim($input['eta_date']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['eta_date']) . "'" : 'NULL';
+
+    $po_id = generateUUID();
+    $now   = date('Y-m-d H:i:s');
+
+    $conn->begin_transaction();
+    try {
+        $sql = "INSERT INTO " . APP_SCHEMA . ".purchase_order
+                (id, company_id, po_display_number, po_date, supplier_id, shipment_method, shipment_date,
+                 term_id, payment_method_id, origin_id, shipping_marks, remarks, status_id, type_id,
+                 currency_id, ppn_type_id, container_number, bl_number, vessel_name, etd_date, eta_date,
+                 created_by, created_at)
+                VALUES
+                ('$po_id', '$company_id', '$po_display_number', '$po_date', '$supplier_id', $shipment_method_sql, $shipment_date_sql,
+                 $term_id_sql, $payment_method_id_sql, $origin_id_sql, $shipping_marks_sql, $remarks_sql, '$status_id', $type_id_sql,
+                 $currency_id_sql, $ppn_type_id_sql, $container_number_sql, $bl_number_sql, $vessel_name_sql, $etd_date_sql, $eta_date_sql,
+                 '$username', '$now')";
+
+        if (!mysqli_query($conn, $sql)) {
+            throw new Exception(mysqli_error($conn));
+        }
+
+        foreach ($input['items'] as $item) {
+            $item_id        = generateUUID();
+            $product_name   = mysqli_real_escape_string($conn, $item['product_name']);
+            $quantity       = (float)$item['quantity'];
+            $packaging_size = (float)$item['packaging_size'];
+            $unit_price     = (float)$item['unit_price'];
+            $vat            = isset($item['vat']) && $item['vat'] !== '' ? (float)$item['vat'] : 0;
+            $total          = isset($item['total']) && $item['total'] !== '' ? (float)$item['total'] : ($quantity * $unit_price) + $vat;
+
+            $item_sql = "INSERT INTO " . APP_SCHEMA . ".purchase_order_item
+                         (id, purchase_order_id, product_name, quantity, packaging_size, unit_price, vat, total, created_by, created_at)
+                         VALUES ('$item_id', '$po_id', '$product_name', $quantity, $packaging_size, $unit_price, $vat, $total, '$username', '$now')";
+
+            if (!mysqli_query($conn, $item_sql)) {
+                throw new Exception(mysqli_error($conn));
+            }
+        }
+
+        insertAuditLog($conn, $company_id, 'purchase_order', $po_id, 'created', $username);
+
+        $conn->commit();
+        jsonResponse(201, 'Purchase order created successfully', ['purchase_order_id' => $po_id]);
+    } catch (Exception $e) {
+        $conn->rollback();
+        jsonResponse(500, 'Failed to create purchase order', ['error' => $e->getMessage()]);
+    }
+}
+
+function getDetailPurchaseOrder($conn, $purchase_order_id, $company_id) {
+    $purchase_order_id = mysqli_real_escape_string($conn, $purchase_order_id);
+
+    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".purchase_order WHERE id = '$purchase_order_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    if (!$result || mysqli_num_rows($result) === 0) {
+        jsonResponse(404, 'Purchase order not found');
+        return;
+    }
+
+    $purchase_order = mysqli_fetch_assoc($result);
+
+    $items_result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".purchase_order_item WHERE purchase_order_id = '$purchase_order_id' AND deleted_at IS NULL ORDER BY created_at ASC");
+    $purchase_order['items'] = $items_result ? mysqli_fetch_all($items_result, MYSQLI_ASSOC) : [];
+
+    jsonResponse(200, 'Purchase order found', $purchase_order);
+}
+
+function updatePurchaseOrder($conn, $purchase_order_id, $input, $username, $company_id) {
+    $purchase_order_id = mysqli_real_escape_string($conn, $purchase_order_id);
+
+    $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".purchase_order WHERE id = '$purchase_order_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    if (mysqli_num_rows($check) === 0) {
+        jsonResponse(404, 'Purchase order not found');
+        return;
+    }
+
+    $updates = [];
+
+    $string_fields = [
+        'po_display_number', 'supplier_id', 'term_id', 'payment_method_id', 'origin_id',
+        'shipping_marks', 'remarks', 'status_id', 'type_id', 'currency_id', 'ppn_type_id',
+        'container_number', 'bl_number', 'vessel_name',
+    ];
+    foreach ($string_fields as $field) {
+        if (isset($input[$field])) {
+            $val = trim(mysqli_real_escape_string($conn, $input[$field]));
+            if ($val === '') { jsonResponse(400, "$field cannot be empty"); return; }
+            $updates[] = "$field = '$val'";
+        }
+    }
+
+    $date_fields = ['po_date', 'shipment_date', 'etd_date', 'eta_date'];
+    foreach ($date_fields as $field) {
+        if (isset($input[$field])) {
+            $val = mysqli_real_escape_string($conn, $input[$field]);
+            $updates[] = "$field = '$val'";
+        }
+    }
+
+    if (isset($input['shipment_method'])) {
+        $shipment_method = strtoupper(trim($input['shipment_method']));
+        if (!in_array($shipment_method, PURCHASE_ORDER_SHIPMENT_METHODS, true)) {
+            jsonResponse(400, 'shipment_method must be one of ' . implode(', ', PURCHASE_ORDER_SHIPMENT_METHODS));
+            return;
+        }
+        $updates[] = "shipment_method = '$shipment_method'";
+    }
+
+    if (empty($updates)) {
+        jsonResponse(400, 'No fields provided for update');
+        return;
+    }
+
+    $now = date('Y-m-d H:i:s');
+    $updates[] = "updated_by = '$username'";
+    $updates[] = "updated_at = '$now'";
+
+    if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".purchase_order SET " . implode(', ', $updates) . " WHERE id = '$purchase_order_id' AND company_id = '$company_id'")) {
+        insertAuditLog($conn, $company_id, 'purchase_order', $purchase_order_id, 'updated', $username);
+        jsonResponse(200, 'Purchase order updated successfully');
+    } else {
+        jsonResponse(500, 'Failed to update purchase order', ['error' => mysqli_error($conn)]);
+    }
+}
+
+function deletePurchaseOrder($conn, $purchase_order_id, $username, $company_id) {
+    $purchase_order_id = mysqli_real_escape_string($conn, $purchase_order_id);
+
+    $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".purchase_order WHERE id = '$purchase_order_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    if (mysqli_num_rows($check) === 0) {
+        jsonResponse(404, 'Purchase order not found');
+        return;
+    }
+
+    $now = date('Y-m-d H:i:s');
+
+    if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".purchase_order SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE id = '$purchase_order_id' AND company_id = '$company_id'")) {
+        insertAuditLog($conn, $company_id, 'purchase_order', $purchase_order_id, 'deleted', $username);
+        jsonResponse(200, 'Purchase order deleted successfully');
+    } else {
+        jsonResponse(500, 'Failed to delete purchase order', ['error' => mysqli_error($conn)]);
+    }
+}
+
+function approvePurchaseOrder($conn, $purchase_order_id, $input, $username, $company_id) {
+    if (!isset($input['status_id']) || trim($input['status_id']) === '') {
+        jsonResponse(400, 'status_id is required');
+        return;
+    }
+
+    $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".purchase_order WHERE id = '$purchase_order_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    if (mysqli_num_rows($check) === 0) {
+        jsonResponse(404, 'Purchase order not found');
+        return;
+    }
+
+    $status_id = mysqli_real_escape_string($conn, $input['status_id']);
+    $now       = date('Y-m-d H:i:s');
+    $notes     = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
+
+    if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".purchase_order
+            SET status_id = '$status_id', approved_by = '$username', approved_at = '$now', updated_by = '$username', updated_at = '$now'
+            WHERE id = '$purchase_order_id' AND company_id = '$company_id'")) {
+        insertAuditLog($conn, $company_id, 'purchase_order', $purchase_order_id, 'approved', $username, $notes);
+        jsonResponse(200, 'Purchase order approved successfully');
+    } else {
+        jsonResponse(500, 'Failed to approve purchase order', ['error' => mysqli_error($conn)]);
+    }
+}
+
+function rejectPurchaseOrder($conn, $purchase_order_id, $input, $username, $company_id) {
+    if (!isset($input['status_id']) || trim($input['status_id']) === '') {
+        jsonResponse(400, 'status_id is required');
+        return;
+    }
+
+    $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".purchase_order WHERE id = '$purchase_order_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    if (mysqli_num_rows($check) === 0) {
+        jsonResponse(404, 'Purchase order not found');
+        return;
+    }
+
+    $status_id = mysqli_real_escape_string($conn, $input['status_id']);
+    $now       = date('Y-m-d H:i:s');
+    $notes     = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
+
+    if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".purchase_order
+            SET status_id = '$status_id', updated_by = '$username', updated_at = '$now'
+            WHERE id = '$purchase_order_id' AND company_id = '$company_id'")) {
+        insertAuditLog($conn, $company_id, 'purchase_order', $purchase_order_id, 'rejected', $username, $notes);
+        jsonResponse(200, 'Purchase order rejected successfully');
+    } else {
+        jsonResponse(500, 'Failed to reject purchase order', ['error' => mysqli_error($conn)]);
+    }
+}
+
+// ── Dispatch ──────────────────────────────────────────────────────────────────
+
+$authUser   = requireAuth();
+$method     = $_SERVER['REQUEST_METHOD'];
+$company_id = $authUser['company_id'] ?? null;
+$username   = $authUser['user_id'] ?? null;
+
+if (!$company_id) {
+    jsonResponse(400, 'company_id is required');
+    exit;
+}
+
+$purchase_order_id = !empty($action) ? $action : null;
+$sub_action         = $parts[4] ?? '';
+
+try {
+    $conn = getConn();
+
+    if ($purchase_order_id && $sub_action === 'items') {
+        require __DIR__ . '/items.php';
+
+    } elseif ($purchase_order_id && $sub_action !== '') {
+        $input = in_array($method, ['POST', 'PUT', 'PATCH'])
+            ? (json_decode(file_get_contents('php://input'), true) ?? [])
+            : [];
+
+        switch ($sub_action) {
+            case 'approve':
+                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                approvePurchaseOrder($conn, $purchase_order_id, $input, $username, $company_id);
+                break;
+            case 'reject':
+                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                rejectPurchaseOrder($conn, $purchase_order_id, $input, $username, $company_id);
+                break;
+            default:
+                jsonResponse(404, 'Route not found');
+        }
+
+    } elseif ($purchase_order_id) {
+        switch ($method) {
+            case 'GET':
+                getDetailPurchaseOrder($conn, $purchase_order_id, $company_id);
+                break;
+            case 'PUT':
+                $input = json_decode(file_get_contents('php://input'), true) ?? [];
+                updatePurchaseOrder($conn, $purchase_order_id, $input, $username, $company_id);
+                break;
+            case 'DELETE':
+                deletePurchaseOrder($conn, $purchase_order_id, $username, $company_id);
+                break;
+            default:
+                jsonResponse(405, 'Method Not Allowed');
+        }
+
+    } else {
+        switch ($method) {
+            case 'GET':
+                getAllPurchaseOrders($conn, $company_id, $_GET);
+                break;
+            case 'POST':
+                $input = json_decode(file_get_contents('php://input'), true) ?? [];
+                createPurchaseOrder($conn, $input, $username, $company_id);
+                break;
+            default:
+                jsonResponse(405, 'Method Not Allowed');
+        }
+    }
+
+} catch (Exception $e) {
+    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+}
