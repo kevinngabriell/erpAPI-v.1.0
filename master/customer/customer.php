@@ -137,6 +137,10 @@ if (!$company_id) {
     jsonResponse(400, 'company_id missing from token');
 }
 
+// migration_temp_venken.customer still keys on the pre-SaaS Venken UUID; forcing
+// it here until the legacy tables are backfilled to the new company_id scheme.
+$company_id = '1252f67e-bfda-11ee-9dcf-0e799759a249';
+
 $method = $_SERVER['REQUEST_METHOD'];
 
 try {
