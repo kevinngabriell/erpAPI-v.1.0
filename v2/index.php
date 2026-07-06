@@ -162,6 +162,11 @@ switch ($module) {
         require __DIR__ . '/audit/audit-log/index.php';
         break;
 
+    // ── Dashboard / reporting ────────────────────────────────────────────────
+    case 'dashboard':
+        require __DIR__ . '/dashboard/index.php';
+        break;
+
     default:
         jsonResponse(404, 'Route not found');
 }

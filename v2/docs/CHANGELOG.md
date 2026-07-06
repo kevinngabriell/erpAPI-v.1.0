@@ -7,6 +7,26 @@ Intended audience: frontend developers.
 
 ---
 
+## [2026-07-06 20:00:00 WIB] — Dashboard / reporting endpoints
+
+### Added
+- `GET /api/v2/dashboard/overview` — Yearly totals, monthly sales/purchase charts, top products, order count by country, outstanding AR/AP totals.
+- `GET /api/v2/dashboard/purchase-overview` — Current month's PO counts by status.
+- `GET /api/v2/dashboard/top-sales-orders`, `/top-sppb`, `/top-sales-invoices`, `/top-delivery-orders`, `/top-profit` — Latest records for each sales document type.
+- `GET /api/v2/dashboard/top-purchase-receives`, `/top-purchase-invoices`, `/top-purchase-import`, `/top-purchase-local` — Latest purchase-side records; the import/local widgets now return every item on the order, not just the first.
+- `GET /api/v2/dashboard/outstanding` — AR (piutang) / AP (hutang) report, filterable by `type`, `month`, `year`.
+
+### Breaking changes
+- These replace the old single-tenant v1 endpoints (`master/getoveralldashboard.php`, `purchase/getoverallpurchase.php`, `finance/alloutstandingcustomer.php`, `finance/getoutstandingpayments.php`, `sales/gettop*.php`, `purchase/gettop*.php`). URLs, response shape (`status_code`/`status_message`/`data` instead of `StatusCode`/`Status`/`Data`), and status-matching logic have all changed — see `docs/api/dashboard.md`.
+- Outstanding-supplier/customer totals are now `due_amount - paid_amount` (previously summed `due_amount` alone, which double-counted paid invoices).
+
+### Notes for frontend
+- Every widget is now scoped to your company automatically — no `company_id` param needed or accepted.
+- AR/AP amounts are shown in each invoice's original currency; no cross-currency conversion is applied.
+- Full field lists, query params, and example responses are in `docs/api/dashboard.md`.
+
+---
+
 ## [2026-07-06 14:00:00 WIB] — Aluria schema migration (new v2 modules)
 
 ### Added
