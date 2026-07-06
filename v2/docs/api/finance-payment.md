@@ -216,7 +216,6 @@ Update a finance payment. Only send the fields you want to change.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-
 | id | string | The finance payment ID |
 
 #### Request body (`application/json`)
