@@ -7,12 +7,15 @@ ini_set('display_startup_errors', '1');
 error_reporting(E_ALL);
 
 // Connection access
+require_once('../general.php');
+require_once('../auth/middleware.php');
 require_once('../connection/connection.php');
 
 // Checking call API method
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $decoded = verifyToken();
     $sales_order_number = $_POST['sales_order_number'];
-    $insert_by = $_POST['insert_by'];
+    $insert_by = $decoded->sub;
     $product_length = $_POST['product_length'];
     $sales_order_status = '7c44858e-1efc-11ef-a';
     $currentDateTime = new DateTime();

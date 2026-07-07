@@ -7,13 +7,16 @@ ini_set('display_startup_errors', '1');
 error_reporting(E_ALL);
 
 //Connection access
+require_once('../general.php');
+require_once('../auth/middleware.php');
 require_once('../connection/connection.php');
 
 //Checking call API method
 if($_SERVER['REQUEST_METHOD'] === 'POST'){
+    $decoded = verifyToken();
     $purchase_order_number = $_POST['purchase_order_number'];
     $purchase_order_status = $_POST['purchase_order_status'];
-    $update_by = $_POST['update_by'];
+    $update_by = $decoded->sub;
     $currentDateTime = new DateTime();
     $indonesiaTimeZone = new DateTimeZone('Asia/Jakarta');
     $currentDateTime->setTimezone($indonesiaTimeZone);
