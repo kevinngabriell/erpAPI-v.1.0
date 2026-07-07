@@ -10,6 +10,7 @@ ini_set('display_startup_errors', '1');
 error_reporting(E_ALL);
 
 require_once('../connection/connection.php');
+require_once('../auth/middleware.php');
 
 /*
  * Stores beginning balance as a special entry in financeTransaction with memo = '__SALDO_AWAL__'.
@@ -81,10 +82,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
 // ─── POST: set beginning balance ──────────────────────────────────────────────
 } elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $decoded = verifyToken();
+
     $bank_account   = isset($_POST['bank_account']) ? mysqli_real_escape_string($connect, trim($_POST['bank_account'])) : '';
     $as_of_date     = isset($_POST['as_of_date'])   ? mysqli_real_escape_string($connect, trim($_POST['as_of_date']))   : '';
     $desired_amount = isset($_POST['amount'])        ? (float)$_POST['amount']                                           : null;
-    $insert_by      = isset($_POST['insert_by'])     ? mysqli_real_escape_string($connect, trim($_POST['insert_by']))    : '';
+    $insert_by      = $decoded->sub;
 
     $errors = [];
     if ($bank_account === '')  $errors[] = 'bank_account is required';

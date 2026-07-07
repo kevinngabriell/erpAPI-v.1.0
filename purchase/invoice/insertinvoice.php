@@ -7,6 +7,8 @@ ini_set('display_startup_errors', '1');
 error_reporting(E_ALL);
 
 // Connection access
+require_once('../../general.php');
+require_once('../../auth/middleware.php');
 require_once('../../connection/connection.php');
 
 // Function to generate UUID
@@ -34,11 +36,12 @@ function sendResponse($statusCode, $status, $message) {
 
 // Checking call API method
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $decoded = verifyToken();
+
     // Validate required fields
     $requiredFields = [
-        'purchase_order_number', 'purchase_order_supplier', 'invoice_number', 
-        'invoice_date', 'ship_date', 'kurs', 'term', 'username', 
-        'insert_by', 'product_length'
+        'purchase_order_number', 'purchase_order_supplier', 'invoice_number',
+        'invoice_date', 'ship_date', 'kurs', 'term', 'product_length'
     ];
     
     foreach ($requiredFields as $field) {
@@ -54,8 +57,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $ship_date = $_POST['ship_date'];
     $kurs = $_POST['kurs'];
     $term = $_POST['term'];
-    $username = $_POST['username'];
-    $insert_by = $_POST['insert_by'];
+    $username = $decoded->sub;
+    $insert_by = $decoded->sub;
 
     $currentDateTime = new DateTime();
     $indonesiaTimeZone = new DateTimeZone('Asia/Jakarta');

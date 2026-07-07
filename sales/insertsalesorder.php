@@ -7,6 +7,8 @@ ini_set('display_startup_errors', '1');
 error_reporting(E_ALL);
 
 //Connection access
+require_once('../general.php');
+require_once('../auth/middleware.php');
 require_once('../connection/connection.php');
 
 function send_error_response($code, $message) {
@@ -23,13 +25,14 @@ function send_error_response($code, $message) {
 
 //Checking call API method
 if($_SERVER['REQUEST_METHOD'] === 'POST'){
+    $decoded = verifyToken();
     $sales_order_number = $_POST['sales_order_number'] ?? null;
     $sales_order_date = $_POST['sales_order_date'] ?? null;
     $sales_order_ppn = $_POST['sales_order_ppn'] ?? null;
     $sales_order_customer = $_POST['sales_order_customer'] ?? null;
     $sales_order_send_to = $_POST['sales_order_send_to'] ?? null;
     $sales_order_send_date = $_POST['sales_order_send_date'] ?? null;
-    $insert_by = $_POST['insert_by'] ?? null;
+    $insert_by = $decoded->sub;
     $product_length = $_POST['product_length'] ?? null;
 
     if (!$sales_order_number || !$sales_order_date || !$sales_order_ppn || !$sales_order_customer || !$sales_order_send_to || !$sales_order_send_date || !$insert_by || !$product_length) {

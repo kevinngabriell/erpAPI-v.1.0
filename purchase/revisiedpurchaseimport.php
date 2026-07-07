@@ -7,14 +7,17 @@ ini_set('display_startup_errors', '1');
 error_reporting(E_ALL);
 
 // Connection access
+require_once('../general.php');
+require_once('../auth/middleware.php');
 require_once('../connection/connection.php');
 
 // Checking call API method
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $decoded = verifyToken();
     $purchase_order_number = $_POST['purchase_order_number'];
     $purchase_order_date = $_POST['purchase_order_date'];
     // $shipment_date = $_POST['shipment_date'];
-    $insert_by = $_POST['insert_by'];
+    $insert_by = $decoded->sub;
     $product_length = $_POST['product_length'];
     $purchase_order_status = 'd7ab6134-d157-11ee-8';
     $currentDateTime = new DateTime();

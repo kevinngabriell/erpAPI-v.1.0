@@ -10,6 +10,7 @@ ini_set('display_startup_errors', '1');
 error_reporting(E_ALL);
 
 require_once('../connection/connection.php');
+require_once('../auth/middleware.php');
 
 /*
  * Stores beginning balance per account code as a special entry in financeTransaction
@@ -93,6 +94,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
 // ─── POST: set beginning balance ──────────────────────────────────────────────
 } elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $decoded = verifyToken();
 
     $now         = date('Y-m-d H:i:s');
     $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
@@ -109,7 +111,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         }
 
         $as_of_date = isset($body['as_of_date']) ? trim($body['as_of_date']) : '';
-        $insert_by  = isset($body['insert_by'])  ? trim($body['insert_by'])  : '';
+        $insert_by  = $decoded->sub;
         $balances   = $body['balances'] ?? [];
 
         $errors = [];
@@ -198,7 +200,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         $account_code = isset($_POST['account_code']) ? mysqli_real_escape_string($connect, trim($_POST['account_code'])) : '';
         $as_of_date   = isset($_POST['as_of_date'])   ? mysqli_real_escape_string($connect, trim($_POST['as_of_date']))   : '';
         $desired      = isset($_POST['amount'])        ? (float)$_POST['amount']                                           : null;
-        $insert_by    = isset($_POST['insert_by'])     ? mysqli_real_escape_string($connect, trim($_POST['insert_by']))     : '';
+        $insert_by    = $decoded->sub;
 
         $errors = [];
         if ($account_code === '') $errors[] = 'account_code is required';
