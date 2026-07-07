@@ -7,6 +7,22 @@ Intended audience: frontend developers.
 
 ---
 
+## [2026-07-07 09:00:00 WIB] — Dashboard (role-based rebuild)
+
+### Changed
+- `GET /api/v2/dashboard` — Replaced entirely. Now a single endpoint that returns only the widgets the caller's role has `dashboard.*` permission for (see `docs/api/dashboard.md` for the full widget catalog). Widget visibility is driven by `app_role_permission`, never by role name — a custom/generalist role sees the union of whatever `dashboard.*` permissions it holds.
+
+### Breaking changes
+- `/dashboard/overview`, `/dashboard/purchase-overview`, `/dashboard/top-*`, and `/dashboard/outstanding` (added 2026-07-06) no longer exist. Everything is now under the single `GET /api/v2/dashboard`, response shape `data.widgets.{widget_key}`.
+- Some widget names/shapes changed from the old endpoints — e.g. `outstanding?type=piutang` is now the `ar_aging` widget with an added `bucket` field.
+
+### Notes for frontend
+- Call `GET /api/v2/account/my-permissions` to know in advance which `dashboard.*` widgets a role will get back, so the UI can render the right layout without guessing from an empty response.
+- A handful of `dashboard.*` permission keys from the original design have no widget yet — granting them does nothing. See "Unavailable widgets" in `docs/api/dashboard.md` for the list and why (missing department concept, no reorder-point field, no warehouse adjustment-approval workflow, etc.).
+- `cash_position`/`bank_balances` assume `finance_transaction.amount` is signed (positive = inflow, negative = outflow) since there's no separate direction flag in the schema — flag it if that assumption is wrong.
+
+---
+
 ## [2026-07-07 08:11:31 WIB] — Account (Auth)
 
 ### Added
