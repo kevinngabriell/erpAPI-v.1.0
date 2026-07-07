@@ -7,6 +7,21 @@ Intended audience: frontend developers.
 
 ---
 
+## [2026-07-07 08:11:31 WIB] — Account (Auth)
+
+### Added
+- `GET /api/v2/account/my-permissions` — New endpoint. Requires `Authorization: Bearer <token>`. Returns the permission list granted to the caller's role: a flat `permissions` array of `permission_key` strings, plus a `modules`-grouped shape (module → list of `{ permission_key, label, description }`) for building an access-control/permissions screen.
+
+### Changed
+- `POST /api/v2/account/login` — The `user` object in the response now includes `position_name` (resolved via `app_position`), alongside the existing `position_id`. `position_name` is `null` for users who don't have a position assigned yet.
+
+### Notes for frontend
+- `my-permissions` reflects the **role**, not the individual user — all users sharing an `app_role_id` get the same permission list.
+- If a user has no `app_role_id` (shouldn't normally happen post-login), `my-permissions` returns `400`.
+- The JWT itself is unchanged — permissions are still fetched separately, never embedded in the token.
+
+---
+
 ## [2026-07-03] — Account (Auth)
 
 ### Changed
