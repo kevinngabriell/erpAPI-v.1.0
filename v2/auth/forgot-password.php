@@ -60,7 +60,7 @@ function requestPasswordReset($conn, $input): void {
     $stmt = $conn->prepare(
         "SELECT user_id, phone_number
          FROM " . CORE_SCHEMA . ".app_user
-         WHERE email = ? AND app_id = 'aluria'
+         WHERE email = ? AND app_id = '" . APP_ID . "'
          LIMIT 1"
     );
     $stmt->bind_param('s', $email);

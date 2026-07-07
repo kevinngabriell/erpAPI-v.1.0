@@ -1,8 +1,8 @@
 # Account API
 
-> **Last updated:** 2026-07-04 WIB
+> **Last updated:** 2026-07-07 08:11:31 WIB
 > **Base URL:** `/api/v2/account`
-> **Auth:** No auth required on any endpoint in this module
+> **Auth:** No auth required, except `GET /account/my-permissions` which requires `Authorization: Bearer <token>`
 
 ---
 
@@ -11,7 +11,9 @@
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/v2/account/login` | Authenticate a user and receive a JWT |
+| POST | `/api/v2/account/send-otp` | Send a registration OTP via WhatsApp |
 | POST | `/api/v2/account/register` | Register a new user into an existing company |
+| GET | `/api/v2/account/my-permissions` | Get the permission list granted to the caller's role |
 
 ---
 
@@ -85,6 +87,47 @@ Authenticates an existing Aluria user. Returns a signed JWT (8-hour expiry) and 
 | 429 | `RATE_001` | `Too many login attempts. Please try again in 15 minutes.` | 5+ failed attempts for this email in 15 min |
 | 429 | `RATE_002` | `Too many login attempts. Please try again later.` | 20+ requests from this IP in 1 min |
 | 500 | — | `An unexpected error occurred. Please try again.` | Server error |
+
+---
+
+### POST `/api/v2/account/send-otp`
+
+Generates a 6-digit OTP for the `register` purpose and sends it via WhatsApp (WAHA) to the phone number provided. Must be called before `POST /account/register`, whose `otp_code` field is validated against the code sent here.
+
+Delivery to WhatsApp is best-effort: a WAHA failure is logged server-side but does not fail the request, since the OTP has already been generated and stored.
+
+#### Request body (`application/json`)
+
+| Field | Type | Required | Rules |
+|---|---|---|---|
+| `email` | string | Yes | Valid email format, max 50 chars. Trimmed and lowercased. Used as the OTP `identifier`. |
+| `phone_number` | string | Yes | Indonesian format: starts with `08` or `+62`, 10–15 digits total. Where the WhatsApp message is sent. |
+
+#### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "A WhatsApp message with your registration code has been sent to the phone number provided.",
+  "data": null
+}
+```
+
+#### Failure responses
+
+| Code | `error_code` | `status_message` | When |
+|---|---|---|---|
+| 400 | — | `The {field} field is required.` | Missing field |
+| 400 | — | `The email field must be a valid email address (max 50 characters).` | Invalid email format |
+| 400 | — | `The phone_number field must be a valid Indonesian number...` | Invalid phone format |
+| 409 | `REG_003` | `An account with this email already exists.` | Email already registered |
+| 429 | `RATE_003` | `Too many requests. Please try again later.` | 10+ requests from this IP, or 3+ for this email, in 1 hour |
+| 500 | — | `An unexpected error occurred. Please try again.` | Server error |
+
+#### Notes
+
+- The OTP expires after 10 minutes and allows up to 5 verification attempts (enforced in `register.php`).
+- Requesting a new OTP invalidates any previously issued, still-unused `register`-purpose code for the same email.
 
 ---
 
@@ -164,6 +207,55 @@ No JWT is issued on registration. The user must log in after approval.
 
 ---
 
+### GET `/api/v2/account/my-permissions`
+
+Returns the flat and grouped permission list granted to the caller's role (`app_role_id` from the JWT). Requires `Authorization: Bearer <token>`.
+
+#### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Permissions retrieved successfully",
+  "data": {
+    "app_role_id": "role0a1152b01417134d",
+    "role_name": "Admin Purchase",
+    "permissions": [
+      "dashboard.view_full",
+      "view.purchase"
+    ],
+    "modules": {
+      "Dashboard": [
+        {
+          "permission_key": "dashboard.view_full",
+          "label": "View Full Dashboard",
+          "description": null
+        }
+      ],
+      "Purchase": [
+        {
+          "permission_key": "view.purchase",
+          "label": "View Purchase",
+          "description": null
+        }
+      ]
+    }
+  }
+}
+```
+
+#### Failure responses
+
+| Code | `status_message` | When |
+|---|---|---|
+| 400 | `No role assigned to this account yet.` | JWT has no `app_role_id` |
+| 401 | `Authorization header missing or malformed` \| `Invalid token signature` \| `Token expired` | Missing, malformed, or expired Bearer token |
+| 404 | `Role not found` | `app_role_id` no longer exists in `app_role` |
+| 405 | `Method not allowed` | Any method other than `GET` |
+| 500 | `An unexpected error occurred. Please try again.` | Server error |
+
+---
+
 ## Error response shape
 
 All error responses include an optional `error_code` field for frontend localisation. Success responses omit `error_code`.
@@ -181,9 +273,10 @@ All error responses include an optional `error_code` field for frontend localisa
 
 ## Notes
 
-- **Permission map is not in the JWT.** After login, fetch `GET /account/my-permissions` separately to get the flat permission map for the session.
-- **OTP generation is out of scope here.** Call `POST /account/send-otp` before calling register to obtain the OTP.
+- **Permission map is not in the JWT.** After login, fetch `GET /account/my-permissions` separately to get the permission list for the session — both a flat `permissions` array (for quick `hasPermission(key)` checks) and a `modules`-grouped shape (for rendering a permissions/access-control screen).
+- **Call `POST /account/send-otp` before calling register** to have an OTP generated and delivered via WhatsApp.
 - **Token expiry is 8 hours.** There is no refresh token endpoint; the user must log in again after expiry.
 - **Email enumeration prevention.** The login endpoint returns the same `AUTH_001` message whether the email does not exist or the password is wrong. Do not try to infer existence from the response.
 - **Rate limit counters are server-side only.** The remaining attempt count is never exposed in the response.
 - **Position is assigned post-registration.** A newly registered (non-first) user has no `position_id` or specific role until a company admin approves the account and assigns them, since the registrant has no way to look up valid position IDs at signup time.
+- **`position_name` is `null` until assigned.** The login response resolves `position_name` via a `LEFT JOIN` on `app_position`, so it is `null` for any user without a `position_id` yet.

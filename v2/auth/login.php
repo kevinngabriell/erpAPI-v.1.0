@@ -59,16 +59,16 @@ function loginUser($conn, $input): void {
         "SELECT u.user_id, u.username, u.email, u.first_name, u.last_name, u.password,
                 u.account_status, u.app_role_id, u.company_id, u.position_id, u.language,
                 c.company_name, c.status AS company_status,
-                ap.position_name,
+                p.position_name,
                 GREATEST(COALESCE(DATEDIFF(s.next_billing_date, NOW()), 0), 0) AS days_remaining
          FROM " . CORE_SCHEMA . ".app_user u
          JOIN " . CORE_SCHEMA . ".app_company c ON c.company_id = u.company_id
-         LEFT JOIN " . APP_SCHEMA . ".aluria_positions ap ON ap.position_id = u.position_id
+         LEFT JOIN " . CORE_SCHEMA . ".app_position p ON p.position_id = u.position_id
          LEFT JOIN " . CORE_SCHEMA . ".app_subscription s
                ON s.app_company_id = u.company_id
               AND s.app_id = u.app_id
               AND s.subscription_status = 'active'
-         WHERE u.email = ? AND u.app_id = 'aluria'
+         WHERE u.email = ? AND u.app_id = '" . APP_ID . "'
          LIMIT 1"
     );
 
@@ -133,7 +133,7 @@ function loginUser($conn, $input): void {
         'email'          => $row['email'],
         'first_name'     => $row['first_name'],
         'last_name'      => $row['last_name'],
-        'app_id'         => 'aluria',
+        'app_id'         => APP_ID,
         'app_role_id'    => $row['app_role_id'],
         'company_id'     => $row['company_id'],
         'position_id'    => $row['position_id'],
@@ -163,7 +163,7 @@ function loginUser($conn, $input): void {
             'last_name'     => $row['last_name'],
             'email'         => $row['email'],
             'position_id'   => $row['position_id'],
-            'position_name' => $row['position_name'] ?? '',
+            'position_name' => $row['position_name'],
             'language'      => $row['language'] ?? 'id',
         ],
         'company' => [

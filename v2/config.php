@@ -16,11 +16,14 @@ function loadEnv(string $path): void {
 
 loadEnv(__DIR__ . '/.env');
 
-define('APP_ENV',     $_ENV['APP_ENV']     ?? 'development');
-define('JWT_SECRET',  $_ENV['JWT_SECRET']  ?? '');
-define('CORE_SCHEMA', $_ENV['CORE_SCHEMA'] ?? 'movira_core_dev');
-define('APP_SCHEMA',  $_ENV['APP_SCHEMA']  ?? 'aluria_dev');
+date_default_timezone_set('Asia/Jakarta');
 
-define('WAHA_BASE_URL', $_ENV['WAHA_BASE_URL'] ?? '');
-define('WAHA_SESSION',  $_ENV['WAHA_SESSION']  ?? '');
-define('WAHA_API_KEY',  $_ENV['WAHA_API_KEY']  ?? '');
+if (!defined('APP_ENV'))     define('APP_ENV',     getenv('APP_ENV') ?: ($_ENV['APP_ENV'] ?? 'development'));
+if (!defined('JWT_SECRET'))  define('JWT_SECRET',  $_ENV['JWT_SECRET']  ?? '');
+if (!defined('CORE_SCHEMA')) define('CORE_SCHEMA', $_ENV['CORE_SCHEMA'] ?? 'movira_core_dev');
+if (!defined('APP_SCHEMA'))  define('APP_SCHEMA',  $_ENV['APP_SCHEMA']  ?? 'aluria_dev');
+if (!defined('APP_ID'))      define('APP_ID',      $_ENV['APP_ID']      ?? '');
+
+if (!defined('WAHA_BASE_URL')) define('WAHA_BASE_URL', $_ENV['WAHA_BASE_URL'] ?? '');
+if (!defined('WAHA_SESSION'))  define('WAHA_SESSION',  $_ENV['WAHA_SESSION']  ?? '');
+if (!defined('WAHA_API_KEY'))  define('WAHA_API_KEY',  $_ENV['WAHA_API_KEY']  ?? '');

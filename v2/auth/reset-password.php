@@ -61,7 +61,7 @@ function resetPassword($conn, $input): void {
     $stmt = $conn->prepare(
         "SELECT user_id, first_name, last_name
          FROM " . CORE_SCHEMA . ".app_user
-         WHERE email = ? AND app_id = 'aluria'
+         WHERE email = ? AND app_id = '" . APP_ID . "'
          LIMIT 1"
     );
     $stmt->bind_param('s', $email);
