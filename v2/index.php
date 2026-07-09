@@ -5,6 +5,13 @@ $uri    = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 $uri    = trim($uri, '/');
 $parts  = explode('/', $uri);
 
+// nginx's /venken-api/ location strips that segment and forwards the rest as
+// /v2/{module}/... — pad it back to api/v2/... so the indices below match
+// both that proxied shape and a direct /api/v2/... request.
+if (($parts[0] ?? '') === 'v2') {
+    array_unshift($parts, 'api');
+}
+
 // Expect: api / v2 / {module} / {action} [/ {sub_action} [/ {sub_id}]]
 $prefix  = $parts[0] ?? '';
 $version = $parts[1] ?? '';
