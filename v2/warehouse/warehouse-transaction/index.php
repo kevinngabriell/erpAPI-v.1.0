@@ -10,18 +10,25 @@ function getAllWarehouseTransactions($conn, $company_id, $params) {
     $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
     $offset = ($page - 1) * $limit;
 
-    $where = "company_id = '$company_id' AND deleted_at IS NULL";
+    $where = "wt.company_id = '$company_id' AND wt.deleted_at IS NULL";
     if (isset($params['transaction_type']) && in_array($params['transaction_type'], WAREHOUSE_TRANSACTION_TYPES, true)) {
         $transaction_type = mysqli_real_escape_string($conn, $params['transaction_type']);
-        $where .= " AND transaction_type = '$transaction_type'";
+        $where .= " AND wt.transaction_type = '$transaction_type'";
     }
     if (isset($params['customer_id']) && trim($params['customer_id']) !== '') {
         $customer_id = mysqli_real_escape_string($conn, $params['customer_id']);
-        $where .= " AND customer_id = '$customer_id'";
+        $where .= " AND wt.customer_id = '$customer_id'";
     }
 
-    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".warehouse_transaction WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".warehouse_transaction WHERE $where");
+    $from = APP_SCHEMA . ".warehouse_transaction wt
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = wt.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = wt.updated_by";
+
+    $result       = mysqli_query($conn, "SELECT wt.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE $where ORDER BY wt.created_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM $from WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -127,7 +134,13 @@ function createWarehouseTransaction($conn, $input, $username, $company_id) {
 function getDetailWarehouseTransaction($conn, $warehouse_transaction_id, $company_id) {
     $warehouse_transaction_id = mysqli_real_escape_string($conn, $warehouse_transaction_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".warehouse_transaction WHERE id = '$warehouse_transaction_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $from   = APP_SCHEMA . ".warehouse_transaction wt
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = wt.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = wt.updated_by";
+    $result = mysqli_query($conn, "SELECT wt.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE wt.id = '$warehouse_transaction_id' AND wt.company_id = '$company_id' AND wt.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Warehouse transaction not found');
         return;
@@ -135,7 +148,13 @@ function getDetailWarehouseTransaction($conn, $warehouse_transaction_id, $compan
 
     $warehouse_transaction = mysqli_fetch_assoc($result);
 
-    $items_result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".warehouse_transaction_item WHERE warehouse_transaction_id = '$warehouse_transaction_id' AND deleted_at IS NULL ORDER BY created_at ASC");
+    $items_from   = APP_SCHEMA . ".warehouse_transaction_item wti
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = wti.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = wti.updated_by";
+    $items_result = mysqli_query($conn, "SELECT wti.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $items_from WHERE wti.warehouse_transaction_id = '$warehouse_transaction_id' AND wti.deleted_at IS NULL ORDER BY wti.created_at ASC");
     $warehouse_transaction['items'] = $items_result ? mysqli_fetch_all($items_result, MYSQLI_ASSOC) : [];
 
     jsonResponse(200, 'Warehouse transaction found', $warehouse_transaction);

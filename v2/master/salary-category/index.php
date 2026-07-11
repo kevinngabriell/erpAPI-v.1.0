@@ -9,17 +9,24 @@ function getAllSalaryCategories($conn, $params) {
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
 
-    $where = "deleted_at IS NULL";
+    $where = "sc.deleted_at IS NULL";
     if ($search) {
-        $where .= " AND category_name LIKE '%$search%'";
+        $where .= " AND sc.category_name LIKE '%$search%'";
     }
     if (isset($params['category_type']) && in_array($params['category_type'], ['allowance', 'deduction'], true)) {
         $category_type = mysqli_real_escape_string($conn, $params['category_type']);
-        $where .= " AND category_type = '$category_type'";
+        $where .= " AND sc.category_type = '$category_type'";
     }
 
-    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".salary_category WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".salary_category WHERE $where");
+    $from = APP_SCHEMA . ".salary_category sc
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = sc.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = sc.updated_by";
+
+    $result       = mysqli_query($conn, "SELECT sc.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE $where ORDER BY sc.created_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".salary_category sc WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -76,7 +83,13 @@ function createSalaryCategory($conn, $input, $username) {
 function getDetailSalaryCategory($conn, $salary_category_id) {
     $salary_category_id = mysqli_real_escape_string($conn, $salary_category_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".salary_category WHERE id = '$salary_category_id' AND deleted_at IS NULL LIMIT 1");
+    $from   = APP_SCHEMA . ".salary_category sc
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = sc.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = sc.updated_by";
+    $result = mysqli_query($conn, "SELECT sc.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE sc.id = '$salary_category_id' AND sc.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Salary category not found');
         return;

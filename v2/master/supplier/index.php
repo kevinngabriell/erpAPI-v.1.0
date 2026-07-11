@@ -9,17 +9,24 @@ function getAllSuppliers($conn, $company_id, $params) {
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
 
-    $where = "company_id = '$company_id' AND deleted_at IS NULL";
+    $where = "s.company_id = '$company_id' AND s.deleted_at IS NULL";
     if ($search) {
-        $where .= " AND (supplier_name LIKE '%$search%' OR supplier_pic_name LIKE '%$search%')";
+        $where .= " AND (s.supplier_name LIKE '%$search%' OR s.supplier_pic_name LIKE '%$search%')";
     }
     if (isset($params['supplier_origin_id']) && trim($params['supplier_origin_id']) !== '') {
         $supplier_origin_id = mysqli_real_escape_string($conn, $params['supplier_origin_id']);
-        $where .= " AND supplier_origin_id = '$supplier_origin_id'";
+        $where .= " AND s.supplier_origin_id = '$supplier_origin_id'";
     }
 
-    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".supplier WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".supplier WHERE $where");
+    $from = APP_SCHEMA . ".supplier s
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = s.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = s.updated_by";
+
+    $result       = mysqli_query($conn, "SELECT s.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE $where ORDER BY s.created_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".supplier s WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -125,7 +132,13 @@ function createSupplier($conn, $input, $username, $company_id) {
 function getDetailSupplier($conn, $supplier_id, $company_id) {
     $supplier_id = mysqli_real_escape_string($conn, $supplier_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".supplier WHERE id = '$supplier_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $from   = APP_SCHEMA . ".supplier s
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = s.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = s.updated_by";
+    $result = mysqli_query($conn, "SELECT s.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE s.id = '$supplier_id' AND s.company_id = '$company_id' AND s.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Supplier not found');
         return;

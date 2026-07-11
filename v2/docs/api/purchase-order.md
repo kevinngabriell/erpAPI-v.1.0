@@ -1,6 +1,6 @@
 # Purchase Order API
 
-> **Last updated:** 2026-07-11 15:00:00 WIB
+> **Last updated:** 2026-07-11 18:49:02 WIB
 > **Base URL:** `/api/v2/purchase-order`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -73,7 +73,7 @@ List all purchase orders belonging to the authenticated company.
         "eta_date": "2026-07-20",
         "approved_by": null,
         "approved_at": null,
-        "created_by": "budi.santoso",
+        "created_by": "Budi Santoso",
         "created_at": "2026-07-01 10:00:00",
         "updated_by": null,
         "updated_at": null,
@@ -240,7 +240,7 @@ Get detail of a single purchase order, including its nested `items` array.
     "eta_date": "2026-07-20",
     "approved_by": null,
     "approved_at": null,
-    "created_by": "budi.santoso",
+    "created_by": "Budi Santoso",
     "created_at": "2026-07-01 10:00:00",
     "updated_by": null,
     "updated_at": null,
@@ -255,7 +255,7 @@ Get detail of a single purchase order, including its nested `items` array.
         "unit_price": 50000,
         "vat": 5000,
         "total": 5005000,
-        "created_by": "budi.santoso",
+        "created_by": "Budi Santoso",
         "created_at": "2026-07-01 10:00:00",
         "updated_by": null,
         "updated_at": null,
@@ -499,7 +499,7 @@ List all items belonging to the purchase order.
         "unit_price": 50000,
         "vat": 5000,
         "total": 5005000,
-        "created_by": "budi.santoso",
+        "created_by": "Budi Santoso",
         "created_at": "2026-07-01 10:00:00",
         "updated_by": null,
         "updated_at": null,
@@ -586,7 +586,7 @@ Get a single purchase order item.
     "unit_price": 50000,
     "vat": 5000,
     "total": 5005000,
-    "created_by": "budi.santoso",
+    "created_by": "Budi Santoso",
     "created_at": "2026-07-01 10:00:00",
     "updated_by": null,
     "updated_at": null,
@@ -696,3 +696,4 @@ Soft-deletes the purchase order item (sets `deleted_at`) — it will no longer a
 - The list endpoint (`GET /api/v2/purchase-order`) does not include the nested `items` array; only the detail endpoint (`GET /api/v2/purchase-order/{id}`) does. The create response only returns `purchase_order_id`.
 - Approve/reject write an `audit_log` row with action `approved`/`rejected`; create/update/delete write `created`/`updated`/`deleted` audit_log rows. Query this history via `GET /api/v2/audit-log?module=purchase_order&reference_id={id}` — see the `audit-log` module doc.
 - `approve` sets `approved_by` and `approved_at`; `reject` does not.
+- **`created_by`, `updated_by`, and `approved_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a purchase order or a purchase order item — list, detail, and items. Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by`/`approved_by` are `null` until the record has actually been updated/approved; `created_by` can be `null` only if the creating user has since been deleted.

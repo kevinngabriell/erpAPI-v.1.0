@@ -8,10 +8,17 @@ function getAllDocumentWatermarks($conn, $company_id, $params) {
     $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
     $offset = ($page - 1) * $limit;
 
-    $where = "company_id = '$company_id' AND deleted_at IS NULL";
+    $where = "dw.company_id = '$company_id' AND dw.deleted_at IS NULL";
 
-    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".document_watermark WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".document_watermark WHERE $where");
+    $from = APP_SCHEMA . ".document_watermark dw
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = dw.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = dw.updated_by";
+
+    $result       = mysqli_query($conn, "SELECT dw.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE $where ORDER BY dw.created_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".document_watermark dw WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -76,7 +83,13 @@ function createDocumentWatermark($conn, $input, $username, $company_id) {
 function getDetailDocumentWatermark($conn, $document_watermark_id, $company_id) {
     $document_watermark_id = mysqli_real_escape_string($conn, $document_watermark_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".document_watermark WHERE id = '$document_watermark_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $from   = APP_SCHEMA . ".document_watermark dw
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = dw.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = dw.updated_by";
+    $result = mysqli_query($conn, "SELECT dw.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE dw.id = '$document_watermark_id' AND dw.company_id = '$company_id' AND dw.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Document watermark not found');
         return;

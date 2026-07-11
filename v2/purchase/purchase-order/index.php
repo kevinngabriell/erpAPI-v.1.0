@@ -12,29 +12,38 @@ function getAllPurchaseOrders($conn, $company_id, $params) {
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
 
-    $where = "company_id = '$company_id' AND deleted_at IS NULL";
+    $where = "po.company_id = '$company_id' AND po.deleted_at IS NULL";
     if ($search) {
-        $where .= " AND po_display_number LIKE '%$search%'";
+        $where .= " AND po.po_display_number LIKE '%$search%'";
     }
     if (isset($params['status_id']) && trim($params['status_id']) !== '') {
         $status_id = mysqli_real_escape_string($conn, $params['status_id']);
-        $where .= " AND status_id = '$status_id'";
+        $where .= " AND po.status_id = '$status_id'";
     }
     if (isset($params['supplier_id']) && trim($params['supplier_id']) !== '') {
         $supplier_id = mysqli_real_escape_string($conn, $params['supplier_id']);
-        $where .= " AND supplier_id = '$supplier_id'";
+        $where .= " AND po.supplier_id = '$supplier_id'";
     }
     if (isset($params['date_from']) && trim($params['date_from']) !== '') {
         $date_from = mysqli_real_escape_string($conn, $params['date_from']);
-        $where .= " AND po_date >= '$date_from'";
+        $where .= " AND po.po_date >= '$date_from'";
     }
     if (isset($params['date_to']) && trim($params['date_to']) !== '') {
         $date_to = mysqli_real_escape_string($conn, $params['date_to']);
-        $where .= " AND po_date <= '$date_to'";
+        $where .= " AND po.po_date <= '$date_to'";
     }
 
-    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".purchase_order WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".purchase_order WHERE $where");
+    $from = APP_SCHEMA . ".purchase_order po
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = po.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = po.updated_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user au ON au.user_id COLLATE utf8mb4_general_ci = po.approved_by";
+
+    $result       = mysqli_query($conn, "SELECT po.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by,
+            CONCAT(au.first_name, ' ', au.last_name) AS approved_by
+            FROM $from WHERE $where ORDER BY po.created_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".purchase_order po WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -163,7 +172,15 @@ function createPurchaseOrder($conn, $input, $username, $company_id) {
 function getDetailPurchaseOrder($conn, $purchase_order_id, $company_id) {
     $purchase_order_id = mysqli_real_escape_string($conn, $purchase_order_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".purchase_order WHERE id = '$purchase_order_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $from   = APP_SCHEMA . ".purchase_order po
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = po.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = po.updated_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user au ON au.user_id COLLATE utf8mb4_general_ci = po.approved_by";
+    $result = mysqli_query($conn, "SELECT po.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by,
+            CONCAT(au.first_name, ' ', au.last_name) AS approved_by
+            FROM $from WHERE po.id = '$purchase_order_id' AND po.company_id = '$company_id' AND po.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Purchase order not found');
         return;
@@ -171,7 +188,13 @@ function getDetailPurchaseOrder($conn, $purchase_order_id, $company_id) {
 
     $purchase_order = mysqli_fetch_assoc($result);
 
-    $items_result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".purchase_order_item WHERE purchase_order_id = '$purchase_order_id' AND deleted_at IS NULL ORDER BY created_at ASC");
+    $items_from   = APP_SCHEMA . ".purchase_order_item poi
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = poi.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = poi.updated_by";
+    $items_result = mysqli_query($conn, "SELECT poi.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $items_from WHERE poi.purchase_order_id = '$purchase_order_id' AND poi.deleted_at IS NULL ORDER BY poi.created_at ASC");
     $purchase_order['items'] = $items_result ? mysqli_fetch_all($items_result, MYSQLI_ASSOC) : [];
 
     jsonResponse(200, 'Purchase order found', $purchase_order);

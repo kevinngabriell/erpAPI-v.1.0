@@ -10,7 +10,13 @@ function assertPurchaseOrderBelongsToCompany($conn, $purchase_order_id, $company
 function getAllPurchaseOrderItems($conn, $purchase_order_id, $company_id) {
     assertPurchaseOrderBelongsToCompany($conn, $purchase_order_id, $company_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".purchase_order_item WHERE purchase_order_id = '$purchase_order_id' AND deleted_at IS NULL ORDER BY created_at ASC");
+    $from   = APP_SCHEMA . ".purchase_order_item poi
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = poi.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = poi.updated_by";
+    $result = mysqli_query($conn, "SELECT poi.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE poi.purchase_order_id = '$purchase_order_id' AND poi.deleted_at IS NULL ORDER BY poi.created_at ASC");
 
     if ($result && mysqli_num_rows($result) > 0) {
         jsonResponse(200, 'Purchase order items found', ['data' => mysqli_fetch_all($result, MYSQLI_ASSOC)]);
@@ -56,7 +62,13 @@ function getDetailPurchaseOrderItem($conn, $purchase_order_id, $purchase_order_i
 
     $purchase_order_item_id = mysqli_real_escape_string($conn, $purchase_order_item_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".purchase_order_item WHERE id = '$purchase_order_item_id' AND purchase_order_id = '$purchase_order_id' AND deleted_at IS NULL LIMIT 1");
+    $from   = APP_SCHEMA . ".purchase_order_item poi
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = poi.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = poi.updated_by";
+    $result = mysqli_query($conn, "SELECT poi.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE poi.id = '$purchase_order_item_id' AND poi.purchase_order_id = '$purchase_order_id' AND poi.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Purchase order item not found');
         return;

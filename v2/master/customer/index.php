@@ -9,13 +9,20 @@ function getAllCustomers($conn, $company_id, $params) {
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
 
-    $where = "company_id = '$company_id' AND deleted_at IS NULL";
+    $where = "c.company_id = '$company_id' AND c.deleted_at IS NULL";
     if ($search) {
-        $where .= " AND (customer_name LIKE '%$search%' OR customer_pic_name LIKE '%$search%')";
+        $where .= " AND (c.customer_name LIKE '%$search%' OR c.customer_pic_name LIKE '%$search%')";
     }
 
-    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".customer WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".customer WHERE $where");
+    $from = APP_SCHEMA . ".customer c
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = c.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = c.updated_by";
+
+    $result       = mysqli_query($conn, "SELECT c.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE $where ORDER BY c.created_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".customer c WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -95,7 +102,13 @@ function createCustomer($conn, $input, $username, $company_id) {
 function getDetailCustomer($conn, $customer_id, $company_id) {
     $customer_id = mysqli_real_escape_string($conn, $customer_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".customer WHERE id = '$customer_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $from   = APP_SCHEMA . ".customer c
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = c.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = c.updated_by";
+    $result = mysqli_query($conn, "SELECT c.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE c.id = '$customer_id' AND c.company_id = '$company_id' AND c.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Customer not found');
         return;

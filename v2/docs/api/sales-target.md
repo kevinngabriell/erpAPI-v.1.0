@@ -1,6 +1,6 @@
 # Sales Target API
 
-> **Last updated:** 2026-07-06 14:40:00 WIB
+> **Last updated:** 2026-07-11 18:49:02 WIB
 > **Base URL:** `/api/v2/sales-target`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -45,7 +45,7 @@ _(No `search` parameter exists for this module.)_
         "company_id": "b2c3d4e5-f6a7-4b5c-9d0e-1f2a3b4c5d6e",
         "target_year": 2026,
         "target_value": 5000000000,
-        "created_by": "usr_64a1b2c3",
+        "created_by": "Budi Santoso",
         "created_at": "2026-06-27 10:00:00",
         "updated_by": null,
         "updated_at": null,
@@ -142,7 +142,7 @@ Get detail of a single sales target.
     "company_id": "b2c3d4e5-f6a7-4b5c-9d0e-1f2a3b4c5d6e",
     "target_year": 2026,
     "target_value": 5000000000,
-    "created_by": "usr_64a1b2c3",
+    "created_by": "Budi Santoso",
     "created_at": "2026-06-27 10:00:00",
     "updated_by": null,
     "updated_at": null,
@@ -273,3 +273,4 @@ Soft-deletes the sales target (sets `deleted_at`) — it will no longer appear i
 
 - Resource is scoped to the authenticated company (`company_id` from the JWT) — records from other companies are never returned or modifiable.
 - Uniqueness is enforced per `(company_id, target_year)` — a company can have at most one sales target per year.
+- **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a sales target (list, detail, and any nested items). Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.

@@ -17,10 +17,17 @@ function getAllCompanySettingDetails($conn, $setting_menu_id, $company_id, $para
     $offset = ($page - 1) * $limit;
 
     $setting_menu_id = mysqli_real_escape_string($conn, $setting_menu_id);
-    $where = "setting_menu_id = '$setting_menu_id' AND deleted_at IS NULL";
+    $where = "csd.setting_menu_id = '$setting_menu_id' AND csd.deleted_at IS NULL";
 
-    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".company_setting_detail WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".company_setting_detail WHERE $where");
+    $from = APP_SCHEMA . ".company_setting_detail csd
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = csd.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = csd.updated_by";
+
+    $result       = mysqli_query($conn, "SELECT csd.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE $where ORDER BY csd.created_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".company_setting_detail csd WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -89,7 +96,13 @@ function getDetailCompanySettingDetail($conn, $setting_menu_id, $company_setting
     $setting_menu_id           = mysqli_real_escape_string($conn, $setting_menu_id);
     $company_setting_detail_id = mysqli_real_escape_string($conn, $company_setting_detail_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".company_setting_detail WHERE id = '$company_setting_detail_id' AND setting_menu_id = '$setting_menu_id' AND deleted_at IS NULL LIMIT 1");
+    $from   = APP_SCHEMA . ".company_setting_detail csd
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = csd.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = csd.updated_by";
+    $result = mysqli_query($conn, "SELECT csd.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE csd.id = '$company_setting_detail_id' AND csd.setting_menu_id = '$setting_menu_id' AND csd.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Company setting detail not found');
         return;

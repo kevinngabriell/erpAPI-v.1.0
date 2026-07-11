@@ -9,17 +9,24 @@ function getAllBankAccounts($conn, $company_id, $params) {
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
 
-    $where = "company_id = '$company_id' AND deleted_at IS NULL";
+    $where = "ba.company_id = '$company_id' AND ba.deleted_at IS NULL";
     if ($search) {
-        $where .= " AND (bank_number LIKE '%$search%' OR bank_name LIKE '%$search%')";
+        $where .= " AND (ba.bank_number LIKE '%$search%' OR ba.bank_name LIKE '%$search%')";
     }
     if (isset($params['currency_id']) && trim($params['currency_id']) !== '') {
         $currency_id = mysqli_real_escape_string($conn, $params['currency_id']);
-        $where .= " AND currency_id = '$currency_id'";
+        $where .= " AND ba.currency_id = '$currency_id'";
     }
 
-    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".bank_account WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".bank_account WHERE $where");
+    $from = APP_SCHEMA . ".bank_account ba
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = ba.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = ba.updated_by";
+
+    $result       = mysqli_query($conn, "SELECT ba.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE $where ORDER BY ba.created_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".bank_account ba WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -89,7 +96,13 @@ function createBankAccount($conn, $input, $username, $company_id) {
 function getDetailBankAccount($conn, $bank_account_id, $company_id) {
     $bank_account_id = mysqli_real_escape_string($conn, $bank_account_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".bank_account WHERE id = '$bank_account_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $from   = APP_SCHEMA . ".bank_account ba
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = ba.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = ba.updated_by";
+    $result = mysqli_query($conn, "SELECT ba.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE ba.id = '$bank_account_id' AND ba.company_id = '$company_id' AND ba.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Bank account not found');
         return;

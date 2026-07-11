@@ -1,6 +1,6 @@
 # Purchase Receive API
 
-> **Last updated:** 2026-07-11 15:00:00 WIB
+> **Last updated:** 2026-07-11 18:49:02 WIB
 > **Base URL:** `/api/v2/purchase-receive`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -50,7 +50,7 @@ List all purchase receives belonging to the authenticated company.
         "receiving_date": "2026-07-05",
         "ship_date": "2026-07-01",
         "ship_via_id": "e5f6a7b8-c9d0-4e5f-2a3b-4c5d6e7f8a9b",
-        "created_by": "budi.santoso",
+        "created_by": "Budi Santoso",
         "created_at": "2026-07-05 09:00:00",
         "updated_by": null,
         "updated_at": null,
@@ -179,7 +179,7 @@ Get detail of a single purchase receive, including its nested `items` array.
     "receiving_date": "2026-07-05",
     "ship_date": "2026-07-01",
     "ship_via_id": "e5f6a7b8-c9d0-4e5f-2a3b-4c5d6e7f8a9b",
-    "created_by": "budi.santoso",
+    "created_by": "Budi Santoso",
     "created_at": "2026-07-05 09:00:00",
     "updated_by": null,
     "updated_at": null,
@@ -194,7 +194,7 @@ Get detail of a single purchase receive, including its nested `items` array.
         "unit_price": 50000,
         "vat": 5000,
         "total": 5005000,
-        "created_by": "budi.santoso",
+        "created_by": "Budi Santoso",
         "created_at": "2026-07-05 09:00:00",
         "updated_by": null,
         "updated_at": null,
@@ -328,3 +328,4 @@ Soft-deletes the purchase receive (sets `deleted_at`) — it will no longer appe
 - No enum-constrained fields were found in this module's source.
 - The list endpoint (`GET /api/v2/purchase-receive`) does not include the nested `items` array. Only the detail endpoint (`GET /api/v2/purchase-receive/{id}`) returns `items`. The create response only returns `purchase_receive_id`.
 - `search` is matched against the linked purchase order's `po_display_number` via a `LEFT JOIN`, not against any field on the purchase receive record itself — purchase receive rows have no display number of their own. Records whose `purchase_order_id` no longer resolves to a purchase order are excluded from `search` results (but still returned when `search` is omitted).
+- **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a purchase receive (list, detail, and any nested items). Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.

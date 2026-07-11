@@ -9,13 +9,20 @@ function getAllFinanceCategories($conn, $params) {
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
 
-    $where = "deleted_at IS NULL";
+    $where = "fc.deleted_at IS NULL";
     if ($search) {
-        $where .= " AND category_name LIKE '%$search%'";
+        $where .= " AND fc.category_name LIKE '%$search%'";
     }
 
-    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".finance_category WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".finance_category WHERE $where");
+    $from = APP_SCHEMA . ".finance_category fc
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = fc.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = fc.updated_by";
+
+    $result       = mysqli_query($conn, "SELECT fc.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE $where ORDER BY fc.created_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".finance_category fc WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -66,7 +73,13 @@ function createFinanceCategory($conn, $input, $username) {
 function getDetailFinanceCategory($conn, $finance_category_id) {
     $finance_category_id = mysqli_real_escape_string($conn, $finance_category_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".finance_category WHERE id = '$finance_category_id' AND deleted_at IS NULL LIMIT 1");
+    $from   = APP_SCHEMA . ".finance_category fc
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = fc.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = fc.updated_by";
+    $result = mysqli_query($conn, "SELECT fc.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE fc.id = '$finance_category_id' AND fc.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Finance category not found');
         return;

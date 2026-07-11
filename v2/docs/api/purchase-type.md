@@ -1,6 +1,6 @@
 # Purchase Type API
 
-> **Last updated:** 2026-07-06 14:00:00 WIB
+> **Last updated:** 2026-07-11 18:49:02 WIB
 > **Base URL:** `/api/v2/purchase-type`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -42,7 +42,7 @@ List all purchase types.
         "id": "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",
         "type_name": "Local Purchase",
         "vat_applicable": true,
-        "created_by": "usr_64a1b2c3d4e5f",
+        "created_by": "Budi Santoso",
         "created_at": "2026-06-27 10:00:00",
         "updated_by": null,
         "updated_at": null,
@@ -138,7 +138,7 @@ Get detail of a single purchase type.
     "id": "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",
     "type_name": "Local Purchase",
     "vat_applicable": true,
-    "created_by": "usr_64a1b2c3d4e5f",
+    "created_by": "Budi Santoso",
     "created_at": "2026-06-27 10:00:00",
     "updated_by": null,
     "updated_at": null,
@@ -259,3 +259,4 @@ Soft-deletes the purchase type (sets `deleted_at`) — it will no longer appear 
 - IDs are UUIDs generated with `generateUUID()`, not prefixed strings (e.g. `a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d`).
 - `vat_applicable` defaults to `true` when not supplied on create; any falsy value (`false`, `0`, omitted-then-explicit-false) is stored as `false`.
 - Delete is a soft delete (`deleted_at` timestamp) and is reversible at the database layer, even though there is currently no undelete endpoint.
+- **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a purchase type (list, detail, and any nested items). Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.

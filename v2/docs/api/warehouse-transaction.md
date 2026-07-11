@@ -1,6 +1,6 @@
 # Warehouse Transaction API
 
-> **Last updated:** 2026-07-06 14:00:00 WIB
+> **Last updated:** 2026-07-11 18:49:02 WIB
 > **Base URL:** `/api/v2/warehouse-transaction`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -46,7 +46,7 @@ List all warehouse transactions belonging to the authenticated company.
         "transaction_type": "stock_in",
         "customer_id": null,
         "notes": null,
-        "created_by": "budi.santoso",
+        "created_by": "Budi Santoso",
         "created_at": "2026-07-01 10:00:00",
         "updated_by": null,
         "updated_at": null,
@@ -192,7 +192,7 @@ Get detail of a single warehouse transaction, including its nested `items` array
     "transaction_type": "stock_in",
     "customer_id": null,
     "notes": null,
-    "created_by": "budi.santoso",
+    "created_by": "Budi Santoso",
     "created_at": "2026-07-01 10:00:00",
     "updated_by": null,
     "updated_at": null,
@@ -208,7 +208,7 @@ Get detail of a single warehouse transaction, including its nested `items` array
         "conversion_factor": null,
         "expired_at": null,
         "notes": null,
-        "created_by": "budi.santoso",
+        "created_by": "Budi Santoso",
         "created_at": "2026-07-01 10:00:00",
         "updated_by": null,
         "updated_at": null,
@@ -341,3 +341,4 @@ Soft-deletes the warehouse transaction (sets `deleted_at`) — it will no longer
 - The list endpoint (`GET /api/v2/warehouse-transaction`) does not include the nested `items` array; only the detail endpoint (`GET /api/v2/warehouse-transaction/{id}`) does. The create response only returns `warehouse_transaction_id`.
 - Unlike some other modules (e.g. `purchase-order`), this module does not currently write any `audit_log` entries — no calls to `insertAuditLog()` exist in its source. There is no corresponding `GET /api/v2/audit-log?module=warehouse_transaction...` history available at this time.
 - There is no duplicate/uniqueness check on create, so no `409 Conflict` response exists for this module.
+- **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a warehouse transaction (list, detail, and any nested items). Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.

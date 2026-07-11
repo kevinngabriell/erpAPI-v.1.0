@@ -9,13 +9,20 @@ function getAllPaymentMethods($conn, $params) {
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
 
-    $where = "deleted_at IS NULL";
+    $where = "pm.deleted_at IS NULL";
     if ($search) {
-        $where .= " AND method_name LIKE '%$search%'";
+        $where .= " AND pm.method_name LIKE '%$search%'";
     }
 
-    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".payment_method WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".payment_method WHERE $where");
+    $from = APP_SCHEMA . ".payment_method pm
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = pm.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = pm.updated_by";
+
+    $result       = mysqli_query($conn, "SELECT pm.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE $where ORDER BY pm.created_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".payment_method pm WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -66,7 +73,13 @@ function createPaymentMethod($conn, $input, $username) {
 function getDetailPaymentMethod($conn, $payment_method_id) {
     $payment_method_id = mysqli_real_escape_string($conn, $payment_method_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".payment_method WHERE id = '$payment_method_id' AND deleted_at IS NULL LIMIT 1");
+    $from   = APP_SCHEMA . ".payment_method pm
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = pm.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = pm.updated_by";
+    $result = mysqli_query($conn, "SELECT pm.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE pm.id = '$payment_method_id' AND pm.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Payment method not found');
         return;

@@ -1,6 +1,6 @@
 # Warehouse Lot API
 
-> **Last updated:** 2026-07-06 14:00:00 WIB
+> **Last updated:** 2026-07-11 18:49:02 WIB
 > **Base URL:** `/api/v2/warehouse-lot`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -47,7 +47,7 @@ List all warehouse lots belonging to the authenticated company.
         "lot_date": "2026-07-01",
         "beginning_balance": 100,
         "end_balance": 80,
-        "created_by": "budi.santoso",
+        "created_by": "Budi Santoso",
         "created_at": "2026-07-01 10:00:00",
         "updated_by": null,
         "updated_at": null,
@@ -156,7 +156,7 @@ Get detail of a single warehouse lot.
     "lot_date": "2026-07-01",
     "beginning_balance": 100,
     "end_balance": 80,
-    "created_by": "budi.santoso",
+    "created_by": "Budi Santoso",
     "created_at": "2026-07-01 10:00:00",
     "updated_by": null,
     "updated_at": null,
@@ -278,3 +278,4 @@ Soft-deletes the warehouse lot (sets `deleted_at`) — it will no longer appear 
 - No enum-constrained fields exist on this module. `product_id` is required and validated for existence; `location_id` is optional and, only when provided, validated for existence against non-deleted records in the company.
 - On update, `location_id` is not re-validated for existence — it is only re-checked for emptiness (cleared to `null` if sent empty).
 - Unlike `finance-transaction` and `finance-payment`, this module does **not** write `audit_log` rows — the source file does not include the audit-log helper or call `insertAuditLog()` on create, update, or delete. There is no audit history to query for this module.
+- **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a warehouse lot (list, detail, and any nested items). Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.

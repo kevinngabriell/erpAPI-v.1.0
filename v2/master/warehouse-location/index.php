@@ -9,13 +9,20 @@ function getAllWarehouseLocations($conn, $company_id, $params) {
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
 
-    $where = "company_id = '$company_id' AND deleted_at IS NULL";
+    $where = "wloc.company_id = '$company_id' AND wloc.deleted_at IS NULL";
     if ($search) {
-        $where .= " AND (location_name LIKE '%$search%' OR address LIKE '%$search%')";
+        $where .= " AND (wloc.location_name LIKE '%$search%' OR wloc.address LIKE '%$search%')";
     }
 
-    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".warehouse_location WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".warehouse_location WHERE $where");
+    $from = APP_SCHEMA . ".warehouse_location wloc
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = wloc.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = wloc.updated_by";
+
+    $result       = mysqli_query($conn, "SELECT wloc.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE $where ORDER BY wloc.created_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".warehouse_location wloc WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -70,7 +77,13 @@ function createWarehouseLocation($conn, $input, $username, $company_id) {
 function getDetailWarehouseLocation($conn, $warehouse_location_id, $company_id) {
     $warehouse_location_id = mysqli_real_escape_string($conn, $warehouse_location_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".warehouse_location WHERE id = '$warehouse_location_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $from   = APP_SCHEMA . ".warehouse_location wloc
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = wloc.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = wloc.updated_by";
+    $result = mysqli_query($conn, "SELECT wloc.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE wloc.id = '$warehouse_location_id' AND wloc.company_id = '$company_id' AND wloc.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Warehouse location not found');
         return;

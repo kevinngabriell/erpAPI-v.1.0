@@ -1,6 +1,6 @@
 # Sales Invoice API
 
-> **Last updated:** 2026-07-11 15:00:00 WIB
+> **Last updated:** 2026-07-11 18:49:02 WIB
 > **Base URL:** `/api/v2/sales-invoice`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -47,13 +47,16 @@ List all sales invoices belonging to the authenticated company.
         "company_id": "b2c3d4e5-f6a7-4b5c-9d0e-1f2a3b4c5d6e",
         "invoice_display_number": "INV-2026-0001",
         "customer_id": "c3d4e5f6-a7b8-4c5d-0e1f-2a3b4c5d6e7f",
+        "customer_name": "PT Sumber Makmur",
         "sales_order_id": "d4e5f6a7-b8c9-4d5e-1f2a-3b4c5d6e7f8a",
+        "so_display_number": "SO-2026-0001",
         "sales_delivery_id": "e5f6a7b8-c9d0-4e5f-2a3b-4c5d6e7f8a9b",
+        "do_display_number": "DO-2026-0001",
         "invoice_date": "2026-07-05",
         "tax_invoice_number": "010.000-26.00000001",
         "ship_to_address": "Jl. Gatot Subroto No. 2, Jakarta",
         "bill_to_address": "Jl. Sudirman No. 1, Jakarta",
-        "created_by": "budi.santoso",
+        "created_by": "Budi Santoso",
         "created_at": "2026-07-01 10:00:00",
         "updated_by": null,
         "updated_at": null,
@@ -198,13 +201,16 @@ Get detail of a single sales invoice, including its nested `items` array.
     "company_id": "b2c3d4e5-f6a7-4b5c-9d0e-1f2a3b4c5d6e",
     "invoice_display_number": "INV-2026-0001",
     "customer_id": "c3d4e5f6-a7b8-4c5d-0e1f-2a3b4c5d6e7f",
+    "customer_name": "PT Sumber Makmur",
     "sales_order_id": "d4e5f6a7-b8c9-4d5e-1f2a-3b4c5d6e7f8a",
+    "so_display_number": "SO-2026-0001",
     "sales_delivery_id": "e5f6a7b8-c9d0-4e5f-2a3b-4c5d6e7f8a9b",
+    "do_display_number": "DO-2026-0001",
     "invoice_date": "2026-07-05",
     "tax_invoice_number": "010.000-26.00000001",
     "ship_to_address": "Jl. Gatot Subroto No. 2, Jakarta",
     "bill_to_address": "Jl. Sudirman No. 1, Jakarta",
-    "created_by": "budi.santoso",
+    "created_by": "Budi Santoso",
     "created_at": "2026-07-01 10:00:00",
     "updated_by": null,
     "updated_at": null,
@@ -217,7 +223,7 @@ Get detail of a single sales invoice, including its nested `items` array.
         "quantity": 100,
         "unit_price": 50000,
         "tax": 5000,
-        "created_by": "budi.santoso",
+        "created_by": "Budi Santoso",
         "created_at": "2026-07-01 10:00:00",
         "updated_by": null,
         "updated_at": null,
@@ -344,3 +350,5 @@ Soft-deletes the sales invoice (sets `deleted_at`) — it will no longer appear 
 - Create/update/delete write `audit_log` rows with action `created`/`updated`/`deleted`. Query this history via `GET /api/v2/audit-log?module=sales_invoice&reference_id={id}` — see the `audit-log` module doc.
 - The list endpoint (`GET /api/v2/sales-invoice`) does not include the nested `items` array; only the detail endpoint (`GET /api/v2/sales-invoice/{id}`) does. The create response only returns `sales_invoice_id`.
 - No enum constraints are enforced in this module's source code.
+- **List and detail responses now include resolved names alongside their IDs** — `customer_name` (joined from `customer`), `so_display_number` (joined from `sales_order`), and `do_display_number` (joined from `sales_delivery`) are returned next to `customer_id`, `sales_order_id`, and `sales_delivery_id` respectively. The frontend no longer needs a separate lookup call just to display these values in a list or detail view; the IDs are still returned and still required for `PUT`/filter requests. `do_display_number` is `null` whenever `sales_delivery_id` is `null` (it's an optional link); the other two may be `null` only if the referenced record was deleted.
+- **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on both the sales invoice itself and its items. Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.

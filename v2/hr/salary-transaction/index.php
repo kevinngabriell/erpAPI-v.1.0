@@ -8,18 +8,25 @@ function getAllSalaryTransactions($conn, $company_id, $params) {
     $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
     $offset = ($page - 1) * $limit;
 
-    $where = "company_id = '$company_id' AND deleted_at IS NULL";
+    $where = "st.company_id = '$company_id' AND st.deleted_at IS NULL";
     if (isset($params['app_user_id']) && trim($params['app_user_id']) !== '') {
         $app_user_id = mysqli_real_escape_string($conn, $params['app_user_id']);
-        $where .= " AND app_user_id = '$app_user_id'";
+        $where .= " AND st.app_user_id = '$app_user_id'";
     }
     if (isset($params['salary_category_id']) && trim($params['salary_category_id']) !== '') {
         $salary_category_id = mysqli_real_escape_string($conn, $params['salary_category_id']);
-        $where .= " AND salary_category_id = '$salary_category_id'";
+        $where .= " AND st.salary_category_id = '$salary_category_id'";
     }
 
-    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".salary_transaction WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".salary_transaction WHERE $where");
+    $from = APP_SCHEMA . ".salary_transaction st
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = st.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = st.updated_by";
+
+    $result       = mysqli_query($conn, "SELECT st.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE $where ORDER BY st.created_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".salary_transaction st WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -73,7 +80,13 @@ function createSalaryTransaction($conn, $input, $username, $company_id) {
 function getDetailSalaryTransaction($conn, $salary_transaction_id, $company_id) {
     $salary_transaction_id = mysqli_real_escape_string($conn, $salary_transaction_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".salary_transaction WHERE id = '$salary_transaction_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $from   = APP_SCHEMA . ".salary_transaction st
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = st.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = st.updated_by";
+    $result = mysqli_query($conn, "SELECT st.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE st.id = '$salary_transaction_id' AND st.company_id = '$company_id' AND st.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Salary transaction not found');
         return;

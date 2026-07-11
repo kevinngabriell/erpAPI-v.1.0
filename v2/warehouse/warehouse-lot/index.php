@@ -8,18 +8,25 @@ function getAllWarehouseLots($conn, $company_id, $params) {
     $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
     $offset = ($page - 1) * $limit;
 
-    $where = "company_id = '$company_id' AND deleted_at IS NULL";
+    $where = "wl.company_id = '$company_id' AND wl.deleted_at IS NULL";
     if (isset($params['product_id']) && trim($params['product_id']) !== '') {
         $product_id = mysqli_real_escape_string($conn, $params['product_id']);
-        $where .= " AND product_id = '$product_id'";
+        $where .= " AND wl.product_id = '$product_id'";
     }
     if (isset($params['location_id']) && trim($params['location_id']) !== '') {
         $location_id = mysqli_real_escape_string($conn, $params['location_id']);
-        $where .= " AND location_id = '$location_id'";
+        $where .= " AND wl.location_id = '$location_id'";
     }
 
-    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".warehouse_lot WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".warehouse_lot WHERE $where");
+    $from = APP_SCHEMA . ".warehouse_lot wl
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = wl.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = wl.updated_by";
+
+    $result       = mysqli_query($conn, "SELECT wl.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE $where ORDER BY wl.created_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".warehouse_lot wl WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -85,7 +92,13 @@ function createWarehouseLot($conn, $input, $username, $company_id) {
 function getDetailWarehouseLot($conn, $warehouse_lot_id, $company_id) {
     $warehouse_lot_id = mysqli_real_escape_string($conn, $warehouse_lot_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".warehouse_lot WHERE id = '$warehouse_lot_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $from   = APP_SCHEMA . ".warehouse_lot wl
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = wl.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = wl.updated_by";
+    $result = mysqli_query($conn, "SELECT wl.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE wl.id = '$warehouse_lot_id' AND wl.company_id = '$company_id' AND wl.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Warehouse lot not found');
         return;

@@ -10,7 +10,13 @@ function assertSalesOrderBelongsToCompany($conn, $sales_order_id, $company_id) {
 function getAllSalesOrderItems($conn, $sales_order_id, $company_id) {
     assertSalesOrderBelongsToCompany($conn, $sales_order_id, $company_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".sales_order_item WHERE sales_order_id = '$sales_order_id' AND deleted_at IS NULL ORDER BY created_at ASC");
+    $from   = APP_SCHEMA . ".sales_order_item soi
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = soi.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = soi.updated_by";
+    $result = mysqli_query($conn, "SELECT soi.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE soi.sales_order_id = '$sales_order_id' AND soi.deleted_at IS NULL ORDER BY soi.created_at ASC");
 
     if ($result && mysqli_num_rows($result) > 0) {
         jsonResponse(200, 'Sales order items found', ['data' => mysqli_fetch_all($result, MYSQLI_ASSOC)]);
@@ -57,7 +63,13 @@ function getDetailSalesOrderItem($conn, $sales_order_id, $sales_order_item_id, $
 
     $sales_order_item_id = mysqli_real_escape_string($conn, $sales_order_item_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".sales_order_item WHERE id = '$sales_order_item_id' AND sales_order_id = '$sales_order_id' AND deleted_at IS NULL LIMIT 1");
+    $from   = APP_SCHEMA . ".sales_order_item soi
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = soi.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = soi.updated_by";
+    $result = mysqli_query($conn, "SELECT soi.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE soi.id = '$sales_order_item_id' AND soi.sales_order_id = '$sales_order_id' AND soi.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Sales order item not found');
         return;

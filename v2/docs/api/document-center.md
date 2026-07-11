@@ -1,6 +1,6 @@
 # Document Center API
 
-> **Last updated:** 2026-07-06 14:25:00 WIB
+> **Last updated:** 2026-07-11 18:49:02 WIB
 > **Base URL:** `/api/v2/document-center`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -43,7 +43,7 @@ List all documents belonging to the authenticated company.
         "company_id": "b2c3d4e5-f6a7-4b5c-9d0e-1f2a3b4c5d6e",
         "document_name": "Invoice Template 2026",
         "document_file_size": 204800,
-        "created_by": "usr_64a1b2c3",
+        "created_by": "Budi Santoso",
         "created_at": "2026-06-27 10:00:00",
         "updated_by": null,
         "updated_at": null,
@@ -128,7 +128,7 @@ Get detail of a single document.
     "company_id": "b2c3d4e5-f6a7-4b5c-9d0e-1f2a3b4c5d6e",
     "document_name": "Invoice Template 2026",
     "document_file_size": 204800,
-    "created_by": "usr_64a1b2c3",
+    "created_by": "Budi Santoso",
     "created_at": "2026-06-27 10:00:00",
     "updated_by": null,
     "updated_at": null,
@@ -249,3 +249,4 @@ Soft-deletes the document (sets `deleted_at`) — it will no longer appear in li
 - Resource is scoped to the authenticated company (`company_id` from the JWT) — records from other companies are never returned or modifiable.
 - Unlike most other master-data modules in this set, this module has **no duplicate check** on create or update — `document_name` may repeat within a company.
 - This endpoint only stores document metadata (`document_name`, `document_file_size`); it does not accept or return file content.
+- **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a document (list, detail, and any nested items). Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.

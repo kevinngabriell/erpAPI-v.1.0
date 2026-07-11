@@ -31,9 +31,14 @@ function getAllPurchaseReceives($conn, $company_id, $params) {
         $where .= " AND pr.receiving_date <= '$date_to'";
     }
 
-    $from = APP_SCHEMA . ".purchase_receive pr LEFT JOIN " . APP_SCHEMA . ".purchase_order po ON pr.purchase_order_id = po.id";
+    $from = APP_SCHEMA . ".purchase_receive pr LEFT JOIN " . APP_SCHEMA . ".purchase_order po ON pr.purchase_order_id = po.id
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = pr.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = pr.updated_by";
 
-    $result       = mysqli_query($conn, "SELECT pr.* FROM $from WHERE $where ORDER BY pr.created_at DESC LIMIT $limit OFFSET $offset");
+    $result       = mysqli_query($conn, "SELECT pr.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE $where ORDER BY pr.created_at DESC LIMIT $limit OFFSET $offset");
     $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM $from WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
@@ -132,7 +137,13 @@ function createPurchaseReceive($conn, $input, $username, $company_id) {
 function getDetailPurchaseReceive($conn, $purchase_receive_id, $company_id) {
     $purchase_receive_id = mysqli_real_escape_string($conn, $purchase_receive_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".purchase_receive WHERE id = '$purchase_receive_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $from   = APP_SCHEMA . ".purchase_receive pr
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = pr.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = pr.updated_by";
+    $result = mysqli_query($conn, "SELECT pr.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE pr.id = '$purchase_receive_id' AND pr.company_id = '$company_id' AND pr.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Purchase receive not found');
         return;
@@ -140,7 +151,13 @@ function getDetailPurchaseReceive($conn, $purchase_receive_id, $company_id) {
 
     $purchase_receive = mysqli_fetch_assoc($result);
 
-    $items_result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".purchase_receive_item WHERE purchase_receive_id = '$purchase_receive_id' AND deleted_at IS NULL ORDER BY created_at ASC");
+    $items_from   = APP_SCHEMA . ".purchase_receive_item pri
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = pri.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = pri.updated_by";
+    $items_result = mysqli_query($conn, "SELECT pri.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $items_from WHERE pri.purchase_receive_id = '$purchase_receive_id' AND pri.deleted_at IS NULL ORDER BY pri.created_at ASC");
     $purchase_receive['items'] = $items_result ? mysqli_fetch_all($items_result, MYSQLI_ASSOC) : [];
 
     jsonResponse(200, 'Purchase receive found', $purchase_receive);

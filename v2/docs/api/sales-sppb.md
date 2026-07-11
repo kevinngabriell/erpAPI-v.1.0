@@ -1,6 +1,6 @@
 # Sales SPPB API
 
-> **Last updated:** 2026-07-11 15:00:00 WIB
+> **Last updated:** 2026-07-11 18:49:02 WIB
 > **Base URL:** `/api/v2/sales-sppb`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -47,9 +47,11 @@ List all sales SPPBs belonging to the authenticated company.
         "company_id": "b2c3d4e5-f6a7-4b5c-9d0e-1f2a3b4c5d6e",
         "sppb_display_number": "SPPB-2026-0001",
         "sales_order_id": "c3d4e5f6-a7b8-4c5d-0e1f-2a3b4c5d6e7f",
+        "so_display_number": "SO-2026-0001",
         "sppb_date": "2026-07-01",
         "customer_id": "d4e5f6a7-b8c9-4d5e-1f2a-3b4c5d6e7f8a",
-        "created_by": "budi.santoso",
+        "customer_name": "PT Sumber Makmur",
+        "created_by": "Budi Santoso",
         "created_at": "2026-07-01 10:00:00",
         "updated_by": null,
         "updated_at": null,
@@ -184,9 +186,11 @@ Get detail of a single sales SPPB, including its nested `items` array.
     "company_id": "b2c3d4e5-f6a7-4b5c-9d0e-1f2a3b4c5d6e",
     "sppb_display_number": "SPPB-2026-0001",
     "sales_order_id": "c3d4e5f6-a7b8-4c5d-0e1f-2a3b4c5d6e7f",
+    "so_display_number": "SO-2026-0001",
     "sppb_date": "2026-07-01",
     "customer_id": "d4e5f6a7-b8c9-4d5e-1f2a-3b4c5d6e7f8a",
-    "created_by": "budi.santoso",
+    "customer_name": "PT Sumber Makmur",
+    "created_by": "Budi Santoso",
     "created_at": "2026-07-01 10:00:00",
     "updated_by": null,
     "updated_at": null,
@@ -201,7 +205,7 @@ Get detail of a single sales SPPB, including its nested `items` array.
         "quantity": 100,
         "uom_id": "f6a7b8c9-d0e1-4f5a-3b4c-5d6e7f8a9b0c",
         "description": "Handle with care",
-        "created_by": "budi.santoso",
+        "created_by": "Budi Santoso",
         "created_at": "2026-07-01 10:00:00",
         "updated_by": null,
         "updated_at": null,
@@ -326,3 +330,5 @@ Soft-deletes the sales SPPB (sets `deleted_at`) — it will no longer appear in 
 - The list endpoint (`GET /api/v2/sales-sppb`) does not include the nested `items` array; only the detail endpoint (`GET /api/v2/sales-sppb/{id}`) does. The create response only returns `sales_sppb_id`.
 - `sales_order_id` is validated to exist (and belong to the company) on create, but is not an updatable field via `PUT`.
 - No enum-constrained fields were found in this module's source code.
+- **List and detail responses now include resolved names alongside their IDs** — `so_display_number` (joined from `sales_order`) and `customer_name` (joined from `customer`) are returned next to `sales_order_id` and `customer_id` respectively. The frontend no longer needs a separate lookup call just to display these values in a list or detail view; the IDs are still returned and still required for `PUT`/filter requests. Either may be `null` if the referenced record was deleted.
+- **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on both the sales SPPB itself and its items. Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.

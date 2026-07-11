@@ -1,6 +1,6 @@
 # Salary Transaction API
 
-> **Last updated:** 2026-07-06 14:00:00 WIB
+> **Last updated:** 2026-07-11 18:49:02 WIB
 > **Base URL:** `/api/v2/salary-transaction`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -45,7 +45,7 @@ List all salary transactions belonging to the authenticated company.
         "app_user_id": "c3d4e5f6-a7b8-4c5d-0e1f-2a3b4c5d6e7f",
         "salary_category_id": "d4e5f6a7-b8c9-4d5e-1f2a-3b4c5d6e7f8a",
         "salary_amount": 5000000,
-        "created_by": "budi.santoso",
+        "created_by": "Budi Santoso",
         "created_at": "2026-07-01 10:00:00",
         "updated_by": null,
         "updated_at": null,
@@ -152,7 +152,7 @@ Get detail of a single salary transaction.
     "app_user_id": "c3d4e5f6-a7b8-4c5d-0e1f-2a3b4c5d6e7f",
     "salary_category_id": "d4e5f6a7-b8c9-4d5e-1f2a-3b4c5d6e7f8a",
     "salary_amount": 5000000,
-    "created_by": "budi.santoso",
+    "created_by": "Budi Santoso",
     "created_at": "2026-07-01 10:00:00",
     "updated_by": null,
     "updated_at": null,
@@ -288,3 +288,4 @@ Soft-deletes the salary transaction (sets `deleted_at`) — it will no longer ap
 - Create is a single `INSERT` statement — it is not wrapped in a database transaction (no `begin_transaction()`/`commit()`/`rollback()` calls in the source).
 - This module does not currently write any `audit_log` entries — no calls to `insertAuditLog()` exist in its source. There is no corresponding `GET /api/v2/audit-log?module=salary_transaction...` history available at this time.
 - There is no duplicate/uniqueness check on create, so no `409 Conflict` response exists for this module.
+- **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a salary transaction (list, detail, and any nested items). Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.

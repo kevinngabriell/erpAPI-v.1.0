@@ -1,6 +1,6 @@
 # Company Setting Menu API
 
-> **Last updated:** 2026-07-06 14:35:00 WIB
+> **Last updated:** 2026-07-11 18:49:02 WIB
 > **Base URL:** `/api/v2/company-setting-menu`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -49,7 +49,7 @@ List all company setting menus belonging to the authenticated company.
         "setting_image": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...",
         "setting_name": "General",
         "setting_caption": "General company settings",
-        "created_by": "usr_64a1b2c3",
+        "created_by": "Budi Santoso",
         "created_at": "2026-06-27 10:00:00",
         "updated_by": null,
         "updated_at": null,
@@ -140,7 +140,7 @@ Get detail of a single company setting menu.
     "setting_image": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...",
     "setting_name": "General",
     "setting_caption": "General company settings",
-    "created_by": "usr_64a1b2c3",
+    "created_by": "Budi Santoso",
     "created_at": "2026-06-27 10:00:00",
     "updated_by": null,
     "updated_at": null,
@@ -284,7 +284,7 @@ _(No `search` parameter exists for this sub-resource.)_
         "is_data": true,
         "data_url": "/settings/general/company-profile",
         "is_can_new": false,
-        "created_by": "usr_64a1b2c3",
+        "created_by": "Budi Santoso",
         "created_at": "2026-06-27 10:00:00",
         "updated_by": null,
         "updated_at": null,
@@ -392,7 +392,7 @@ Get detail of a single company setting detail record.
     "is_data": true,
     "data_url": "/settings/general/company-profile",
     "is_can_new": false,
-    "created_by": "usr_64a1b2c3",
+    "created_by": "Budi Santoso",
     "created_at": "2026-06-27 10:00:00",
     "updated_by": null,
     "updated_at": null,
@@ -522,3 +522,4 @@ Soft-deletes the company setting detail record (sets `deleted_at`) — it will n
 - Neither `company_setting_menu` nor `company_setting_detail` has a duplicate check on create or update.
 - `company_setting_detail` rows have no `company_id` column of their own — tenant isolation is enforced by requiring the parent `setting_menu_id` to belong to the authenticated company on every sub-resource request.
 - On `PUT /company-setting-menu/{id}`, if the `setting_image` key is included in the request body at all (including `null`, to clear it), the endpoint replaces the image together with whatever `setting_name`/`setting_caption` values are also supplied in the same request; fields omitted from that request keep their existing values.
+- **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a company setting menu (list, detail, and any nested items). Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.

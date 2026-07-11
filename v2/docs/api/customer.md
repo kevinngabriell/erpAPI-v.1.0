@@ -1,6 +1,6 @@
 # Customer API
 
-> **Last updated:** 2026-07-06 14:10:00 WIB
+> **Last updated:** 2026-07-11 18:49:02 WIB
 > **Base URL:** `/api/v2/customer`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -51,7 +51,7 @@ List all customers belonging to the authenticated company.
         "tax_invoice_name": "PT Maju Bersama",
         "tax_invoice_address": "Jl. Sudirman No. 1, Jakarta",
         "credit_limit": 50000000,
-        "created_by": "usr_64a1b2c3",
+        "created_by": "Budi Santoso",
         "created_at": "2026-06-27 10:00:00",
         "updated_by": null,
         "updated_at": null,
@@ -162,7 +162,7 @@ Get detail of a single customer.
     "tax_invoice_name": "PT Maju Bersama",
     "tax_invoice_address": "Jl. Sudirman No. 1, Jakarta",
     "credit_limit": 50000000,
-    "created_by": "usr_64a1b2c3",
+    "created_by": "Budi Santoso",
     "created_at": "2026-06-27 10:00:00",
     "updated_by": null,
     "updated_at": null,
@@ -301,3 +301,4 @@ Soft-deletes the customer (sets `deleted_at`) — it will no longer appear in li
 
 - Resource is scoped to the authenticated company (`company_id` from the JWT) — records from other companies are never returned or modifiable.
 - No fields other than `customer_name` reference other tables — none of the optional fields are validated against other master data.
+- **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a customer (list, detail, and any nested items). Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.

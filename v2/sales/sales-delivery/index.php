@@ -10,29 +10,38 @@ function getAllSalesDeliveries($conn, $company_id, $params) {
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
 
-    $where = "company_id = '$company_id' AND deleted_at IS NULL";
+    $where = "sd.company_id = '$company_id' AND sd.deleted_at IS NULL";
     if ($search) {
-        $where .= " AND do_display_number LIKE '%$search%'";
+        $where .= " AND sd.do_display_number LIKE '%$search%'";
     }
     if (isset($params['customer_id']) && trim($params['customer_id']) !== '') {
         $customer_id = mysqli_real_escape_string($conn, $params['customer_id']);
-        $where .= " AND customer_id = '$customer_id'";
+        $where .= " AND sd.customer_id = '$customer_id'";
     }
     if (isset($params['sales_order_id']) && trim($params['sales_order_id']) !== '') {
         $sales_order_id = mysqli_real_escape_string($conn, $params['sales_order_id']);
-        $where .= " AND sales_order_id = '$sales_order_id'";
+        $where .= " AND sd.sales_order_id = '$sales_order_id'";
     }
     if (isset($params['date_from']) && trim($params['date_from']) !== '') {
         $date_from = mysqli_real_escape_string($conn, $params['date_from']);
-        $where .= " AND delivery_date >= '$date_from'";
+        $where .= " AND sd.delivery_date >= '$date_from'";
     }
     if (isset($params['date_to']) && trim($params['date_to']) !== '') {
         $date_to = mysqli_real_escape_string($conn, $params['date_to']);
-        $where .= " AND delivery_date <= '$date_to'";
+        $where .= " AND sd.delivery_date <= '$date_to'";
     }
 
-    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".sales_delivery WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".sales_delivery WHERE $where");
+    $from = APP_SCHEMA . ".sales_delivery sd
+            LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = sd.customer_id
+            LEFT JOIN " . APP_SCHEMA . ".sales_order so ON so.id = sd.sales_order_id
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = sd.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = sd.updated_by";
+
+    $result       = mysqli_query($conn, "SELECT sd.*, c.customer_name, so.so_display_number,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE $where ORDER BY sd.created_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM $from WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -143,7 +152,15 @@ function createSalesDelivery($conn, $input, $username, $company_id) {
 function getDetailSalesDelivery($conn, $sales_delivery_id, $company_id) {
     $sales_delivery_id = mysqli_real_escape_string($conn, $sales_delivery_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".sales_delivery WHERE id = '$sales_delivery_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $from   = APP_SCHEMA . ".sales_delivery sd
+            LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = sd.customer_id
+            LEFT JOIN " . APP_SCHEMA . ".sales_order so ON so.id = sd.sales_order_id
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = sd.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = sd.updated_by";
+    $result = mysqli_query($conn, "SELECT sd.*, c.customer_name, so.so_display_number,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE sd.id = '$sales_delivery_id' AND sd.company_id = '$company_id' AND sd.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Sales delivery not found');
         return;
@@ -151,7 +168,13 @@ function getDetailSalesDelivery($conn, $sales_delivery_id, $company_id) {
 
     $sales_delivery = mysqli_fetch_assoc($result);
 
-    $items_result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".sales_delivery_item WHERE sales_delivery_id = '$sales_delivery_id' AND deleted_at IS NULL ORDER BY created_at ASC");
+    $items_from   = APP_SCHEMA . ".sales_delivery_item sdi
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = sdi.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = sdi.updated_by";
+    $items_result = mysqli_query($conn, "SELECT sdi.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $items_from WHERE sdi.sales_delivery_id = '$sales_delivery_id' AND sdi.deleted_at IS NULL ORDER BY sdi.created_at ASC");
     $sales_delivery['items'] = $items_result ? mysqli_fetch_all($items_result, MYSQLI_ASSOC) : [];
 
     jsonResponse(200, 'Sales delivery found', $sales_delivery);

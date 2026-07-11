@@ -9,13 +9,20 @@ function getAllPaymentTerms($conn, $params) {
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
 
-    $where = "deleted_at IS NULL";
+    $where = "pt.deleted_at IS NULL";
     if ($search) {
-        $where .= " AND term_name LIKE '%$search%'";
+        $where .= " AND pt.term_name LIKE '%$search%'";
     }
 
-    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".payment_term WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".payment_term WHERE $where");
+    $from = APP_SCHEMA . ".payment_term pt
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = pt.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = pt.updated_by";
+
+    $result       = mysqli_query($conn, "SELECT pt.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE $where ORDER BY pt.created_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".payment_term pt WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -70,7 +77,13 @@ function createPaymentTerm($conn, $input, $username) {
 function getDetailPaymentTerm($conn, $payment_term_id) {
     $payment_term_id = mysqli_real_escape_string($conn, $payment_term_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".payment_term WHERE id = '$payment_term_id' AND deleted_at IS NULL LIMIT 1");
+    $from   = APP_SCHEMA . ".payment_term pt
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = pt.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = pt.updated_by";
+    $result = mysqli_query($conn, "SELECT pt.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE pt.id = '$payment_term_id' AND pt.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Payment term not found');
         return;

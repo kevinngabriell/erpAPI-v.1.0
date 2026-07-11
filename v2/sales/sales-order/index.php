@@ -4,35 +4,54 @@ require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
 require_once __DIR__ . '/../../helpers/audit_log.php';
 
+function getSalesStatusIdByName($conn, $status_name) {
+    $status_name = mysqli_real_escape_string($conn, $status_name);
+    $result = mysqli_query($conn, "SELECT id FROM " . APP_SCHEMA . ".sales_status WHERE status_name = '$status_name' AND deleted_at IS NULL LIMIT 1");
+    $row = $result ? mysqli_fetch_assoc($result) : null;
+    return $row ? $row['id'] : null;
+}
+
 function getAllSalesOrders($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
     $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
 
-    $where = "company_id = '$company_id' AND deleted_at IS NULL";
+    $where = "so.company_id = '$company_id' AND so.deleted_at IS NULL";
     if ($search) {
-        $where .= " AND so_display_number LIKE '%$search%'";
+        $where .= " AND so.so_display_number LIKE '%$search%'";
     }
     if (isset($params['status_id']) && trim($params['status_id']) !== '') {
         $status_id = mysqli_real_escape_string($conn, $params['status_id']);
-        $where .= " AND status_id = '$status_id'";
+        $where .= " AND so.status_id = '$status_id'";
     }
     if (isset($params['customer_id']) && trim($params['customer_id']) !== '') {
         $customer_id = mysqli_real_escape_string($conn, $params['customer_id']);
-        $where .= " AND customer_id = '$customer_id'";
+        $where .= " AND so.customer_id = '$customer_id'";
     }
     if (isset($params['date_from']) && trim($params['date_from']) !== '') {
         $date_from = mysqli_real_escape_string($conn, $params['date_from']);
-        $where .= " AND so_date >= '$date_from'";
+        $where .= " AND so.so_date >= '$date_from'";
     }
     if (isset($params['date_to']) && trim($params['date_to']) !== '') {
         $date_to = mysqli_real_escape_string($conn, $params['date_to']);
-        $where .= " AND so_date <= '$date_to'";
+        $where .= " AND so.so_date <= '$date_to'";
     }
 
-    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".sales_order WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".sales_order WHERE $where");
+    $from = APP_SCHEMA . ".sales_order so
+            LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = so.customer_id
+            LEFT JOIN " . APP_SCHEMA . ".ppn_type pt ON pt.id = so.ppn_type_id
+            LEFT JOIN " . APP_SCHEMA . ".sales_status ss ON ss.id = so.status_id
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = so.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = so.updated_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user au ON au.user_id COLLATE utf8mb4_general_ci = so.approved_by";
+
+    $result       = mysqli_query($conn, "SELECT so.*, c.customer_name, pt.ppn_name, ss.status_name,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by,
+            CONCAT(au.first_name, ' ', au.last_name) AS approved_by
+            FROM $from WHERE $where ORDER BY so.created_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM $from WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -51,7 +70,7 @@ function getAllSalesOrders($conn, $company_id, $params) {
 }
 
 function createSalesOrder($conn, $input, $username, $company_id) {
-    $required = ['so_display_number', 'so_date', 'ppn_type_id', 'customer_id', 'send_date', 'status_id', 'items'];
+    $required = ['so_display_number', 'so_date', 'ppn_type_id', 'customer_id', 'send_date', 'items'];
     foreach ($required as $field) {
         if (!isset($input[$field]) || (is_string($input[$field]) && trim($input[$field]) === '')) {
             jsonResponse(400, "$field is required");
@@ -79,11 +98,16 @@ function createSalesOrder($conn, $input, $username, $company_id) {
     $ppn_type_id        = mysqli_real_escape_string($conn, $input['ppn_type_id']);
     $customer_id        = mysqli_real_escape_string($conn, $input['customer_id']);
     $send_date          = mysqli_real_escape_string($conn, $input['send_date']);
-    $status_id          = mysqli_real_escape_string($conn, $input['status_id']);
 
     $dup = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".sales_order WHERE company_id = '$company_id' AND so_display_number = '$so_display_number' AND deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($dup) > 0) {
         jsonResponse(409, 'Sales order already exists');
+        return;
+    }
+
+    $status_id = getSalesStatusIdByName($conn, 'Draft');
+    if (!$status_id) {
+        jsonResponse(500, 'Default sales status "Draft" is not configured');
         return;
     }
 
@@ -137,7 +161,19 @@ function createSalesOrder($conn, $input, $username, $company_id) {
 function getDetailSalesOrder($conn, $sales_order_id, $company_id) {
     $sales_order_id = mysqli_real_escape_string($conn, $sales_order_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".sales_order WHERE id = '$sales_order_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $from = APP_SCHEMA . ".sales_order so
+            LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = so.customer_id
+            LEFT JOIN " . APP_SCHEMA . ".ppn_type pt ON pt.id = so.ppn_type_id
+            LEFT JOIN " . APP_SCHEMA . ".sales_status ss ON ss.id = so.status_id
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = so.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = so.updated_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user au ON au.user_id COLLATE utf8mb4_general_ci = so.approved_by";
+
+    $result = mysqli_query($conn, "SELECT so.*, c.customer_name, pt.ppn_name, ss.status_name,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by,
+            CONCAT(au.first_name, ' ', au.last_name) AS approved_by
+            FROM $from WHERE so.id = '$sales_order_id' AND so.company_id = '$company_id' AND so.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Sales order not found');
         return;
@@ -145,7 +181,13 @@ function getDetailSalesOrder($conn, $sales_order_id, $company_id) {
 
     $sales_order = mysqli_fetch_assoc($result);
 
-    $items_result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".sales_order_item WHERE sales_order_id = '$sales_order_id' AND deleted_at IS NULL ORDER BY created_at ASC");
+    $items_from   = APP_SCHEMA . ".sales_order_item soi
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = soi.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = soi.updated_by";
+    $items_result = mysqli_query($conn, "SELECT soi.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $items_from WHERE soi.sales_order_id = '$sales_order_id' AND soi.deleted_at IS NULL ORDER BY soi.created_at ASC");
     $sales_order['items'] = $items_result ? mysqli_fetch_all($items_result, MYSQLI_ASSOC) : [];
 
     jsonResponse(200, 'Sales order found', $sales_order);
@@ -162,7 +204,7 @@ function updateSalesOrder($conn, $sales_order_id, $input, $username, $company_id
 
     $updates = [];
 
-    $string_fields = ['so_display_number', 'ppn_type_id', 'customer_id', 'send_to_address', 'status_id'];
+    $string_fields = ['so_display_number', 'ppn_type_id', 'customer_id', 'send_to_address'];
     foreach ($string_fields as $field) {
         if (isset($input[$field])) {
             $val = trim(mysqli_real_escape_string($conn, $input[$field]));
@@ -216,18 +258,18 @@ function deleteSalesOrder($conn, $sales_order_id, $username, $company_id) {
 }
 
 function approveSalesOrder($conn, $sales_order_id, $input, $username, $company_id) {
-    if (!isset($input['status_id']) || trim($input['status_id']) === '') {
-        jsonResponse(400, 'status_id is required');
-        return;
-    }
-
     $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".sales_order WHERE id = '$sales_order_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Sales order not found');
         return;
     }
 
-    $status_id = mysqli_real_escape_string($conn, $input['status_id']);
+    $status_id = getSalesStatusIdByName($conn, 'Approve');
+    if (!$status_id) {
+        jsonResponse(500, 'Sales status "Approve" is not configured');
+        return;
+    }
+
     $now       = date('Y-m-d H:i:s');
     $notes     = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
 
@@ -242,18 +284,18 @@ function approveSalesOrder($conn, $sales_order_id, $input, $username, $company_i
 }
 
 function rejectSalesOrder($conn, $sales_order_id, $input, $username, $company_id) {
-    if (!isset($input['status_id']) || trim($input['status_id']) === '') {
-        jsonResponse(400, 'status_id is required');
-        return;
-    }
-
     $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".sales_order WHERE id = '$sales_order_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Sales order not found');
         return;
     }
 
-    $status_id = mysqli_real_escape_string($conn, $input['status_id']);
+    $status_id = getSalesStatusIdByName($conn, 'Rejected');
+    if (!$status_id) {
+        jsonResponse(500, 'Sales status "Rejected" is not configured');
+        return;
+    }
+
     $now       = date('Y-m-d H:i:s');
     $notes     = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
 
@@ -264,6 +306,40 @@ function rejectSalesOrder($conn, $sales_order_id, $input, $username, $company_id
         jsonResponse(200, 'Sales order rejected successfully');
     } else {
         jsonResponse(500, 'Failed to reject sales order', ['error' => mysqli_error($conn)]);
+    }
+}
+
+function reviseSalesOrder($conn, $sales_order_id, $input, $username, $company_id) {
+    $check = mysqli_query($conn, "SELECT ss.status_name FROM " . APP_SCHEMA . ".sales_order so
+            LEFT JOIN " . APP_SCHEMA . ".sales_status ss ON ss.id = so.status_id
+            WHERE so.id = '$sales_order_id' AND so.company_id = '$company_id' AND so.deleted_at IS NULL LIMIT 1");
+    if (mysqli_num_rows($check) === 0) {
+        jsonResponse(404, 'Sales order not found');
+        return;
+    }
+
+    $sales_order = mysqli_fetch_assoc($check);
+    if ($sales_order['status_name'] !== 'Rejected') {
+        jsonResponse(400, 'Only rejected sales orders can be revised');
+        return;
+    }
+
+    $status_id = getSalesStatusIdByName($conn, 'Draft');
+    if (!$status_id) {
+        jsonResponse(500, 'Default sales status "Draft" is not configured');
+        return;
+    }
+
+    $now       = date('Y-m-d H:i:s');
+    $notes     = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
+
+    if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".sales_order
+            SET status_id = '$status_id', updated_by = '$username', updated_at = '$now'
+            WHERE id = '$sales_order_id' AND company_id = '$company_id'")) {
+        insertAuditLog($conn, $company_id, 'sales_order', $sales_order_id, 'revised', $username, $notes);
+        jsonResponse(200, 'Sales order revised successfully');
+    } else {
+        jsonResponse(500, 'Failed to revise sales order', ['error' => mysqli_error($conn)]);
     }
 }
 
@@ -301,6 +377,10 @@ try {
             case 'reject':
                 if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
                 rejectSalesOrder($conn, $sales_order_id, $input, $username, $company_id);
+                break;
+            case 'revise':
+                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                reviseSalesOrder($conn, $sales_order_id, $input, $username, $company_id);
                 break;
             default:
                 jsonResponse(404, 'Route not found');

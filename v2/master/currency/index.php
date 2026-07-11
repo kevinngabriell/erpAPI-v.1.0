@@ -9,13 +9,20 @@ function getAllCurrencies($conn, $params) {
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
 
-    $where = "deleted_at IS NULL";
+    $where = "cur.deleted_at IS NULL";
     if ($search) {
-        $where .= " AND (currency_code LIKE '%$search%' OR currency_name LIKE '%$search%')";
+        $where .= " AND (cur.currency_code LIKE '%$search%' OR cur.currency_name LIKE '%$search%')";
     }
 
-    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".currency WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".currency WHERE $where");
+    $from = APP_SCHEMA . ".currency cur
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = cur.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = cur.updated_by";
+
+    $result       = mysqli_query($conn, "SELECT cur.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE $where ORDER BY cur.created_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".currency cur WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -71,7 +78,13 @@ function createCurrency($conn, $input, $username) {
 function getDetailCurrency($conn, $currency_id) {
     $currency_id = mysqli_real_escape_string($conn, $currency_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".currency WHERE id = '$currency_id' AND deleted_at IS NULL LIMIT 1");
+    $from   = APP_SCHEMA . ".currency cur
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = cur.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = cur.updated_by";
+    $result = mysqli_query($conn, "SELECT cur.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE cur.id = '$currency_id' AND cur.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Currency not found');
         return;

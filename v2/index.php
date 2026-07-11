@@ -179,6 +179,26 @@ switch ($module) {
         require __DIR__ . '/dashboard/index.php';
         break;
 
+    // ── Reports ──────────────────────────────────────────────────────────────
+    case 'sales-report':
+        require __DIR__ . '/reports/sales-report/index.php';
+        break;
+    case 'ar-ap-report':
+        require __DIR__ . '/reports/ar-ap-report/index.php';
+        break;
+    case 'profit-loss':
+        require __DIR__ . '/reports/profit-loss/index.php';
+        break;
+    case 'balance-sheet':
+        require __DIR__ . '/reports/balance-sheet/index.php';
+        break;
+    case 'general-ledger':
+        require __DIR__ . '/reports/general-ledger/index.php';
+        break;
+    case 'cogs-report':
+        require __DIR__ . '/reports/cogs-report/index.php';
+        break;
+
     default:
         jsonResponse(404, 'Route not found');
 }

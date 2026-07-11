@@ -1,6 +1,6 @@
 # Supplier API
 
-> **Last updated:** 2026-07-06 14:15:00 WIB
+> **Last updated:** 2026-07-11 18:49:02 WIB
 > **Base URL:** `/api/v2/supplier`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -54,7 +54,7 @@ List all suppliers belonging to the authenticated company.
         "npwp": "02.345.678.9-012.000",
         "tax_invoice_name": "CV Sumber Rejeki",
         "tax_invoice_address": "Jl. Gatot Subroto No. 5, Jakarta",
-        "created_by": "usr_64a1b2c3",
+        "created_by": "Budi Santoso",
         "created_at": "2026-06-27 10:00:00",
         "updated_by": null,
         "updated_at": null,
@@ -181,7 +181,7 @@ Get detail of a single supplier.
     "npwp": "02.345.678.9-012.000",
     "tax_invoice_name": "CV Sumber Rejeki",
     "tax_invoice_address": "Jl. Gatot Subroto No. 5, Jakarta",
-    "created_by": "usr_64a1b2c3",
+    "created_by": "Budi Santoso",
     "created_at": "2026-06-27 10:00:00",
     "updated_by": null,
     "updated_at": null,
@@ -326,3 +326,4 @@ Soft-deletes the supplier (sets `deleted_at`) — it will no longer appear in li
 - `supplier_origin_id` must reference an existing, non-deleted row in the `origin` table (global, not company-scoped).
 - `supplier_currency_id` must reference an existing, non-deleted row in the `currency` table (global, not company-scoped).
 - `supplier_term_id` must reference an existing, non-deleted row in the `payment_term` table (global, not company-scoped).
+- **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a supplier (list, detail, and any nested items). Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.

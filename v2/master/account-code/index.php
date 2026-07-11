@@ -9,17 +9,24 @@ function getAllAccountCodes($conn, $company_id, $params) {
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
 
-    $where = "company_id = '$company_id' AND deleted_at IS NULL";
+    $where = "ac.company_id = '$company_id' AND ac.deleted_at IS NULL";
     if ($search) {
-        $where .= " AND (account_code LIKE '%$search%' OR account_code_name LIKE '%$search%')";
+        $where .= " AND (ac.account_code LIKE '%$search%' OR ac.account_code_name LIKE '%$search%')";
     }
     if (isset($params['account_type']) && in_array($params['account_type'], ['asset', 'liability', 'equity', 'revenue', 'expense'], true)) {
         $account_type = mysqli_real_escape_string($conn, $params['account_type']);
-        $where .= " AND account_type = '$account_type'";
+        $where .= " AND ac.account_type = '$account_type'";
     }
 
-    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".account_code WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".account_code WHERE $where");
+    $from = APP_SCHEMA . ".account_code ac
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = ac.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = ac.updated_by";
+
+    $result       = mysqli_query($conn, "SELECT ac.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE $where ORDER BY ac.created_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".account_code ac WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -99,7 +106,13 @@ function createAccountCode($conn, $input, $username, $company_id) {
 function getDetailAccountCode($conn, $account_code_id, $company_id) {
     $account_code_id = mysqli_real_escape_string($conn, $account_code_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".account_code WHERE id = '$account_code_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $from   = APP_SCHEMA . ".account_code ac
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = ac.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = ac.updated_by";
+    $result = mysqli_query($conn, "SELECT ac.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE ac.id = '$account_code_id' AND ac.company_id = '$company_id' AND ac.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Account code not found');
         return;

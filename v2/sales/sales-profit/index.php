@@ -31,9 +31,16 @@ function getAllSalesProfits($conn, $company_id, $params) {
         $where .= " AND sp.created_at <= '$date_to 23:59:59'";
     }
 
-    $from = APP_SCHEMA . ".sales_profit sp LEFT JOIN " . APP_SCHEMA . ".sales_order so ON sp.sales_order_id = so.id";
+    $from = APP_SCHEMA . ".sales_profit sp
+            LEFT JOIN " . APP_SCHEMA . ".sales_order so ON so.id = sp.sales_order_id
+            LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = sp.customer_id
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = sp.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = sp.updated_by";
 
-    $result       = mysqli_query($conn, "SELECT sp.* FROM $from WHERE $where ORDER BY sp.created_at DESC LIMIT $limit OFFSET $offset");
+    $result       = mysqli_query($conn, "SELECT sp.*, so.so_display_number, c.customer_name,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE $where ORDER BY sp.created_at DESC LIMIT $limit OFFSET $offset");
     $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM $from WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
@@ -129,7 +136,15 @@ function createSalesProfit($conn, $input, $username, $company_id) {
 function getDetailSalesProfit($conn, $sales_profit_id, $company_id) {
     $sales_profit_id = mysqli_real_escape_string($conn, $sales_profit_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".sales_profit WHERE id = '$sales_profit_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $from   = APP_SCHEMA . ".sales_profit sp
+            LEFT JOIN " . APP_SCHEMA . ".sales_order so ON so.id = sp.sales_order_id
+            LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = sp.customer_id
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = sp.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = sp.updated_by";
+    $result = mysqli_query($conn, "SELECT sp.*, so.so_display_number, c.customer_name,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE sp.id = '$sales_profit_id' AND sp.company_id = '$company_id' AND sp.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Sales profit not found');
         return;
@@ -137,7 +152,13 @@ function getDetailSalesProfit($conn, $sales_profit_id, $company_id) {
 
     $sales_profit = mysqli_fetch_assoc($result);
 
-    $items_result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".sales_profit_item WHERE sales_profit_id = '$sales_profit_id' AND deleted_at IS NULL ORDER BY created_at ASC");
+    $items_from   = APP_SCHEMA . ".sales_profit_item spi
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = spi.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = spi.updated_by";
+    $items_result = mysqli_query($conn, "SELECT spi.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $items_from WHERE spi.sales_profit_id = '$sales_profit_id' AND spi.deleted_at IS NULL ORDER BY spi.created_at ASC");
     $sales_profit['items'] = $items_result ? mysqli_fetch_all($items_result, MYSQLI_ASSOC) : [];
 
     jsonResponse(200, 'Sales profit found', $sales_profit);

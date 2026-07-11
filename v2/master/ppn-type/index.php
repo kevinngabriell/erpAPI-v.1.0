@@ -9,13 +9,20 @@ function getAllPpnTypes($conn, $params) {
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
 
-    $where = "deleted_at IS NULL";
+    $where = "pt.deleted_at IS NULL";
     if ($search) {
-        $where .= " AND ppn_name LIKE '%$search%'";
+        $where .= " AND pt.ppn_name LIKE '%$search%'";
     }
 
-    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".ppn_type WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".ppn_type WHERE $where");
+    $from = APP_SCHEMA . ".ppn_type pt
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = pt.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = pt.updated_by";
+
+    $result       = mysqli_query($conn, "SELECT pt.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE $where ORDER BY pt.created_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".ppn_type pt WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -70,7 +77,13 @@ function createPpnType($conn, $input, $username) {
 function getDetailPpnType($conn, $ppn_type_id) {
     $ppn_type_id = mysqli_real_escape_string($conn, $ppn_type_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".ppn_type WHERE id = '$ppn_type_id' AND deleted_at IS NULL LIMIT 1");
+    $from   = APP_SCHEMA . ".ppn_type pt
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = pt.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = pt.updated_by";
+    $result = mysqli_query($conn, "SELECT pt.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE pt.id = '$ppn_type_id' AND pt.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Ppn type not found');
         return;

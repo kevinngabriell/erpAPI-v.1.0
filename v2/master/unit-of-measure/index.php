@@ -9,13 +9,20 @@ function getAllUnitOfMeasures($conn, $params) {
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
 
-    $where = "deleted_at IS NULL";
+    $where = "uom.deleted_at IS NULL";
     if ($search) {
-        $where .= " AND uom_name LIKE '%$search%'";
+        $where .= " AND uom.uom_name LIKE '%$search%'";
     }
 
-    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".unit_of_measure WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".unit_of_measure WHERE $where");
+    $from = APP_SCHEMA . ".unit_of_measure uom
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = uom.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = uom.updated_by";
+
+    $result       = mysqli_query($conn, "SELECT uom.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE $where ORDER BY uom.created_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".unit_of_measure uom WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -70,7 +77,13 @@ function createUnitOfMeasure($conn, $input, $username) {
 function getDetailUnitOfMeasure($conn, $unit_of_measure_id) {
     $unit_of_measure_id = mysqli_real_escape_string($conn, $unit_of_measure_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".unit_of_measure WHERE id = '$unit_of_measure_id' AND deleted_at IS NULL LIMIT 1");
+    $from   = APP_SCHEMA . ".unit_of_measure uom
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = uom.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = uom.updated_by";
+    $result = mysqli_query($conn, "SELECT uom.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE uom.id = '$unit_of_measure_id' AND uom.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Unit of measure not found');
         return;

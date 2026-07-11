@@ -9,13 +9,20 @@ function getAllRegions($conn, $params) {
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
 
-    $where = "deleted_at IS NULL";
+    $where = "r.deleted_at IS NULL";
     if ($search) {
-        $where .= " AND region_name LIKE '%$search%'";
+        $where .= " AND r.region_name LIKE '%$search%'";
     }
 
-    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".region WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".region WHERE $where");
+    $from = APP_SCHEMA . ".region r
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = r.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = r.updated_by";
+
+    $result       = mysqli_query($conn, "SELECT r.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE $where ORDER BY r.created_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".region r WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -66,7 +73,13 @@ function createRegion($conn, $input, $username) {
 function getDetailRegion($conn, $region_id, $company_id) {
     $region_id = mysqli_real_escape_string($conn, $region_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".region WHERE id = '$region_id' AND deleted_at IS NULL LIMIT 1");
+    $from   = APP_SCHEMA . ".region r
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = r.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = r.updated_by";
+    $result = mysqli_query($conn, "SELECT r.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE r.id = '$region_id' AND r.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Region not found');
         return;

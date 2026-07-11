@@ -9,17 +9,24 @@ function getAllOrigins($conn, $params) {
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
 
-    $where = "deleted_at IS NULL";
+    $where = "o.deleted_at IS NULL";
     if ($search) {
-        $where .= " AND origin_name LIKE '%$search%'";
+        $where .= " AND o.origin_name LIKE '%$search%'";
     }
     if (isset($params['region_id']) && trim($params['region_id']) !== '') {
         $region_id = mysqli_real_escape_string($conn, $params['region_id']);
-        $where .= " AND region_id = '$region_id'";
+        $where .= " AND o.region_id = '$region_id'";
     }
 
-    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".origin WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".origin WHERE $where");
+    $from = APP_SCHEMA . ".origin o
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = o.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = o.updated_by";
+
+    $result       = mysqli_query($conn, "SELECT o.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE $where ORDER BY o.created_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".origin o WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -82,7 +89,13 @@ function createOrigin($conn, $input, $username) {
 function getDetailOrigin($conn, $origin_id) {
     $origin_id = mysqli_real_escape_string($conn, $origin_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".origin WHERE id = '$origin_id' AND deleted_at IS NULL LIMIT 1");
+    $from   = APP_SCHEMA . ".origin o
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = o.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = o.updated_by";
+    $result = mysqli_query($conn, "SELECT o.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE o.id = '$origin_id' AND o.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Origin not found');
         return;

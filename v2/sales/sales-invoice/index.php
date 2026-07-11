@@ -10,29 +10,39 @@ function getAllSalesInvoices($conn, $company_id, $params) {
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
 
-    $where = "company_id = '$company_id' AND deleted_at IS NULL";
+    $where = "si.company_id = '$company_id' AND si.deleted_at IS NULL";
     if ($search) {
-        $where .= " AND invoice_display_number LIKE '%$search%'";
+        $where .= " AND si.invoice_display_number LIKE '%$search%'";
     }
     if (isset($params['customer_id']) && trim($params['customer_id']) !== '') {
         $customer_id = mysqli_real_escape_string($conn, $params['customer_id']);
-        $where .= " AND customer_id = '$customer_id'";
+        $where .= " AND si.customer_id = '$customer_id'";
     }
     if (isset($params['sales_order_id']) && trim($params['sales_order_id']) !== '') {
         $sales_order_id = mysqli_real_escape_string($conn, $params['sales_order_id']);
-        $where .= " AND sales_order_id = '$sales_order_id'";
+        $where .= " AND si.sales_order_id = '$sales_order_id'";
     }
     if (isset($params['date_from']) && trim($params['date_from']) !== '') {
         $date_from = mysqli_real_escape_string($conn, $params['date_from']);
-        $where .= " AND invoice_date >= '$date_from'";
+        $where .= " AND si.invoice_date >= '$date_from'";
     }
     if (isset($params['date_to']) && trim($params['date_to']) !== '') {
         $date_to = mysqli_real_escape_string($conn, $params['date_to']);
-        $where .= " AND invoice_date <= '$date_to'";
+        $where .= " AND si.invoice_date <= '$date_to'";
     }
 
-    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".sales_invoice WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".sales_invoice WHERE $where");
+    $from = APP_SCHEMA . ".sales_invoice si
+            LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = si.customer_id
+            LEFT JOIN " . APP_SCHEMA . ".sales_order so ON so.id = si.sales_order_id
+            LEFT JOIN " . APP_SCHEMA . ".sales_delivery sdel ON sdel.id = si.sales_delivery_id
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = si.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = si.updated_by";
+
+    $result       = mysqli_query($conn, "SELECT si.*, c.customer_name, so.so_display_number, sdel.do_display_number,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE $where ORDER BY si.created_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM $from WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -153,7 +163,16 @@ function createSalesInvoice($conn, $input, $username, $company_id) {
 function getDetailSalesInvoice($conn, $sales_invoice_id, $company_id) {
     $sales_invoice_id = mysqli_real_escape_string($conn, $sales_invoice_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".sales_invoice WHERE id = '$sales_invoice_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $from   = APP_SCHEMA . ".sales_invoice si
+            LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = si.customer_id
+            LEFT JOIN " . APP_SCHEMA . ".sales_order so ON so.id = si.sales_order_id
+            LEFT JOIN " . APP_SCHEMA . ".sales_delivery sdel ON sdel.id = si.sales_delivery_id
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = si.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = si.updated_by";
+    $result = mysqli_query($conn, "SELECT si.*, c.customer_name, so.so_display_number, sdel.do_display_number,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE si.id = '$sales_invoice_id' AND si.company_id = '$company_id' AND si.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Sales invoice not found');
         return;
@@ -161,7 +180,13 @@ function getDetailSalesInvoice($conn, $sales_invoice_id, $company_id) {
 
     $sales_invoice = mysqli_fetch_assoc($result);
 
-    $items_result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".sales_invoice_item WHERE sales_invoice_id = '$sales_invoice_id' AND deleted_at IS NULL ORDER BY created_at ASC");
+    $items_from   = APP_SCHEMA . ".sales_invoice_item sii
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = sii.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = sii.updated_by";
+    $items_result = mysqli_query($conn, "SELECT sii.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $items_from WHERE sii.sales_invoice_id = '$sales_invoice_id' AND sii.deleted_at IS NULL ORDER BY sii.created_at ASC");
     $sales_invoice['items'] = $items_result ? mysqli_fetch_all($items_result, MYSQLI_ASSOC) : [];
 
     jsonResponse(200, 'Sales invoice found', $sales_invoice);

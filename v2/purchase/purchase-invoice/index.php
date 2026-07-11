@@ -10,25 +10,32 @@ function getAllPurchaseInvoices($conn, $company_id, $params) {
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
 
-    $where = "company_id = '$company_id' AND deleted_at IS NULL";
+    $where = "pi.company_id = '$company_id' AND pi.deleted_at IS NULL";
     if ($search) {
-        $where .= " AND invoice_display_number LIKE '%$search%'";
+        $where .= " AND pi.invoice_display_number LIKE '%$search%'";
     }
     if (isset($params['supplier_id']) && trim($params['supplier_id']) !== '') {
         $supplier_id = mysqli_real_escape_string($conn, $params['supplier_id']);
-        $where .= " AND supplier_id = '$supplier_id'";
+        $where .= " AND pi.supplier_id = '$supplier_id'";
     }
     if (isset($params['date_from']) && trim($params['date_from']) !== '') {
         $date_from = mysqli_real_escape_string($conn, $params['date_from']);
-        $where .= " AND invoice_date >= '$date_from'";
+        $where .= " AND pi.invoice_date >= '$date_from'";
     }
     if (isset($params['date_to']) && trim($params['date_to']) !== '') {
         $date_to = mysqli_real_escape_string($conn, $params['date_to']);
-        $where .= " AND invoice_date <= '$date_to'";
+        $where .= " AND pi.invoice_date <= '$date_to'";
     }
 
-    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".purchase_invoice WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".purchase_invoice WHERE $where");
+    $from = APP_SCHEMA . ".purchase_invoice pi
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = pi.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = pi.updated_by";
+
+    $result       = mysqli_query($conn, "SELECT pi.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE $where ORDER BY pi.created_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM $from WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -138,7 +145,13 @@ function createPurchaseInvoice($conn, $input, $username, $company_id) {
 function getDetailPurchaseInvoice($conn, $purchase_invoice_id, $company_id) {
     $purchase_invoice_id = mysqli_real_escape_string($conn, $purchase_invoice_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".purchase_invoice WHERE id = '$purchase_invoice_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $from   = APP_SCHEMA . ".purchase_invoice pi
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = pi.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = pi.updated_by";
+    $result = mysqli_query($conn, "SELECT pi.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE pi.id = '$purchase_invoice_id' AND pi.company_id = '$company_id' AND pi.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Purchase invoice not found');
         return;
@@ -146,7 +159,13 @@ function getDetailPurchaseInvoice($conn, $purchase_invoice_id, $company_id) {
 
     $purchase_invoice = mysqli_fetch_assoc($result);
 
-    $items_result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".purchase_invoice_item WHERE purchase_invoice_id = '$purchase_invoice_id' AND deleted_at IS NULL ORDER BY created_at ASC");
+    $items_from   = APP_SCHEMA . ".purchase_invoice_item pii
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = pii.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = pii.updated_by";
+    $items_result = mysqli_query($conn, "SELECT pii.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $items_from WHERE pii.purchase_invoice_id = '$purchase_invoice_id' AND pii.deleted_at IS NULL ORDER BY pii.created_at ASC");
     $purchase_invoice['items'] = $items_result ? mysqli_fetch_all($items_result, MYSQLI_ASSOC) : [];
 
     jsonResponse(200, 'Purchase invoice found', $purchase_invoice);

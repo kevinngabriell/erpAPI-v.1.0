@@ -8,14 +8,21 @@ function getAllSalesTargets($conn, $company_id, $params) {
     $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
     $offset = ($page - 1) * $limit;
 
-    $where = "company_id = '$company_id' AND deleted_at IS NULL";
+    $where = "st.company_id = '$company_id' AND st.deleted_at IS NULL";
     if (isset($params['target_year']) && trim($params['target_year']) !== '') {
         $target_year = (int)$params['target_year'];
-        $where .= " AND target_year = $target_year";
+        $where .= " AND st.target_year = $target_year";
     }
 
-    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".sales_target WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".sales_target WHERE $where");
+    $from = APP_SCHEMA . ".sales_target st
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = st.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = st.updated_by";
+
+    $result       = mysqli_query($conn, "SELECT st.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE $where ORDER BY st.created_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".sales_target st WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -72,7 +79,13 @@ function createSalesTarget($conn, $input, $username, $company_id) {
 function getDetailSalesTarget($conn, $sales_target_id, $company_id) {
     $sales_target_id = mysqli_real_escape_string($conn, $sales_target_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".sales_target WHERE id = '$sales_target_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $from   = APP_SCHEMA . ".sales_target st
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = st.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = st.updated_by";
+    $result = mysqli_query($conn, "SELECT st.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE st.id = '$sales_target_id' AND st.company_id = '$company_id' AND st.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Sales target not found');
         return;

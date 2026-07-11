@@ -1,6 +1,6 @@
 # Document Watermark API
 
-> **Last updated:** 2026-07-06 14:30:00 WIB
+> **Last updated:** 2026-07-11 18:49:02 WIB
 > **Base URL:** `/api/v2/document-watermark`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -43,7 +43,7 @@ _(No `search` parameter exists for this module.)_
         "id": "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",
         "company_id": "b2c3d4e5-f6a7-4b5c-9d0e-1f2a3b4c5d6e",
         "watermark": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...",
-        "created_by": "usr_64a1b2c3",
+        "created_by": "Budi Santoso",
         "created_at": "2026-06-27 10:00:00",
         "updated_by": null,
         "updated_at": null,
@@ -128,7 +128,7 @@ Get detail of a single document watermark.
     "id": "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",
     "company_id": "b2c3d4e5-f6a7-4b5c-9d0e-1f2a3b4c5d6e",
     "watermark": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...",
-    "created_by": "usr_64a1b2c3",
+    "created_by": "Budi Santoso",
     "created_at": "2026-06-27 10:00:00",
     "updated_by": null,
     "updated_at": null,
@@ -251,3 +251,4 @@ Soft-deletes the document watermark (sets `deleted_at`) — it will no longer ap
 - **`watermark` is stored as raw binary (BLOB) in the database.** In every request and every response body it is transmitted as a **base64-encoded string** — encode before sending, decode after receiving. The API never returns raw binary in the JSON payload.
 - This module has no duplicate check on create or update — a company may have multiple watermark records.
 - `PUT` requires `watermark` to be present and non-empty; there is no partial-update path for this module (unlike other modules where PUT accepts any subset of fields).
+- **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a document watermark (list, detail, and any nested items). Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.

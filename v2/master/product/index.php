@@ -9,13 +9,20 @@ function getAllProducts($conn, $company_id, $params) {
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
 
-    $where = "company_id = '$company_id' AND deleted_at IS NULL";
+    $where = "p.company_id = '$company_id' AND p.deleted_at IS NULL";
     if ($search) {
-        $where .= " AND (product_name LIKE '%$search%' OR hs_code LIKE '%$search%')";
+        $where .= " AND (p.product_name LIKE '%$search%' OR p.hs_code LIKE '%$search%')";
     }
 
-    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".product WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".product WHERE $where");
+    $from = APP_SCHEMA . ".product p
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = p.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = p.updated_by";
+
+    $result       = mysqli_query($conn, "SELECT p.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE $where ORDER BY p.created_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".product p WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -73,7 +80,13 @@ function createProduct($conn, $input, $username, $company_id) {
 function getDetailProduct($conn, $product_id, $company_id) {
     $product_id = mysqli_real_escape_string($conn, $product_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".product WHERE id = '$product_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $from   = APP_SCHEMA . ".product p
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = p.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = p.updated_by";
+    $result = mysqli_query($conn, "SELECT p.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE p.id = '$product_id' AND p.company_id = '$company_id' AND p.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Product not found');
         return;

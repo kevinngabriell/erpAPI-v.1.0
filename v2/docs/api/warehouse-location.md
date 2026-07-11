@@ -1,6 +1,6 @@
 # Warehouse Location API
 
-> **Last updated:** 2026-07-06 14:45:00 WIB
+> **Last updated:** 2026-07-11 18:49:02 WIB
 > **Base URL:** `/api/v2/warehouse-location`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -43,7 +43,7 @@ List all warehouse locations belonging to the authenticated company.
         "company_id": "b2c3d4e5-f6a7-4b5c-9d0e-1f2a3b4c5d6e",
         "location_name": "Gudang Cikarang",
         "address": "Jl. Industri Raya No. 10, Cikarang",
-        "created_by": "usr_64a1b2c3",
+        "created_by": "Budi Santoso",
         "created_at": "2026-06-27 10:00:00",
         "updated_by": null,
         "updated_at": null,
@@ -138,7 +138,7 @@ Get detail of a single warehouse location.
     "company_id": "b2c3d4e5-f6a7-4b5c-9d0e-1f2a3b4c5d6e",
     "location_name": "Gudang Cikarang",
     "address": "Jl. Industri Raya No. 10, Cikarang",
-    "created_by": "usr_64a1b2c3",
+    "created_by": "Budi Santoso",
     "created_at": "2026-06-27 10:00:00",
     "updated_by": null,
     "updated_at": null,
@@ -269,3 +269,4 @@ Soft-deletes the warehouse location (sets `deleted_at`) — it will no longer ap
 
 - Resource is scoped to the authenticated company (`company_id` from the JWT) — records from other companies are never returned or modifiable.
 - No fields other than `location_name` reference other tables.
+- **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a warehouse location (list, detail, and any nested items). Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.

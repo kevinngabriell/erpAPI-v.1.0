@@ -10,21 +10,28 @@ function getAllFinancePayments($conn, $company_id, $params) {
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
 
-    $where = "company_id = '$company_id' AND deleted_at IS NULL";
+    $where = "fp.company_id = '$company_id' AND fp.deleted_at IS NULL";
     if ($search) {
-        $where .= " AND invoice_number LIKE '%$search%'";
+        $where .= " AND fp.invoice_number LIKE '%$search%'";
     }
     if (isset($params['customer_id']) && trim($params['customer_id']) !== '') {
         $customer_id = mysqli_real_escape_string($conn, $params['customer_id']);
-        $where .= " AND customer_id = '$customer_id'";
+        $where .= " AND fp.customer_id = '$customer_id'";
     }
     if (isset($params['supplier_id']) && trim($params['supplier_id']) !== '') {
         $supplier_id = mysqli_real_escape_string($conn, $params['supplier_id']);
-        $where .= " AND supplier_id = '$supplier_id'";
+        $where .= " AND fp.supplier_id = '$supplier_id'";
     }
 
-    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".finance_payment WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".finance_payment WHERE $where");
+    $from = APP_SCHEMA . ".finance_payment fp
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = fp.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = fp.updated_by";
+
+    $result       = mysqli_query($conn, "SELECT fp.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE $where ORDER BY fp.created_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".finance_payment fp WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -108,7 +115,13 @@ function createFinancePayment($conn, $input, $username, $company_id) {
 function getDetailFinancePayment($conn, $finance_payment_id, $company_id) {
     $finance_payment_id = mysqli_real_escape_string($conn, $finance_payment_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".finance_payment WHERE id = '$finance_payment_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $from   = APP_SCHEMA . ".finance_payment fp
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = fp.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = fp.updated_by";
+    $result = mysqli_query($conn, "SELECT fp.*,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $from WHERE fp.id = '$finance_payment_id' AND fp.company_id = '$company_id' AND fp.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Finance payment not found');
         return;

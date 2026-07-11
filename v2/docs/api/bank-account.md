@@ -1,6 +1,6 @@
 # Bank Account API
 
-> **Last updated:** 2026-07-06 14:05:00 WIB
+> **Last updated:** 2026-07-11 18:49:02 WIB
 > **Base URL:** `/api/v2/bank-account`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -47,7 +47,7 @@ List all bank accounts belonging to the authenticated company.
         "bank_branch": "Jakarta Sudirman",
         "currency_id": "c3d4e5f6-a7b8-4c5d-9e0f-1a2b3c4d5e6f",
         "is_primary": true,
-        "created_by": "usr_64a1b2c3",
+        "created_by": "Budi Santoso",
         "created_at": "2026-06-27 10:00:00",
         "updated_by": null,
         "updated_at": null,
@@ -158,7 +158,7 @@ Get detail of a single bank account.
     "bank_branch": "Jakarta Sudirman",
     "currency_id": "c3d4e5f6-a7b8-4c5d-9e0f-1a2b3c4d5e6f",
     "is_primary": true,
-    "created_by": "usr_64a1b2c3",
+    "created_by": "Budi Santoso",
     "created_at": "2026-06-27 10:00:00",
     "updated_by": null,
     "updated_at": null,
@@ -295,3 +295,4 @@ Soft-deletes the bank account (sets `deleted_at`) — it will no longer appear i
 - Resource is scoped to the authenticated company (`company_id` from the JWT) — records from other companies are never returned or modifiable.
 - `is_primary` is returned as `true`/`false`.
 - `currency_id` must reference an existing, non-deleted row in the `currency` table.
+- **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a bank account (list, detail, and any nested items). Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.
