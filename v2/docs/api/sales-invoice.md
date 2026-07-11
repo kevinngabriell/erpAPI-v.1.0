@@ -1,6 +1,6 @@
 # Sales Invoice API
 
-> **Last updated:** 2026-07-06 14:00:00 WIB
+> **Last updated:** 2026-07-11 15:00:00 WIB
 > **Base URL:** `/api/v2/sales-invoice`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -31,6 +31,8 @@ List all sales invoices belonging to the authenticated company.
 | search         | string | No       | —       | Search on `invoice_display_number` |
 | customer_id    | string | No       | —       | Filter by `customer_id` |
 | sales_order_id | string | No       | —       | Filter by `sales_order_id` |
+| date_from      | string (date) | No | —    | Filter `invoice_date >=` this date (`YYYY-MM-DD`) |
+| date_to        | string (date) | No | —    | Filter `invoice_date <=` this date (`YYYY-MM-DD`) |
 
 #### Response `200 OK`
 

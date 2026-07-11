@@ -8,19 +8,33 @@ function getAllSalesProfits($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
     $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
     $offset = ($page - 1) * $limit;
+    $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
 
-    $where = "company_id = '$company_id' AND deleted_at IS NULL";
+    $where = "sp.company_id = '$company_id' AND sp.deleted_at IS NULL";
+    if ($search) {
+        $where .= " AND so.so_display_number LIKE '%$search%'";
+    }
     if (isset($params['customer_id']) && trim($params['customer_id']) !== '') {
         $customer_id = mysqli_real_escape_string($conn, $params['customer_id']);
-        $where .= " AND customer_id = '$customer_id'";
+        $where .= " AND sp.customer_id = '$customer_id'";
     }
     if (isset($params['sales_order_id']) && trim($params['sales_order_id']) !== '') {
         $sales_order_id = mysqli_real_escape_string($conn, $params['sales_order_id']);
-        $where .= " AND sales_order_id = '$sales_order_id'";
+        $where .= " AND sp.sales_order_id = '$sales_order_id'";
+    }
+    if (isset($params['date_from']) && trim($params['date_from']) !== '') {
+        $date_from = mysqli_real_escape_string($conn, $params['date_from']);
+        $where .= " AND sp.created_at >= '$date_from 00:00:00'";
+    }
+    if (isset($params['date_to']) && trim($params['date_to']) !== '') {
+        $date_to = mysqli_real_escape_string($conn, $params['date_to']);
+        $where .= " AND sp.created_at <= '$date_to 23:59:59'";
     }
 
-    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".sales_profit WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".sales_profit WHERE $where");
+    $from = APP_SCHEMA . ".sales_profit sp LEFT JOIN " . APP_SCHEMA . ".sales_order so ON sp.sales_order_id = so.id";
+
+    $result       = mysqli_query($conn, "SELECT sp.* FROM $from WHERE $where ORDER BY sp.created_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM $from WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {

@@ -8,19 +8,33 @@ function getAllPurchaseReceives($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
     $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
     $offset = ($page - 1) * $limit;
+    $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
 
-    $where = "company_id = '$company_id' AND deleted_at IS NULL";
+    $where = "pr.company_id = '$company_id' AND pr.deleted_at IS NULL";
+    if ($search) {
+        $where .= " AND po.po_display_number LIKE '%$search%'";
+    }
     if (isset($params['purchase_order_id']) && trim($params['purchase_order_id']) !== '') {
         $purchase_order_id = mysqli_real_escape_string($conn, $params['purchase_order_id']);
-        $where .= " AND purchase_order_id = '$purchase_order_id'";
+        $where .= " AND pr.purchase_order_id = '$purchase_order_id'";
     }
     if (isset($params['supplier_id']) && trim($params['supplier_id']) !== '') {
         $supplier_id = mysqli_real_escape_string($conn, $params['supplier_id']);
-        $where .= " AND supplier_id = '$supplier_id'";
+        $where .= " AND pr.supplier_id = '$supplier_id'";
+    }
+    if (isset($params['date_from']) && trim($params['date_from']) !== '') {
+        $date_from = mysqli_real_escape_string($conn, $params['date_from']);
+        $where .= " AND pr.receiving_date >= '$date_from'";
+    }
+    if (isset($params['date_to']) && trim($params['date_to']) !== '') {
+        $date_to = mysqli_real_escape_string($conn, $params['date_to']);
+        $where .= " AND pr.receiving_date <= '$date_to'";
     }
 
-    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".purchase_receive WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".purchase_receive WHERE $where");
+    $from = APP_SCHEMA . ".purchase_receive pr LEFT JOIN " . APP_SCHEMA . ".purchase_order po ON pr.purchase_order_id = po.id";
+
+    $result       = mysqli_query($conn, "SELECT pr.* FROM $from WHERE $where ORDER BY pr.created_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM $from WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {

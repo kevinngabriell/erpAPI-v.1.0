@@ -1,6 +1,6 @@
 # Sales Profit API
 
-> **Last updated:** 2026-07-06 14:00:00 WIB
+> **Last updated:** 2026-07-11 15:00:00 WIB
 > **Base URL:** `/api/v2/sales-profit`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -28,8 +28,11 @@ List all sales profit records belonging to the authenticated company.
 |----------------|--------|----------|---------|-------------|
 | page           | int    | No       | 1       | Page number |
 | limit          | int    | No       | 10      | Items per page (max 100) |
+| search         | string | No       | —       | Search on the linked sales order's `so_display_number` (left-joined) |
 | customer_id    | string | No       | —       | Filter by `customer_id` |
 | sales_order_id | string | No       | —       | Filter by `sales_order_id` |
+| date_from      | string (date) | No | —    | Filter `created_at >=` this date (`YYYY-MM-DD`, start of day) |
+| date_to        | string (date) | No | —    | Filter `created_at <=` this date (`YYYY-MM-DD`, end of day) |
 
 #### Response `200 OK`
 
@@ -313,3 +316,4 @@ Soft-deletes the sales profit (sets `deleted_at`) — it will no longer appear i
 - Unlike sales SPPB, this module has no unique display-number field and no duplicate (409) check on create.
 - `price` and `landed_cost` are stored exactly as submitted by the client — the API does not calculate a profit or margin field anywhere in this module; any profit/margin figure must be derived by the consumer from `price` and `landed_cost`.
 - No enum-constrained fields were found in this module's source code.
+- `search` is matched against the linked sales order's `so_display_number` via a `LEFT JOIN`, not against any field on the sales profit record itself — sales profit rows have no display number of their own. Records whose `sales_order_id` no longer resolves to a sales order are excluded from `search` results (but still returned when `search` is omitted).

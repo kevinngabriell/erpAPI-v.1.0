@@ -1,6 +1,6 @@
 # Purchase Order API
 
-> **Last updated:** 2026-07-06 14:00:00 WIB
+> **Last updated:** 2026-07-11 15:00:00 WIB
 > **Base URL:** `/api/v2/purchase-order`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -38,6 +38,8 @@ List all purchase orders belonging to the authenticated company.
 | search      | string | No       | —       | Search on `po_display_number` |
 | status_id   | string | No       | —       | Filter by `status_id` |
 | supplier_id | string | No       | —       | Filter by `supplier_id` |
+| date_from   | string (date) | No | —    | Filter `po_date >=` this date (`YYYY-MM-DD`) |
+| date_to     | string (date) | No | —    | Filter `po_date <=` this date (`YYYY-MM-DD`) |
 
 #### Response `200 OK`
 

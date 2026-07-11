@@ -1,6 +1,6 @@
 # Sales Order API
 
-> **Last updated:** 2026-07-06 14:00:00 WIB
+> **Last updated:** 2026-07-11 15:00:00 WIB
 > **Base URL:** `/api/v2/sales-order`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -38,6 +38,8 @@ List all sales orders belonging to the authenticated company.
 | search      | string | No       | —       | Search on `so_display_number` |
 | status_id   | string | No       | —       | Filter by `status_id` |
 | customer_id | string | No       | —       | Filter by `customer_id` |
+| date_from   | string (date) | No | —    | Filter `so_date >=` this date (`YYYY-MM-DD`) |
+| date_to     | string (date) | No | —    | Filter `so_date <=` this date (`YYYY-MM-DD`) |
 
 #### Response `200 OK`
 

@@ -18,6 +18,14 @@ function getAllPurchaseInvoices($conn, $company_id, $params) {
         $supplier_id = mysqli_real_escape_string($conn, $params['supplier_id']);
         $where .= " AND supplier_id = '$supplier_id'";
     }
+    if (isset($params['date_from']) && trim($params['date_from']) !== '') {
+        $date_from = mysqli_real_escape_string($conn, $params['date_from']);
+        $where .= " AND invoice_date >= '$date_from'";
+    }
+    if (isset($params['date_to']) && trim($params['date_to']) !== '') {
+        $date_to = mysqli_real_escape_string($conn, $params['date_to']);
+        $where .= " AND invoice_date <= '$date_to'";
+    }
 
     $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".purchase_invoice WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
     $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".purchase_invoice WHERE $where");

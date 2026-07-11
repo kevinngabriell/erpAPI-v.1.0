@@ -7,6 +7,26 @@ Intended audience: frontend developers.
 
 ---
 
+## [2026-07-11 15:00:00 WIB] — Sales & Purchase list endpoints (date filtering + join search)
+
+### Added
+- `GET /api/v2/sales-order` — new `date_from`/`date_to` params filter by `so_date`.
+- `GET /api/v2/sales-invoice` — new `date_from`/`date_to` params filter by `invoice_date`.
+- `GET /api/v2/sales-sppb` — new `date_from`/`date_to` params filter by `sppb_date`.
+- `GET /api/v2/sales-delivery` — new `date_from`/`date_to` params filter by `delivery_date`.
+- `GET /api/v2/sales-profit` — new `date_from`/`date_to` params filter by `created_at`; new `search` param now matches the linked sales order's `so_display_number` (previously this endpoint had no `search` support at all).
+- `GET /api/v2/purchase-order` — new `date_from`/`date_to` params filter by `po_date`.
+- `GET /api/v2/purchase-receive` — new `date_from`/`date_to` params filter by `receiving_date`; new `search` param now matches the linked purchase order's `po_display_number` (previously this endpoint had no `search` support at all).
+- `GET /api/v2/purchase-invoice` — new `date_from`/`date_to` params filter by `invoice_date`.
+
+### Notes for frontend
+- All new params are optional query-string additions — existing requests without them behave exactly as before.
+- `date_from`/`date_to` take `YYYY-MM-DD` and are inclusive on both ends. For `sales-profit`'s `created_at` (a datetime column, not a plain date), `date_from` is treated as the start of that day and `date_to` as the end of that day.
+- `search` on `sales-profit` and `purchase-receive` resolves against the joined order's display number, not any field on the record itself — a `search` term matching nothing on the linked order returns an empty page even if the sales-profit/purchase-receive row exists.
+- List pagination (`page`/`limit`, `pagination.total` in the response) was already accurate on all 8 endpoints before this change — no fix was needed there.
+
+---
+
 ## [2026-07-11 00:00:00 WIB] — Permissions (new module)
 
 ### Added

@@ -1,6 +1,6 @@
 # Purchase Receive API
 
-> **Last updated:** 2026-07-06 14:00:00 WIB
+> **Last updated:** 2026-07-11 15:00:00 WIB
 > **Base URL:** `/api/v2/purchase-receive`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -28,8 +28,11 @@ List all purchase receives belonging to the authenticated company.
 |--------------------|--------|----------|---------|-------------|
 | page               | int    | No       | 1       | Page number |
 | limit              | int    | No       | 10      | Items per page (max 100) |
+| search             | string | No       | —       | Search on the linked purchase order's `po_display_number` (left-joined) |
 | purchase_order_id  | string | No       | —       | Filter by `purchase_order_id` |
 | supplier_id        | string | No       | —       | Filter by `supplier_id` |
+| date_from          | string (date) | No | —    | Filter `receiving_date >=` this date (`YYYY-MM-DD`) |
+| date_to            | string (date) | No | —    | Filter `receiving_date <=` this date (`YYYY-MM-DD`) |
 
 #### Response `200 OK`
 
@@ -323,4 +326,5 @@ Soft-deletes the purchase receive (sets `deleted_at`) — it will no longer appe
 - Header + items creation is wrapped in a single database transaction — either the purchase receive and all its items are created together, or nothing is saved.
 - Create/update/delete write `audit_log` rows with action `created`/`updated`/`deleted` (only `created` is currently wired up in the source — update/delete do not call `insertAuditLog`). Query this history via `GET /api/v2/audit-log?module=purchase_receive&reference_id={id}` — see the `audit-log` module doc.
 - No enum-constrained fields were found in this module's source.
-- The list endpoint (`GET /api/v2/purchase-receive`) does not include the nested `items` array or a `search` query parameter; only `purchase_order_id` and `supplier_id` filters are supported. Only the detail endpoint (`GET /api/v2/purchase-receive/{id}`) returns `items`. The create response only returns `purchase_receive_id`.
+- The list endpoint (`GET /api/v2/purchase-receive`) does not include the nested `items` array. Only the detail endpoint (`GET /api/v2/purchase-receive/{id}`) returns `items`. The create response only returns `purchase_receive_id`.
+- `search` is matched against the linked purchase order's `po_display_number` via a `LEFT JOIN`, not against any field on the purchase receive record itself — purchase receive rows have no display number of their own. Records whose `purchase_order_id` no longer resolves to a purchase order are excluded from `search` results (but still returned when `search` is omitted).

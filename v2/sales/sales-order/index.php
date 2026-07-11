@@ -22,6 +22,14 @@ function getAllSalesOrders($conn, $company_id, $params) {
         $customer_id = mysqli_real_escape_string($conn, $params['customer_id']);
         $where .= " AND customer_id = '$customer_id'";
     }
+    if (isset($params['date_from']) && trim($params['date_from']) !== '') {
+        $date_from = mysqli_real_escape_string($conn, $params['date_from']);
+        $where .= " AND so_date >= '$date_from'";
+    }
+    if (isset($params['date_to']) && trim($params['date_to']) !== '') {
+        $date_to = mysqli_real_escape_string($conn, $params['date_to']);
+        $where .= " AND so_date <= '$date_to'";
+    }
 
     $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".sales_order WHERE $where ORDER BY created_at DESC LIMIT $limit OFFSET $offset");
     $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".sales_order WHERE $where");
