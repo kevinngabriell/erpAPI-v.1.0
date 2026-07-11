@@ -7,6 +7,19 @@ Intended audience: frontend developers.
 
 ---
 
+## [2026-07-11 00:00:00 WIB] — Permissions (new module)
+
+### Added
+- `GET /api/v2/permissions/{permission_key}/roles` — New endpoint. Returns the role(s) that currently grant a given permission key, e.g. `{ "permission_key": "sales.so.create", "label": "Create Sales Order", "roles": ["Business Owner", "Admin Sales"] }`.
+- `GET /api/v2/permissions/roles?keys=a,b,c` — Batch variant of the above; resolves up to 50 permission keys in one request. Unknown keys are dropped from the response rather than erroring.
+
+### Notes for frontend
+- Built for `usePermissionGate`'s denial dialog: fetch the role list for the `permission_key` a click-time gate just blocked, and interpolate it into the message instead of the generic "contact your administrator" text.
+- Any authenticated user can call this — role names aren't treated as sensitive, and the data isn't company-scoped (it reads the global `app_permission`/`app_role_permission` catalog, same as `GET /account/my-permissions`).
+- Responses are always live — no caching layer, so role/permission edits show up immediately.
+
+---
+
 ## [2026-07-07 09:00:00 WIB] — Dashboard (role-based rebuild)
 
 ### Changed

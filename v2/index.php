@@ -38,6 +38,10 @@ switch ($module) {
         require $file;
         break;
 
+    case 'permissions':
+        require __DIR__ . '/auth/permission-roles.php';
+        break;
+
     // ── Master data — global lookups ────────────────────────────────────────
     case 'region':
         require __DIR__ . '/master/region/index.php';
