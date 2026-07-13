@@ -1,7 +1,7 @@
 # Financial Reports API
 
-> **Last updated: 2026-06-02**
-> Changes in this update: added Export Outstanding Hutang & Piutang (Excel) endpoint.
+> **Last updated: 2026-07-13**
+> Changes in this update: reworked Laporan Laba Rugi to a proper income-statement formula (Pendapatan − Retur/Diskon → Laba Kotor − HPP → Biaya Usaha → Laba Sebelum Pajak − Pajak Penghasilan → Laba Bersih).
 
 ---
 
@@ -492,28 +492,45 @@ GET /finance/getlaporanlabarugi.php?start_date=2025-05-01&end_date=2025-05-31
   "period": { "start_date": "2025-05-01", "end_date": "2025-05-31" },
   "Data": {
     "pendapatan": {
-      "jurnal": [
-        { "code": "4001", "account_name": "Pendapatan Lain-Lain", "total": 15000000 }
-      ],
-      "penerimaan_invoice": 8000000,
-      "total_pendapatan": 23000000
+      "penjualan": 23000000,
+      "retur_diskon": {
+        "jurnal": [
+          { "account_code": "4901", "account_name": "Retur Penjualan", "total": 500000 }
+        ],
+        "total": 500000
+      },
+      "total_pendapatan": 22500000
     },
-    "beban": {
+    "harga_pokok_penjualan": 12000000,
+    "laba_rugi_kotor": 10500000,
+    "biaya_usaha": {
       "jurnal": [
-        { "code": "5001", "account_name": "Biaya Operasional", "total": 4000000 }
+        { "account_code": "6001", "account_name": "Biaya Operasional", "total": 4000000 }
       ],
-      "pembayaran_invoice": 6000000,
-      "total_beban": 10000000
+      "total": 4000000
     },
-    "laba_bersih": 13000000
+    "laba_sebelum_pajak": 6500000,
+    "pajak_penghasilan": {
+      "jurnal": [
+        { "account_code": "6900", "account_name": "PPh Badan", "total": 1430000 }
+      ],
+      "total": 1430000
+    },
+    "laba_bersih_setelah_pajak": 5070000
   }
 }
 ```
 
 ### Notes
-- `pendapatan.jurnal` = penerimaan journal entries filtered to **account code prefix `4xx`** only
-- `beban.jurnal` = pembayaran journal entries filtered to **account code prefix `5xx` / `6xx`** only
-- `laba_bersih` = `total_pendapatan` - `total_beban` (positive = profit, negative = loss)
+- `pendapatan.penjualan` = nilai invoice penjualan yang **diinput pada periode ini** (`invoiceDate` di rentang `start_date`–`end_date`), dari `salesInvoiceItem.productQuantity × unitPrice`, sebelum PPN.
+- `pendapatan.retur_diskon` = transaksi di `financeTransaction` yang nama akunnya mengandung `retur` atau `diskon`. `total_pendapatan` = `penjualan` − `retur_diskon.total`.
+- `harga_pokok_penjualan` (HPP) = qty barang terjual pada periode ini × harga rata-rata beli per produk (all-time, dari `purchaseOrderItem`). Metodologi sama dengan `finance/gethpp.php`.
+- `laba_rugi_kotor` = `total_pendapatan` − `harga_pokok_penjualan`.
+- `biaya_usaha.jurnal` = pembayaran journal entries dengan **account code prefix `5xx` / `6xx`**, tidak termasuk akun yang mengandung `pajak`/`pph` (dipisah ke bagian pajak).
+- `laba_sebelum_pajak` = `laba_rugi_kotor` − `biaya_usaha.total`.
+- `pajak_penghasilan.jurnal` = transaksi di `financeTransaction` yang nama akunnya mengandung `pajak` atau `pph`.
+- `laba_bersih_setelah_pajak` = `laba_sebelum_pajak` − `pajak_penghasilan.total` (positif = laba, negatif = rugi).
+- Akun retur/diskon dan pajak dikenali berdasarkan **nama akun** (bukan prefix kode tetap) — pastikan penamaan akun COA konsisten mengandung kata kunci tersebut agar terhitung otomatis.
 
 ---
 
@@ -700,6 +717,10 @@ GET /finance/exportoutstandingpayments.php?type=all&year=2025&month=5
 ---
 
 ## Changelog
+
+### 2026-07-13
+- **UPDATED** `GET /finance/getlaporanlabarugi.php` — reworked formula to a proper multi-step income statement: `penjualan` (invoice period ini) → `retur_diskon` → `total_pendapatan` → `harga_pokok_penjualan` (HPP) → `laba_rugi_kotor` → `biaya_usaha` → `laba_sebelum_pajak` → `pajak_penghasilan` → `laba_bersih_setelah_pajak`. Response shape changed (previously `pendapatan`/`beban`/`laba_bersih`).
+- **UPDATED** `finance/exportlaborugi.php` — Excel export now mirrors the new formula/sections above.
 
 ### 2026-06-02
 - **NEW** `GET /finance/exportoutstandingpayments.php` — Excel export for Outstanding Hutang & Piutang; supports `type`, `year`, `month` filters; two-sheet output when `type=all`; overdue rows highlighted in red
