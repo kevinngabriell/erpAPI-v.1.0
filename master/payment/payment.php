@@ -43,10 +43,10 @@ function createPayment($conn, array $input): void {
     }
 
     $payment_name = mysqli_real_escape_string($conn, trim($input['payment_name']));
-    $id           = generateUUID();
+    $payment_id   = 'pay_' . uniqid();
 
-    if (mysqli_query($conn, "INSERT INTO payment (payment_id, payment_name) VALUES ('$id', '$payment_name')")) {
-        jsonResponse(201, 'Payment method created successfully', ['payment_id' => $id]);
+    if (mysqli_query($conn, "INSERT INTO payment (payment_id, payment_name) VALUES ('$payment_id', '$payment_name')")) {
+        jsonResponse(201, 'Payment method created successfully', ['payment_id' => $payment_id]);
     } else {
         jsonResponse(500, 'Failed to create payment method');
     }
