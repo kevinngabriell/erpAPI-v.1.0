@@ -1,6 +1,6 @@
 # Audit Log API
 
-> **Last updated:** 2026-07-06 14:00:00 WIB
+> **Last updated:** 2026-07-17 20:00:00 WIB
 > **Base URL:** `/api/v2/audit-log`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -51,7 +51,8 @@ GET /api/v2/audit-log?module=purchase_order&reference_id=a1b2c3d4-e5f6-4a5b-8c9d
         "module": "purchase_order",
         "reference_id": "c3d4e5f6-a7b8-4c5d-0e1f-2a3b4c5d6e7f",
         "action": "created",
-        "action_by": "budi.santoso",
+        "action_by": "Budi Santoso",
+        "position_name": "Purchasing Staff",
         "action_at": "2026-07-01 10:00:00",
         "notes": null
       }
@@ -100,7 +101,8 @@ Get detail of a single audit log entry.
     "module": "purchase_order",
     "reference_id": "c3d4e5f6-a7b8-4c5d-0e1f-2a3b4c5d6e7f",
     "action": "created",
-    "action_by": "budi.santoso",
+    "action_by": "Budi Santoso",
+    "position_name": "Purchasing Staff",
     "action_at": "2026-07-01 10:00:00",
     "notes": null
   }
@@ -136,3 +138,5 @@ Get detail of a single audit log entry.
 - Rows in `audit_log` are **not** created directly through this API. They are written internally by other modules via the shared `insertAuditLog($conn, $company_id, $module, $reference_id, $action, $username, $notes = null)` helper in `v2/helpers/audit_log.php`, which inserts the columns `id`, `company_id`, `module`, `reference_id`, `action`, `action_by`, `action_at`, `notes`.
 - Modules such as `purchase-order`, `purchase-receive`, `purchase-invoice`, `finance-transaction`, `finance-payment`, `sales-order`, `sales-delivery`, `sales-invoice`, `sales-sppb`, and `sales-profit` call this helper on their own create/update/delete/approve/reject actions.
 - To see the approval/creation history of a given resource, filter by both `module` and `reference_id`, e.g. `GET /api/v2/audit-log?module=purchase_order&reference_id={id}`.
+- **`action_by` is resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on both the list and detail endpoints. Previously this field held the raw user ID. There is no separate `action_by_id` field — the resolved name **is** the value; the raw user ID is no longer returned anywhere in the response. `action_by` can be `null` only if the user who performed the action has since been deleted.
+- **`position_name` is a new field** — the acting user's job position at the time of the request (joined from `app_position` via the user's `position_id`), e.g. `"Purchasing Staff"`. It is `null` if the user has no position assigned or has since been deleted.

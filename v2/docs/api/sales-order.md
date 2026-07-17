@@ -1,6 +1,6 @@
 # Sales Order API
 
-> **Last updated:** 2026-07-11 18:49:02 WIB
+> **Last updated:** 2026-07-14 05:56:38 WIB
 > **Base URL:** `/api/v2/sales-order`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -12,6 +12,7 @@
 | Method | Path | Description |
 |--------|------|-------------|
 | GET    | `/api/v2/sales-order` | List all sales orders (paginated) |
+| GET    | `/api/v2/sales-order/generate-number` | Generate the next `so_display_number` for the authenticated company |
 | POST   | `/api/v2/sales-order` | Create a new sales order (with items) |
 | GET    | `/api/v2/sales-order/{id}` | Get sales order detail (with items) |
 | PUT    | `/api/v2/sales-order/{id}` | Update a sales order |
@@ -89,6 +90,36 @@ List all sales orders belonging to the authenticated company.
 {
   "status_code": 404,
   "status_message": "No sales orders found",
+  "data": []
+}
+```
+
+---
+
+### GET `/api/v2/sales-order/generate-number`
+
+Generate the next `so_display_number` for the authenticated company. This is a read-only preview — it does not reserve or persist the number; it is not guaranteed to remain the next number if another sales order is created in the meantime. Call it right before submitting the `POST` request.
+
+Format: `{seq}/{company_code}-SO/{roman_month}/{year}` — e.g. `001/VIK-SO/VII/2026`. `seq` is a zero-padded 3-digit counter that resets to `001` at the start of each calendar month and is scoped per company; `company_code` is the authenticated company's code (`app_company.company_code`, uppercased); the month is a Roman numeral (`I`–`XII`).
+
+#### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Sales order number generated successfully",
+  "data": {
+    "so_display_number": "001/VIK-SO/VII/2026"
+  }
+}
+```
+
+#### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Company not found",
   "data": []
 }
 ```
@@ -687,4 +718,5 @@ Soft-deletes the sales order item (sets `deleted_at`) — it will no longer appe
 - `GET /api/v2/sales-order` still accepts `status_id` as a **read-only filter** — for that use case, resolve the `id` for a given `status_name` via `GET /api/v2/sales-status` at request time (don't hardcode it either).
 - **List and detail responses now include resolved names alongside their IDs** — `customer_name` (joined from `customer`), `ppn_name` (joined from `ppn_type`), and `status_name` (joined from `sales_status`) are returned next to `customer_id`, `ppn_type_id`, and `status_id` respectively. The frontend no longer needs a separate lookup call just to display these values in a list or detail view; the IDs are still returned and still required for `PUT`/filter requests. Any of the three may be `null` if the referenced master-data row was deleted.
 - If `sales_status` is ever missing a `Draft`/`Approved`/`Rejected` row (non-deleted), the corresponding endpoint returns `500` with a message naming the missing status — this indicates a master-data configuration problem, not a client error.
+- `GET /api/v2/sales-order/generate-number` counts existing rows (including soft-deleted ones) whose `so_display_number` matches the current company/month/year pattern, so the sequence never repeats within a month even if a sales order is later deleted.
 - **`created_by`, `updated_by`, and `approved_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a sales order or a sales order item — list, detail, and the nested `items` array. Previously these fields held the raw user ID. There is no separate `*_id` field for these three — the resolved name **is** the value; the raw ID is no longer returned anywhere in the response. `updated_by`/`approved_by` are `null` until the record has actually been updated/approved; `created_by` can be `null` only if the user who created the record has since been deleted.

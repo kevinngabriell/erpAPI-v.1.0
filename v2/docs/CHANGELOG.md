@@ -7,6 +7,45 @@ Intended audience: frontend developers.
 
 ---
 
+## [2026-07-17 12:04:11 WIB] — Sales SPPB number generator added
+
+### Added
+- `GET /api/v2/sales-sppb/generate-number` — returns the next `sppb_display_number` for the authenticated company, in the format `{seq}/{company_code}-SPPB/{roman_month}/{year}` (e.g. `001/VIK-SPPB/VII/2026`). This is a read-only preview, following the same pattern already shipped for sales orders (`GET /api/v2/sales-order/generate-number`).
+
+### Notes for frontend
+- Call this endpoint to pre-fill `sppb_display_number` right before submitting `POST /api/v2/sales-sppb` — the number is not reserved, so a race with another concurrent creation is possible (same caveat as the sales-order generator).
+
+---
+
+## [2026-07-17 20:00:00 WIB] — Audit log entries now include resolved user name and position
+
+### Changed
+- `GET /api/v2/audit-log` and `GET /api/v2/audit-log/{id}` — `action_by` now returns the acting user's resolved full name (`"First Last"`) instead of the raw user ID. There is no new field for this — the existing key just carries a different value now, following the same pattern already shipped for `created_by`/`updated_by`/`approved_by` on every other v2 module.
+
+### Added
+- `GET /api/v2/audit-log` and `GET /api/v2/audit-log/{id}` — responses now include `position_name`, the acting user's job position at the time of the request (e.g. `"Purchasing Staff"`).
+
+### Breaking changes
+- `action_by` in `audit_log` responses is no longer the raw user ID. If the frontend was using it as a lookup key (e.g. to fetch the user's name separately), that call is no longer needed — render the value directly. Any code parsing `action_by` as a UUID will break.
+
+### Notes for frontend
+- `action_by` can be `null` only if the acting user has since been deleted from the user directory.
+- `position_name` is `null` if the user has no position assigned, or has since been deleted.
+- Both are resolved via `LEFT JOIN`s reused from the existing pagination-count query — no added round trip.
+
+---
+
+## [2026-07-14 05:56:38 WIB] — Sales order number generator added
+
+### Added
+- `GET /api/v2/sales-order/generate-number` — returns the next `so_display_number` for the authenticated company as a preview (`{seq}/{company_code}-SO/{roman_month}/{year}`, e.g. `001/VIK-SO/VII/2026`). The frontend no longer needs to construct or guess this value before calling `POST /api/v2/sales-order`.
+
+### Notes for frontend
+- This is a preview, not a reservation — the number is not locked until the sales order is actually created. Call it immediately before submitting the create form to minimize the (small) chance of a collision if two users create a sales order in the same company at the same time, in which case `POST` still returns `409 Conflict` on a duplicate `so_display_number`.
+- The sequence resets to `001` at the start of each calendar month, per company.
+
+---
+
 ## [2026-07-11 19:44:37 WIB] — Accounting report endpoints added (Laporan Keuangan)
 
 ### Added

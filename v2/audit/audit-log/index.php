@@ -8,22 +8,29 @@ function getAllAuditLogs($conn, $company_id, $params) {
     $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
     $offset = ($page - 1) * $limit;
 
-    $where = "company_id = '$company_id'";
+    $where = "al.company_id = '$company_id'";
     if (isset($params['module']) && trim($params['module']) !== '') {
         $module = mysqli_real_escape_string($conn, $params['module']);
-        $where .= " AND module = '$module'";
+        $where .= " AND al.module = '$module'";
     }
     if (isset($params['reference_id']) && trim($params['reference_id']) !== '') {
         $reference_id = mysqli_real_escape_string($conn, $params['reference_id']);
-        $where .= " AND reference_id = '$reference_id'";
+        $where .= " AND al.reference_id = '$reference_id'";
     }
     if (isset($params['action']) && trim($params['action']) !== '') {
         $action_filter = mysqli_real_escape_string($conn, $params['action']);
-        $where .= " AND action = '$action_filter'";
+        $where .= " AND al.action = '$action_filter'";
     }
 
-    $result       = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".audit_log WHERE $where ORDER BY action_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".audit_log WHERE $where");
+    $from = APP_SCHEMA . ".audit_log al
+            LEFT JOIN " . CORE_SCHEMA . ".app_user au ON au.user_id COLLATE utf8mb4_general_ci = al.action_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_position ap ON ap.position_id = au.position_id";
+
+    $result       = mysqli_query($conn, "SELECT al.*,
+            CONCAT(au.first_name, ' ', au.last_name) AS action_by,
+            ap.position_name
+            FROM $from WHERE $where ORDER BY al.action_at DESC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM $from WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -44,7 +51,14 @@ function getAllAuditLogs($conn, $company_id, $params) {
 function getDetailAuditLog($conn, $audit_log_id, $company_id) {
     $audit_log_id = mysqli_real_escape_string($conn, $audit_log_id);
 
-    $result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".audit_log WHERE id = '$audit_log_id' AND company_id = '$company_id' LIMIT 1");
+    $from = APP_SCHEMA . ".audit_log al
+            LEFT JOIN " . CORE_SCHEMA . ".app_user au ON au.user_id COLLATE utf8mb4_general_ci = al.action_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_position ap ON ap.position_id = au.position_id";
+
+    $result = mysqli_query($conn, "SELECT al.*,
+            CONCAT(au.first_name, ' ', au.last_name) AS action_by,
+            ap.position_name
+            FROM $from WHERE al.id = '$audit_log_id' AND al.company_id = '$company_id' LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Audit log not found');
         return;

@@ -11,6 +11,33 @@ function getSalesStatusIdByName($conn, $status_name) {
     return $row ? $row['id'] : null;
 }
 
+function getCompanyCode($conn, $company_id) {
+    $result = mysqli_query($conn, "SELECT company_code FROM " . CORE_SCHEMA . ".app_company WHERE company_id = '$company_id' LIMIT 1");
+    $row = $result ? mysqli_fetch_assoc($result) : null;
+    return $row ? strtoupper($row['company_code']) : null;
+}
+
+function generateSalesOrderNumber($conn, $company_id) {
+    $company_code = getCompanyCode($conn, $company_id);
+    if (!$company_code) {
+        jsonResponse(404, 'Company not found');
+        return;
+    }
+
+    $roman_months = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII'];
+    $roman_month  = $roman_months[(int)date('n') - 1];
+    $year         = date('Y');
+
+    $pattern      = mysqli_real_escape_string($conn, "%/$company_code-SO/$roman_month/$year");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".sales_order WHERE company_id = '$company_id' AND so_display_number LIKE '$pattern'");
+    $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
+
+    $sequence          = str_pad((string)($total + 1), 3, '0', STR_PAD_LEFT);
+    $so_display_number = "$sequence/$company_code-SO/$roman_month/$year";
+
+    jsonResponse(200, 'Sales order number generated successfully', ['so_display_number' => $so_display_number]);
+}
+
 function getAllSalesOrders($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
     $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
@@ -361,7 +388,11 @@ $sub_action     = $parts[4] ?? '';
 try {
     $conn = getConn();
 
-    if ($sales_order_id && $sub_action === 'items') {
+    if ($sales_order_id === 'generate-number' && $sub_action === '') {
+        if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
+        generateSalesOrderNumber($conn, $company_id);
+
+    } elseif ($sales_order_id && $sub_action === 'items') {
         require __DIR__ . '/items.php';
 
     } elseif ($sales_order_id && $sub_action !== '') {

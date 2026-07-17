@@ -1,6 +1,6 @@
 # Sales SPPB API
 
-> **Last updated:** 2026-07-11 18:49:02 WIB
+> **Last updated:** 2026-07-17 00:00:00 WIB
 > **Base URL:** `/api/v2/sales-sppb`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -11,10 +11,41 @@
 | Method | Path | Description |
 |--------|------|-------------|
 | GET    | `/api/v2/sales-sppb` | List all sales SPPBs (paginated) |
+| GET    | `/api/v2/sales-sppb/generate-number` | Generate the next `sppb_display_number` for the authenticated company |
 | POST   | `/api/v2/sales-sppb` | Create a new sales SPPB (with items) |
 | GET    | `/api/v2/sales-sppb/{id}` | Get sales SPPB detail (with items) |
 | PUT    | `/api/v2/sales-sppb/{id}` | Update a sales SPPB |
 | DELETE | `/api/v2/sales-sppb/{id}` | Delete a sales SPPB |
+
+---
+
+### GET `/api/v2/sales-sppb/generate-number`
+
+Generate the next `sppb_display_number` for the authenticated company. This is a read-only preview — it does not reserve or persist the number; it is not guaranteed to remain the next number if another sales SPPB is created in the meantime. Call it right before submitting the `POST` request.
+
+Format: `{seq}/{company_code}-SPPB/{roman_month}/{year}` — e.g. `001/VIK-SPPB/VII/2026`. `seq` is a zero-padded 3-digit counter that resets to `001` at the start of each calendar month and is scoped per company; `company_code` is the authenticated company's code (`app_company.company_code`, uppercased); the month is a Roman numeral (`I`–`XII`).
+
+#### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Sales SPPB number generated successfully",
+  "data": {
+    "sppb_display_number": "001/VIK-SPPB/VII/2026"
+  }
+}
+```
+
+#### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Company not found",
+  "data": []
+}
+```
 
 ---
 
@@ -331,4 +362,5 @@ Soft-deletes the sales SPPB (sets `deleted_at`) — it will no longer appear in 
 - `sales_order_id` is validated to exist (and belong to the company) on create, but is not an updatable field via `PUT`.
 - No enum-constrained fields were found in this module's source code.
 - **List and detail responses now include resolved names alongside their IDs** — `so_display_number` (joined from `sales_order`) and `customer_name` (joined from `customer`) are returned next to `sales_order_id` and `customer_id` respectively. The frontend no longer needs a separate lookup call just to display these values in a list or detail view; the IDs are still returned and still required for `PUT`/filter requests. Either may be `null` if the referenced record was deleted.
+- `GET /api/v2/sales-sppb/generate-number` counts existing rows (including soft-deleted ones) whose `sppb_display_number` matches the current company/month/year pattern, so the sequence never repeats within a month even if a sales SPPB is later deleted.
 - **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on both the sales SPPB itself and its items. Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.
