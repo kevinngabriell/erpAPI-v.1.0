@@ -28,10 +28,13 @@ function getAllPurchaseInvoices($conn, $company_id, $params) {
     }
 
     $from = APP_SCHEMA . ".purchase_invoice pi
+            LEFT JOIN " . APP_SCHEMA . ".purchase_order po ON po.id = pi.purchase_order_id
+            LEFT JOIN " . APP_SCHEMA . ".supplier s ON s.id = pi.supplier_id
+            LEFT JOIN " . APP_SCHEMA . ".payment_term pt ON pt.id = pi.term_id
             LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = pi.created_by
             LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = pi.updated_by";
 
-    $result       = mysqli_query($conn, "SELECT pi.*,
+    $result       = mysqli_query($conn, "SELECT pi.*, po.po_display_number, s.supplier_name, pt.term_name,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
             FROM $from WHERE $where ORDER BY pi.created_at DESC LIMIT $limit OFFSET $offset");
@@ -146,9 +149,12 @@ function getDetailPurchaseInvoice($conn, $purchase_invoice_id, $company_id) {
     $purchase_invoice_id = mysqli_real_escape_string($conn, $purchase_invoice_id);
 
     $from   = APP_SCHEMA . ".purchase_invoice pi
+            LEFT JOIN " . APP_SCHEMA . ".purchase_order po ON po.id = pi.purchase_order_id
+            LEFT JOIN " . APP_SCHEMA . ".supplier s ON s.id = pi.supplier_id
+            LEFT JOIN " . APP_SCHEMA . ".payment_term pt ON pt.id = pi.term_id
             LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = pi.created_by
             LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = pi.updated_by";
-    $result = mysqli_query($conn, "SELECT pi.*,
+    $result = mysqli_query($conn, "SELECT pi.*, po.po_display_number, s.supplier_name, pt.term_name,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
             FROM $from WHERE pi.id = '$purchase_invoice_id' AND pi.company_id = '$company_id' AND pi.deleted_at IS NULL LIMIT 1");

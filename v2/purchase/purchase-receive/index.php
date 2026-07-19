@@ -32,10 +32,12 @@ function getAllPurchaseReceives($conn, $company_id, $params) {
     }
 
     $from = APP_SCHEMA . ".purchase_receive pr LEFT JOIN " . APP_SCHEMA . ".purchase_order po ON pr.purchase_order_id = po.id
+            LEFT JOIN " . APP_SCHEMA . ".supplier s ON s.id = pr.supplier_id
+            LEFT JOIN " . APP_SCHEMA . ".ship_via sv ON sv.id = pr.ship_via_id
             LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = pr.created_by
             LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = pr.updated_by";
 
-    $result       = mysqli_query($conn, "SELECT pr.*,
+    $result       = mysqli_query($conn, "SELECT pr.*, po.po_display_number, s.supplier_name, sv.ship_name,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
             FROM $from WHERE $where ORDER BY pr.created_at DESC LIMIT $limit OFFSET $offset");
@@ -138,9 +140,12 @@ function getDetailPurchaseReceive($conn, $purchase_receive_id, $company_id) {
     $purchase_receive_id = mysqli_real_escape_string($conn, $purchase_receive_id);
 
     $from   = APP_SCHEMA . ".purchase_receive pr
+            LEFT JOIN " . APP_SCHEMA . ".purchase_order po ON po.id = pr.purchase_order_id
+            LEFT JOIN " . APP_SCHEMA . ".supplier s ON s.id = pr.supplier_id
+            LEFT JOIN " . APP_SCHEMA . ".ship_via sv ON sv.id = pr.ship_via_id
             LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = pr.created_by
             LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = pr.updated_by";
-    $result = mysqli_query($conn, "SELECT pr.*,
+    $result = mysqli_query($conn, "SELECT pr.*, po.po_display_number, s.supplier_name, sv.ship_name,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
             FROM $from WHERE pr.id = '$purchase_receive_id' AND pr.company_id = '$company_id' AND pr.deleted_at IS NULL LIMIT 1");

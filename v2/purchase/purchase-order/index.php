@@ -34,16 +34,25 @@ function getAllPurchaseOrders($conn, $company_id, $params) {
     }
 
     $from = APP_SCHEMA . ".purchase_order po
+            LEFT JOIN " . APP_SCHEMA . ".supplier s ON s.id = po.supplier_id
+            LEFT JOIN " . APP_SCHEMA . ".purchase_status ps ON ps.id = po.status_id
+            LEFT JOIN " . APP_SCHEMA . ".payment_term pt ON pt.id = po.term_id
+            LEFT JOIN " . APP_SCHEMA . ".payment_method pm ON pm.id = po.payment_method_id
+            LEFT JOIN " . APP_SCHEMA . ".origin o ON o.id = po.origin_id
+            LEFT JOIN " . APP_SCHEMA . ".purchase_type pty ON pty.id = po.type_id
+            LEFT JOIN " . APP_SCHEMA . ".currency cur ON cur.id = po.currency_id
+            LEFT JOIN " . APP_SCHEMA . ".ppn_type ppn ON ppn.id = po.ppn_type_id
             LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = po.created_by
             LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = po.updated_by
             LEFT JOIN " . CORE_SCHEMA . ".app_user au ON au.user_id COLLATE utf8mb4_general_ci = po.approved_by";
 
-    $result       = mysqli_query($conn, "SELECT po.*,
+    $result       = mysqli_query($conn, "SELECT po.*, s.supplier_name, ps.status_name, pt.term_name, pm.method_name,
+            o.origin_name, pty.type_name, cur.currency_code, cur.currency_name, ppn.ppn_name,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by,
             CONCAT(au.first_name, ' ', au.last_name) AS approved_by
             FROM $from WHERE $where ORDER BY po.created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".purchase_order po WHERE $where");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM $from WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -173,10 +182,19 @@ function getDetailPurchaseOrder($conn, $purchase_order_id, $company_id) {
     $purchase_order_id = mysqli_real_escape_string($conn, $purchase_order_id);
 
     $from   = APP_SCHEMA . ".purchase_order po
+            LEFT JOIN " . APP_SCHEMA . ".supplier s ON s.id = po.supplier_id
+            LEFT JOIN " . APP_SCHEMA . ".purchase_status ps ON ps.id = po.status_id
+            LEFT JOIN " . APP_SCHEMA . ".payment_term pt ON pt.id = po.term_id
+            LEFT JOIN " . APP_SCHEMA . ".payment_method pm ON pm.id = po.payment_method_id
+            LEFT JOIN " . APP_SCHEMA . ".origin o ON o.id = po.origin_id
+            LEFT JOIN " . APP_SCHEMA . ".purchase_type pty ON pty.id = po.type_id
+            LEFT JOIN " . APP_SCHEMA . ".currency cur ON cur.id = po.currency_id
+            LEFT JOIN " . APP_SCHEMA . ".ppn_type ppn ON ppn.id = po.ppn_type_id
             LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = po.created_by
             LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = po.updated_by
             LEFT JOIN " . CORE_SCHEMA . ".app_user au ON au.user_id COLLATE utf8mb4_general_ci = po.approved_by";
-    $result = mysqli_query($conn, "SELECT po.*,
+    $result = mysqli_query($conn, "SELECT po.*, s.supplier_name, ps.status_name, pt.term_name, pm.method_name,
+            o.origin_name, pty.type_name, cur.currency_code, cur.currency_name, ppn.ppn_name,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by,
             CONCAT(au.first_name, ' ', au.last_name) AS approved_by

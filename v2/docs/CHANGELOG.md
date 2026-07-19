@@ -7,6 +7,34 @@ Intended audience: frontend developers.
 
 ---
 
+## [2026-07-19 15:25:59 WIB] — Purchase order/receive/invoice list & detail now resolve reference names
+
+### Added
+- `GET /api/v2/purchase-order` and `GET /api/v2/purchase-order/{id}` — responses now also include `supplier_name`, `status_name`, `term_name`, `method_name`, `origin_name`, `type_name`, `currency_code`, `currency_name`, `ppn_name`, resolved via `LEFT JOIN` alongside their existing `*_id` fields.
+- `GET /api/v2/purchase-receive` and `GET /api/v2/purchase-receive/{id}` — responses now also include `po_display_number`, `supplier_name`, `ship_name`, resolved via `LEFT JOIN` alongside their existing `*_id` fields.
+- `GET /api/v2/purchase-invoice` and `GET /api/v2/purchase-invoice/{id}` — responses now also include `po_display_number`, `supplier_name`, `term_name`, resolved via `LEFT JOIN` alongside their existing `*_id` fields.
+
+### Notes for frontend
+- All `*_id` fields are unchanged and still returned — this is additive, not a rename. Display the new `*_name`/`*_display_number` fields directly instead of doing a client-side lookup against master-data endpoints.
+- Every resolved field is `null` if the referenced master record no longer exists (or the source `*_id` was never set), same as the existing `created_by`/`updated_by`/`approved_by` behavior.
+- This brings purchase-order, purchase-receive, and purchase-invoice list/detail responses in line with the sales-order module, which already returned resolved names.
+
+---
+
+## [2026-07-19 15:04:59 WIB] — Origin list/detail now show resolved region name instead of region ID
+
+### Changed
+- `GET /api/v2/origin` and `GET /api/v2/origin/{id}` — responses now include `region_name` (resolved via `LEFT JOIN` on `region`) in place of `region_id`.
+
+### Breaking changes
+- `region_id` is no longer present in `origin` list/detail responses. Any frontend code reading `region_id` off these responses (e.g. to display it, or to re-send it unchanged on a `PUT`) must switch to reading `region_id` from its own local state instead, or omit that field from the `PUT` payload if unchanged.
+
+### Notes for frontend
+- `region_id` is still required on `POST` and still accepted on `PUT`, and the `?region_id=` filter on the list endpoint is unchanged — only the response shape changed.
+- `region_name` is `null` only if the referenced region row no longer exists; it still resolves normally if the region was merely soft-deleted after the origin was created.
+
+---
+
 ## [2026-07-17 12:04:11 WIB] — Sales SPPB number generator added
 
 ### Added

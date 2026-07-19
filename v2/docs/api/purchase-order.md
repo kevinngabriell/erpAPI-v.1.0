@@ -1,6 +1,6 @@
 # Purchase Order API
 
-> **Last updated:** 2026-07-11 18:49:02 WIB
+> **Last updated:** 2026-07-19 15:25:59 WIB
 > **Base URL:** `/api/v2/purchase-order`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -55,17 +55,26 @@ List all purchase orders belonging to the authenticated company.
         "po_display_number": "PO-2026-0001",
         "po_date": "2026-07-01",
         "supplier_id": "c3d4e5f6-a7b8-4c5d-0e1f-2a3b4c5d6e7f",
+        "supplier_name": "PT Sumber Baja",
         "shipment_method": "FOB",
         "shipment_date": "2026-07-05",
         "term_id": "d4e5f6a7-b8c9-4d5e-1f2a-3b4c5d6e7f8a",
+        "term_name": "Net 30",
         "payment_method_id": "e5f6a7b8-c9d0-4e5f-2a3b-4c5d6e7f8a9b",
+        "method_name": "Bank Transfer",
         "origin_id": "f6a7b8c9-d0e1-4f5a-3b4c-5d6e7f8a9b0c",
+        "origin_name": "China",
         "shipping_marks": "N/A",
         "remarks": "Urgent order",
         "status_id": "a7b8c9d0-e1f2-4a5b-4c5d-6e7f8a9b0c1d",
+        "status_name": "Approve",
         "type_id": "b8c9d0e1-f2a3-4b5c-5d6e-7f8a9b0c1d2e",
+        "type_name": "Import",
         "currency_id": "c9d0e1f2-a3b4-4c5d-6e7f-8a9b0c1d2e3f",
+        "currency_code": "USD",
+        "currency_name": "US Dollar",
         "ppn_type_id": "d0e1f2a3-b4c5-4d5e-7f8a-9b0c1d2e3f4a",
+        "ppn_name": "PPN 11%",
         "container_number": "CONT1234567",
         "bl_number": "BL-998877",
         "vessel_name": "MV Nusantara",
@@ -222,17 +231,26 @@ Get detail of a single purchase order, including its nested `items` array.
     "po_display_number": "PO-2026-0001",
     "po_date": "2026-07-01",
     "supplier_id": "c3d4e5f6-a7b8-4c5d-0e1f-2a3b4c5d6e7f",
+    "supplier_name": "PT Sumber Baja",
     "shipment_method": "FOB",
     "shipment_date": "2026-07-05",
     "term_id": "d4e5f6a7-b8c9-4d5e-1f2a-3b4c5d6e7f8a",
+    "term_name": "Net 30",
     "payment_method_id": "e5f6a7b8-c9d0-4e5f-2a3b-4c5d6e7f8a9b",
+    "method_name": "Bank Transfer",
     "origin_id": "f6a7b8c9-d0e1-4f5a-3b4c-5d6e7f8a9b0c",
+    "origin_name": "China",
     "shipping_marks": "N/A",
     "remarks": "Urgent order",
     "status_id": "a7b8c9d0-e1f2-4a5b-4c5d-6e7f8a9b0c1d",
+    "status_name": "Approve",
     "type_id": "b8c9d0e1-f2a3-4b5c-5d6e-7f8a9b0c1d2e",
+    "type_name": "Import",
     "currency_id": "c9d0e1f2-a3b4-4c5d-6e7f-8a9b0c1d2e3f",
+    "currency_code": "USD",
+    "currency_name": "US Dollar",
     "ppn_type_id": "d0e1f2a3-b4c5-4d5e-7f8a-9b0c1d2e3f4a",
+    "ppn_name": "PPN 11%",
     "container_number": "CONT1234567",
     "bl_number": "BL-998877",
     "vessel_name": "MV Nusantara",
@@ -697,3 +715,4 @@ Soft-deletes the purchase order item (sets `deleted_at`) — it will no longer a
 - Approve/reject write an `audit_log` row with action `approved`/`rejected`; create/update/delete write `created`/`updated`/`deleted` audit_log rows. Query this history via `GET /api/v2/audit-log?module=purchase_order&reference_id={id}` — see the `audit-log` module doc.
 - `approve` sets `approved_by` and `approved_at`; `reject` does not.
 - **`created_by`, `updated_by`, and `approved_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a purchase order or a purchase order item — list, detail, and items. Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by`/`approved_by` are `null` until the record has actually been updated/approved; `created_by` can be `null` only if the creating user has since been deleted.
+- **List and detail responses now also resolve reference IDs to their display names**, alongside the existing `*_id` field (both are returned): `supplier_id` → `supplier_name`, `status_id` → `status_name`, `term_id` → `term_name`, `payment_method_id` → `method_name`, `origin_id` → `origin_name`, `type_id` → `type_name`, `currency_id` → `currency_code` + `currency_name`, `ppn_type_id` → `ppn_name`. All are `LEFT JOIN`ed, so the resolved field is `null` if the referenced master record is missing or was deleted; the `*_id` field is unaffected either way.

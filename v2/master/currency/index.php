@@ -21,7 +21,7 @@ function getAllCurrencies($conn, $params) {
     $result       = mysqli_query($conn, "SELECT cur.*,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
-            FROM $from WHERE $where ORDER BY cur.created_at DESC LIMIT $limit OFFSET $offset");
+            FROM $from WHERE $where ORDER BY cur.currency_code ASC LIMIT $limit OFFSET $offset");
     $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".currency cur WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 

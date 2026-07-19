@@ -1,6 +1,6 @@
 # Purchase Invoice API
 
-> **Last updated:** 2026-07-11 18:49:02 WIB
+> **Last updated:** 2026-07-19 15:25:59 WIB
 > **Base URL:** `/api/v2/purchase-invoice`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -46,12 +46,15 @@ List all purchase invoices belonging to the authenticated company.
         "company_id": "b2c3d4e5-f6a7-4b5c-9d0e-1f2a3b4c5d6e",
         "invoice_display_number": "INV-2026-0001",
         "purchase_order_id": "c3d4e5f6-a7b8-4c5d-0e1f-2a3b4c5d6e7f",
+        "po_display_number": "PO-2026-0001",
         "supplier_id": "d4e5f6a7-b8c9-4d5e-1f2a-3b4c5d6e7f8a",
+        "supplier_name": "PT Sumber Baja",
         "invoice_date": "2026-07-05",
         "ship_date": "2026-07-01",
         "tax_invoice_number": "PPN-998877",
         "kurs": 15500,
         "term_id": "e5f6a7b8-c9d0-4e5f-2a3b-4c5d6e7f8a9b",
+        "term_name": "Net 30",
         "created_by": "Budi Santoso",
         "created_at": "2026-07-05 09:00:00",
         "updated_by": null,
@@ -191,12 +194,15 @@ Get detail of a single purchase invoice, including its nested `items` array.
     "company_id": "b2c3d4e5-f6a7-4b5c-9d0e-1f2a3b4c5d6e",
     "invoice_display_number": "INV-2026-0001",
     "purchase_order_id": "c3d4e5f6-a7b8-4c5d-0e1f-2a3b4c5d6e7f",
+    "po_display_number": "PO-2026-0001",
     "supplier_id": "d4e5f6a7-b8c9-4d5e-1f2a-3b4c5d6e7f8a",
+    "supplier_name": "PT Sumber Baja",
     "invoice_date": "2026-07-05",
     "ship_date": "2026-07-01",
     "tax_invoice_number": "PPN-998877",
     "kurs": 15500,
     "term_id": "e5f6a7b8-c9d0-4e5f-2a3b-4c5d6e7f8a9b",
+    "term_name": "Net 30",
     "created_by": "Budi Santoso",
     "created_at": "2026-07-05 09:00:00",
     "updated_by": null,
@@ -350,3 +356,4 @@ Soft-deletes the purchase invoice (sets `deleted_at`) — it will no longer appe
 - `invoice_display_number` must be unique per company among non-deleted purchase invoices; violating this returns `409 Conflict`.
 - The create response only returns `purchase_invoice_id`. Only the detail endpoint (`GET /api/v2/purchase-invoice/{id}`) returns the nested `items` array.
 - **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a purchase invoice (list, detail, and any nested items). Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.
+- **List and detail responses now also resolve reference IDs to their display names**, alongside the existing `*_id` field (both are returned): `purchase_order_id` → `po_display_number`, `supplier_id` → `supplier_name`, `term_id` → `term_name`. All are `LEFT JOIN`ed, so the resolved field is `null` if the referenced record is missing, was deleted, or `term_id` was never set; the `*_id` field is unaffected either way.

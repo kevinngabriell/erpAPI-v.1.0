@@ -19,13 +19,14 @@ function getAllOrigins($conn, $params) {
     }
 
     $from = APP_SCHEMA . ".origin o
+            LEFT JOIN " . APP_SCHEMA . ".region r ON r.id = o.region_id
             LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = o.created_by
             LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = o.updated_by";
 
-    $result       = mysqli_query($conn, "SELECT o.*,
+    $result       = mysqli_query($conn, "SELECT o.*, r.region_name,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
-            FROM $from WHERE $where ORDER BY o.created_at DESC LIMIT $limit OFFSET $offset");
+            FROM $from WHERE $where ORDER BY o.origin_name ASC LIMIT $limit OFFSET $offset");
     $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".origin o WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
@@ -33,6 +34,7 @@ function getAllOrigins($conn, $params) {
         $origins = mysqli_fetch_all($result, MYSQLI_ASSOC);
         foreach ($origins as &$origin) {
             $origin['is_free_trade'] = (bool)(int)$origin['is_free_trade'];
+            unset($origin['region_id']);
         }
         jsonResponse(200, 'Origins found', [
             'data'       => $origins,
@@ -90,9 +92,10 @@ function getDetailOrigin($conn, $origin_id) {
     $origin_id = mysqli_real_escape_string($conn, $origin_id);
 
     $from   = APP_SCHEMA . ".origin o
+            LEFT JOIN " . APP_SCHEMA . ".region r ON r.id = o.region_id
             LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = o.created_by
             LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = o.updated_by";
-    $result = mysqli_query($conn, "SELECT o.*,
+    $result = mysqli_query($conn, "SELECT o.*, r.region_name,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
             FROM $from WHERE o.id = '$origin_id' AND o.deleted_at IS NULL LIMIT 1");
@@ -103,6 +106,7 @@ function getDetailOrigin($conn, $origin_id) {
 
     $origin = mysqli_fetch_assoc($result);
     $origin['is_free_trade'] = (bool)(int)$origin['is_free_trade'];
+    unset($origin['region_id']);
 
     jsonResponse(200, 'Origin found', $origin);
 }

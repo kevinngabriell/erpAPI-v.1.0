@@ -1,6 +1,6 @@
 # Purchase Receive API
 
-> **Last updated:** 2026-07-11 18:49:02 WIB
+> **Last updated:** 2026-07-19 15:25:59 WIB
 > **Base URL:** `/api/v2/purchase-receive`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -46,10 +46,13 @@ List all purchase receives belonging to the authenticated company.
         "id": "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",
         "company_id": "b2c3d4e5-f6a7-4b5c-9d0e-1f2a3b4c5d6e",
         "purchase_order_id": "c3d4e5f6-a7b8-4c5d-0e1f-2a3b4c5d6e7f",
+        "po_display_number": "PO-2026-0001",
         "supplier_id": "d4e5f6a7-b8c9-4d5e-1f2a-3b4c5d6e7f8a",
+        "supplier_name": "PT Sumber Baja",
         "receiving_date": "2026-07-05",
         "ship_date": "2026-07-01",
         "ship_via_id": "e5f6a7b8-c9d0-4e5f-2a3b-4c5d6e7f8a9b",
+        "ship_name": "Sea Freight",
         "created_by": "Budi Santoso",
         "created_at": "2026-07-05 09:00:00",
         "updated_by": null,
@@ -175,10 +178,13 @@ Get detail of a single purchase receive, including its nested `items` array.
     "id": "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",
     "company_id": "b2c3d4e5-f6a7-4b5c-9d0e-1f2a3b4c5d6e",
     "purchase_order_id": "c3d4e5f6-a7b8-4c5d-0e1f-2a3b4c5d6e7f",
+    "po_display_number": "PO-2026-0001",
     "supplier_id": "d4e5f6a7-b8c9-4d5e-1f2a-3b4c5d6e7f8a",
+    "supplier_name": "PT Sumber Baja",
     "receiving_date": "2026-07-05",
     "ship_date": "2026-07-01",
     "ship_via_id": "e5f6a7b8-c9d0-4e5f-2a3b-4c5d6e7f8a9b",
+    "ship_name": "Sea Freight",
     "created_by": "Budi Santoso",
     "created_at": "2026-07-05 09:00:00",
     "updated_by": null,
@@ -329,3 +335,4 @@ Soft-deletes the purchase receive (sets `deleted_at`) — it will no longer appe
 - The list endpoint (`GET /api/v2/purchase-receive`) does not include the nested `items` array. Only the detail endpoint (`GET /api/v2/purchase-receive/{id}`) returns `items`. The create response only returns `purchase_receive_id`.
 - `search` is matched against the linked purchase order's `po_display_number` via a `LEFT JOIN`, not against any field on the purchase receive record itself — purchase receive rows have no display number of their own. Records whose `purchase_order_id` no longer resolves to a purchase order are excluded from `search` results (but still returned when `search` is omitted).
 - **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a purchase receive (list, detail, and any nested items). Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.
+- **List and detail responses now also resolve reference IDs to their display names**, alongside the existing `*_id` field (both are returned): `purchase_order_id` → `po_display_number`, `supplier_id` → `supplier_name`, `ship_via_id` → `ship_name`. All are `LEFT JOIN`ed, so the resolved field is `null` if the referenced record is missing or was deleted; the `*_id` field is unaffected either way.
