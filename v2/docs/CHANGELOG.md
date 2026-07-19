@@ -7,6 +7,34 @@ Intended audience: frontend developers.
 
 ---
 
+## [2026-07-19 22:54:57 WIB] — Cash book report added
+
+### Added
+- `GET /api/v2/cash-book` — new report endpoint. Per-bank-account opening balance, period movement, and closing balance for a date range (paginated). This is the v2 equivalent of v1's Buku Kas.
+- `GET /api/v2/cash-book/{bank_account_id}` — transaction-level cash book detail for one bank account, with running balance. Combines `finance_transaction` rows for that bank account with `finance_payment` rows settled through it (customer/supplier payments), ordered together by date.
+- `POST /api/v2/finance-category` and `PUT /api/v2/finance-category/{id}` — now require/accept a new `category_type` field (`debit` or `credit`). List and detail responses for finance categories now include `category_type`.
+
+### Breaking changes
+- `POST /api/v2/finance-category` now requires `category_type` in the request body — existing integrations creating finance categories without this field will get a `400`.
+
+### Notes for frontend
+- The cash book's `signed_amount` is positive for cash in, negative for cash out. Direction for `finance_transaction` rows comes from the linked finance category's new `category_type`; direction for `finance_payment` rows comes from whether it was a customer or supplier settlement.
+- Existing finance categories were backfilled: `Penerimaan` and `Penerimaan Penjualan` → `debit`; `Pembayaran` and `Pembayaran Pembelian` → `credit`. Any new category must be tagged correctly or cash book totals will be wrong.
+- No Excel export endpoint yet (v1 had `BukuKasdocument.php`/`exportbukukas.php`) — this is JSON-only, matching the rest of the v2 reports.
+
+---
+
+## [2026-07-19 WIB] — Finance transaction list & detail now resolve reference names
+
+### Added
+- `GET /api/v2/finance-transaction` and `GET /api/v2/finance-transaction/{id}` — responses now also include `bank_name`, `bank_number` (from `bank_account_id`), `account_code`, `account_code_name` (from `account_code_id`), and `category_name` (from `finance_category_id`), resolved via `LEFT JOIN` alongside their existing `*_id` fields.
+
+### Notes for frontend
+- All `*_id` fields are unchanged and still returned — this is additive, not a rename. Display the new resolved fields directly instead of calling `bank-account`, `account-code`, and `finance-category` separately and mapping the results client-side.
+- Every resolved field is `null` if the referenced master record no longer exists, same as the existing `created_by`/`updated_by` behavior.
+
+---
+
 ## [2026-07-19 15:25:59 WIB] — Purchase order/receive/invoice list & detail now resolve reference names
 
 ### Added

@@ -24,10 +24,13 @@ function getAllFinanceTransactions($conn, $company_id, $params) {
     }
 
     $from = APP_SCHEMA . ".finance_transaction ft
+            LEFT JOIN " . APP_SCHEMA . ".bank_account ba ON ba.id = ft.bank_account_id
+            LEFT JOIN " . APP_SCHEMA . ".account_code ac ON ac.id = ft.account_code_id
+            LEFT JOIN " . APP_SCHEMA . ".finance_category fc ON fc.id = ft.finance_category_id
             LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = ft.created_by
             LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = ft.updated_by";
 
-    $result       = mysqli_query($conn, "SELECT ft.*,
+    $result       = mysqli_query($conn, "SELECT ft.*, ba.bank_name, ba.bank_number, ac.account_code, ac.account_code_name, fc.category_name,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
             FROM $from WHERE $where ORDER BY ft.created_at DESC LIMIT $limit OFFSET $offset");
@@ -106,9 +109,12 @@ function getDetailFinanceTransaction($conn, $finance_transaction_id, $company_id
     $finance_transaction_id = mysqli_real_escape_string($conn, $finance_transaction_id);
 
     $from   = APP_SCHEMA . ".finance_transaction ft
+            LEFT JOIN " . APP_SCHEMA . ".bank_account ba ON ba.id = ft.bank_account_id
+            LEFT JOIN " . APP_SCHEMA . ".account_code ac ON ac.id = ft.account_code_id
+            LEFT JOIN " . APP_SCHEMA . ".finance_category fc ON fc.id = ft.finance_category_id
             LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = ft.created_by
             LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = ft.updated_by";
-    $result = mysqli_query($conn, "SELECT ft.*,
+    $result = mysqli_query($conn, "SELECT ft.*, ba.bank_name, ba.bank_number, ac.account_code, ac.account_code_name, fc.category_name,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
             FROM $from WHERE ft.id = '$finance_transaction_id' AND ft.company_id = '$company_id' AND ft.deleted_at IS NULL LIMIT 1");

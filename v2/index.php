@@ -195,6 +195,9 @@ switch ($module) {
     case 'general-ledger':
         require __DIR__ . '/reports/general-ledger/index.php';
         break;
+    case 'cash-book':
+        require __DIR__ . '/reports/cash-book/index.php';
+        break;
     case 'cogs-report':
         require __DIR__ . '/reports/cogs-report/index.php';
         break;

@@ -41,7 +41,7 @@ function getAllFinanceCategories($conn, $params) {
 }
 
 function createFinanceCategory($conn, $input, $username) {
-    $required = ['category_name'];
+    $required = ['category_name', 'category_type'];
     foreach ($required as $field) {
         if (!isset($input[$field]) || is_string($input[$field]) && trim($input[$field]) === '') {
             jsonResponse(400, "$field is required");
@@ -49,7 +49,13 @@ function createFinanceCategory($conn, $input, $username) {
         }
     }
 
+    if (!in_array($input['category_type'], ['debit', 'credit'], true)) {
+        jsonResponse(400, 'category_type must be debit or credit');
+        return;
+    }
+
     $category_name = trim(mysqli_real_escape_string($conn, $input['category_name']));
+    $category_type = $input['category_type'];
 
     $dup = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".finance_category WHERE category_name = '$category_name' AND deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($dup) > 0) {
@@ -60,8 +66,8 @@ function createFinanceCategory($conn, $input, $username) {
     $finance_category_id = generateUUID();
     $now                  = date('Y-m-d H:i:s');
 
-    $sql = "INSERT INTO " . APP_SCHEMA . ".finance_category (id, category_name, created_by, created_at)
-            VALUES ('$finance_category_id', '$category_name', '$username', '$now')";
+    $sql = "INSERT INTO " . APP_SCHEMA . ".finance_category (id, category_name, category_type, created_by, created_at)
+            VALUES ('$finance_category_id', '$category_name', '$category_type', '$username', '$now')";
 
     if (mysqli_query($conn, $sql)) {
         jsonResponse(201, 'Finance category created successfully', ['finance_category_id' => $finance_category_id]);
@@ -103,6 +109,14 @@ function updateFinanceCategory($conn, $finance_category_id, $input, $username) {
         $val = trim(mysqli_real_escape_string($conn, $input['category_name']));
         if ($val === '') { jsonResponse(400, 'category_name cannot be empty'); return; }
         $updates[] = "category_name = '$val'";
+    }
+
+    if (isset($input['category_type'])) {
+        if (!in_array($input['category_type'], ['debit', 'credit'], true)) {
+            jsonResponse(400, 'category_type must be debit or credit');
+            return;
+        }
+        $updates[] = "category_type = '{$input['category_type']}'";
     }
 
     if (empty($updates)) {

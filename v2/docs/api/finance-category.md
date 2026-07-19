@@ -1,6 +1,6 @@
 # Finance Category API
 
-> **Last updated:** 2026-07-11 18:49:02 WIB
+> **Last updated:** 2026-07-19 22:54:57 WIB
 > **Base URL:** `/api/v2/finance-category`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -41,6 +41,7 @@ List all finance categories.
       {
         "id": "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",
         "category_name": "Office Supplies",
+        "category_type": "debit",
         "created_by": "Budi Santoso",
         "created_at": "2026-06-27 10:00:00",
         "updated_by": null,
@@ -79,6 +80,7 @@ Create a new finance category.
 | Field          | Type   | Required | Description |
 |----------------|--------|----------|-------------|
 | category_name  | string | Yes      | Finance category name. Must be unique among non-deleted finance categories. |
+| category_type  | string | Yes      | `debit` (cash in) or `credit` (cash out). |
 
 #### Response `201 Created`
 
@@ -133,6 +135,7 @@ Get detail of a single finance category.
   "data": {
     "id": "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",
     "category_name": "Office Supplies",
+    "category_type": "debit",
     "created_by": "Budi Santoso",
     "created_at": "2026-06-27 10:00:00",
     "updated_by": null,
@@ -169,6 +172,7 @@ Update a finance category. Only send the fields you want to change.
 | Field          | Type   | Required | Description |
 |----------------|--------|----------|-------------|
 | category_name  | string | No       | Cannot be an empty string if provided. |
+| category_type  | string | No       | `debit` or `credit`. |
 
 #### Response `200 OK`
 
@@ -253,3 +257,4 @@ Soft-deletes the finance category (sets `deleted_at`) — it will no longer appe
 - IDs are UUIDs generated with `generateUUID()`, not prefixed strings (e.g. `a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d`).
 - Delete is a soft delete (`deleted_at` timestamp) and is reversible at the database layer, even though there is currently no undelete endpoint.
 - **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a finance category (list, detail, and any nested items). Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.
+- **`category_type` drives cash book direction.** [`GET /api/v2/cash-book`](cash-book.md) classifies every `finance_transaction` row as debit (cash in) or credit (cash out) by joining to this category's `category_type` — so any new category must be tagged correctly or cash book totals will be wrong. Existing seed data: `Penerimaan` and `Penerimaan Penjualan` are `debit`; `Pembayaran` and `Pembayaran Pembelian` are `credit`.

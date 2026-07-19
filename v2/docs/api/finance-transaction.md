@@ -1,6 +1,6 @@
 # Finance Transaction API
 
-> **Last updated:** 2026-07-11 18:49:02 WIB
+> **Last updated:** 2026-07-19 WIB
 > **Base URL:** `/api/v2/finance-transaction`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -54,6 +54,11 @@ List all finance transactions belonging to the authenticated company.
         "cheque_number": "CHQ-0011",
         "payee": "PT Sumber Makmur",
         "finance_category_id": "e5f6a7b8-c9d0-4e5f-2a3b-4c5d6e7f8a9b",
+        "bank_name": "Bank Central Asia",
+        "bank_number": "1234567890",
+        "account_code": "5100",
+        "account_code_name": "Office Supplies Expense",
+        "category_name": "Operating Expense",
         "created_by": "Budi Santoso",
         "created_at": "2026-07-01 10:00:00",
         "updated_by": null,
@@ -175,6 +180,11 @@ Get detail of a single finance transaction.
     "cheque_number": "CHQ-0011",
     "payee": "PT Sumber Makmur",
     "finance_category_id": "e5f6a7b8-c9d0-4e5f-2a3b-4c5d6e7f8a9b",
+    "bank_name": "Bank Central Asia",
+    "bank_number": "1234567890",
+    "account_code": "5100",
+    "account_code_name": "Office Supplies Expense",
+    "category_name": "Operating Expense",
     "created_by": "Budi Santoso",
     "created_at": "2026-07-01 10:00:00",
     "updated_by": null,
@@ -313,3 +323,4 @@ Soft-deletes the finance transaction (sets `deleted_at`) — it will no longer a
 - `bank_account_id` and `account_code_id` must reference an existing, non-deleted record in the same company; `finance_category_id` is only checked for presence, not existence.
 - create/update/delete write `audit_log` rows with action `created`/`updated`/`deleted`. Query this history via `GET /api/v2/audit-log?module=finance_transaction&reference_id={id}` — see the `audit-log` module doc.
 - **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a finance transaction (list, detail, and any nested items). Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.
+- **List and detail responses now include LEFT JOIN-resolved display fields** alongside the existing `*_id` foreign keys, so the frontend no longer needs to call `bank-account`, `account-code`, and `finance-category` separately and map the results client-side: `bank_name` / `bank_number` (from `bank_account_id`), `account_code` / `account_code_name` (from `account_code_id`), and `category_name` (from `finance_category_id`). The `*_id` fields are still returned unchanged. Any of these can be `null` if the referenced record has been deleted.
