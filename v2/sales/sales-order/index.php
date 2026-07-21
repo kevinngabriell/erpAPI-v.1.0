@@ -3,6 +3,11 @@
 require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
 require_once __DIR__ . '/../../helpers/audit_log.php';
+require_once __DIR__ . '/../../helpers/excel_export.php';
+
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use PhpOffice\PhpSpreadsheet\Style\Border;
 
 function getSalesStatusIdByName($conn, $status_name) {
     $status_name = mysqli_real_escape_string($conn, $status_name);
@@ -291,9 +296,9 @@ function approveSalesOrder($conn, $sales_order_id, $input, $username, $company_i
         return;
     }
 
-    $status_id = getSalesStatusIdByName($conn, 'Approve');
+    $status_id = getSalesStatusIdByName($conn, 'Approved');
     if (!$status_id) {
-        jsonResponse(500, 'Sales status "Approve" is not configured');
+        jsonResponse(500, 'Sales status "Approved" is not configured');
         return;
     }
 
@@ -370,6 +375,138 @@ function reviseSalesOrder($conn, $sales_order_id, $input, $username, $company_id
     }
 }
 
+function exportSalesOrder($conn, $sales_order_id, $company_id) {
+    $sales_order_id = mysqli_real_escape_string($conn, $sales_order_id);
+
+    $from   = APP_SCHEMA . ".sales_order so
+            LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = so.customer_id
+            LEFT JOIN " . APP_SCHEMA . ".ppn_type pt ON pt.id = so.ppn_type_id
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = so.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user au ON au.user_id COLLATE utf8mb4_general_ci = so.approved_by";
+    $result = mysqli_query($conn, "SELECT so.*, c.customer_name, c.customer_address, c.customer_top_days,
+            pt.ppn_name, pt.ppn_percentage,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by_name,
+            CONCAT(au.first_name, ' ', au.last_name) AS approved_by_name
+            FROM $from WHERE so.id = '$sales_order_id' AND so.company_id = '$company_id' AND so.deleted_at IS NULL LIMIT 1");
+    if (!$result || mysqli_num_rows($result) === 0) {
+        jsonResponse(404, 'Sales order not found');
+        return;
+    }
+
+    $sales_order = mysqli_fetch_assoc($result);
+
+    $items_from   = APP_SCHEMA . ".sales_order_item soi
+            LEFT JOIN " . APP_SCHEMA . ".unit_of_measure uom ON uom.id = soi.uom_id
+            LEFT JOIN " . APP_SCHEMA . ".currency cur ON cur.id = soi.currency_id
+            LEFT JOIN " . APP_SCHEMA . ".purchase_order po ON po.id = soi.purchase_order_id";
+    $items_result = mysqli_query($conn, "SELECT soi.*, uom.uom_name, cur.currency_name, po.po_display_number
+            FROM $items_from WHERE soi.sales_order_id = '$sales_order_id' AND soi.deleted_at IS NULL ORDER BY soi.created_at ASC");
+    $items = $items_result ? mysqli_fetch_all($items_result, MYSQLI_ASSOC) : [];
+
+    $spreadsheet = new Spreadsheet();
+    $sheet       = $spreadsheet->getActiveSheet();
+
+    $sheet->mergeCells('A1:B1');
+    $sheet->setCellValue('A1', 'SALES ORDER');
+    $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(14);
+    $sheet->getStyle('A1')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+
+    $sheet->setCellValue('A2', 'No SO :');
+    $sheet->setCellValue('B2', $sales_order['so_display_number']);
+    $sheet->setCellValue('F2', 'Customer :');
+    $sheet->setCellValue('G2', $sales_order['customer_name']);
+    $sheet->setCellValue('F3', 'ALAMAT :');
+    $sheet->setCellValue('G3', $sales_order['customer_address']);
+    $sheet->setCellValue('F4', 'PO NO :');
+    $sheet->setCellValue('G4', $items[0]['po_display_number'] ?? '-');
+    $sheet->setCellValue('A3', 'Tanggal :');
+    $sheet->setCellValue('B3', formatIndonesianDate($sales_order['so_date']));
+    $sheet->setCellValue('A4', 'PPN/NO PPN : ');
+    $sheet->setCellValue('B4', $sales_order['ppn_name']);
+
+    $table_headers = ['NO', 'BARANG', 'QTY', 'SAT', 'CURR', 'HARGA @', 'TOTAL', 'KURS', 'DPP', 'PPN'];
+    $sheet->fromArray($table_headers, null, 'A5');
+    $sheet->getStyle('A5:J5')->getFont()->setBold(true);
+    $sheet->getStyle('A5:J5')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+    $sheet->getStyle('A5:J5')->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+
+    $row        = 6;
+    $no         = 1;
+    $total_dpp  = 0;
+    $total_ppn  = 0;
+    $ppn_percentage = (float)($sales_order['ppn_percentage'] ?? 0);
+
+    foreach ($items as $item) {
+        $dpp = (float)$item['quantity'] * (float)$item['unit_price'];
+        $ppn = $ppn_percentage * $dpp / 100;
+
+        $sheet->setCellValue("A$row", $no);
+        $sheet->setCellValue("B$row", $item['product_name']);
+        $sheet->setCellValue("C$row", $item['quantity']);
+        $sheet->setCellValue("D$row", $item['uom_name']);
+        $sheet->setCellValue("E$row", $item['currency_name']);
+        $sheet->setCellValue("F$row", number_format((float)$item['unit_price'], 2));
+        $sheet->setCellValue("G$row", number_format($dpp, 2));
+        $sheet->setCellValue("H$row", number_format((float)$item['kurs'], 2));
+        $sheet->setCellValue("I$row", number_format($dpp, 2));
+        $sheet->setCellValue("J$row", number_format($ppn, 2));
+
+        $sheet->getStyle("A$row:J$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+
+        $total_dpp += $dpp;
+        $total_ppn += $ppn;
+        $row++;
+        $no++;
+    }
+
+    $sheet->getStyle("A$row:J$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+    $row++;
+    $sheet->getStyle("A$row:J$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+    $sheet->setCellValue("A$row", 'TOP :');
+    $sheet->setCellValue("B$row", ($sales_order['customer_top_days'] ?? '-') . ' hari');
+    $row++;
+    $sheet->getStyle("A$row:J$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+    $row++;
+
+    $sheet->setCellValue("F$row", 'Total :');
+    $sheet->setCellValue("G$row", number_format($total_dpp, 2));
+    $sheet->setCellValue("I$row", number_format($total_dpp, 2));
+    $sheet->setCellValue("J$row", number_format($total_ppn, 2));
+    $sheet->getStyle("A$row:J$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+    $row++;
+
+    $sheet->mergeCells("I$row:J$row");
+    $sheet->setCellValue("I$row", number_format($total_dpp + $total_ppn, 2));
+    $sheet->getStyle("A$row:J$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+    $row++;
+
+    $sheet->setCellValue("A$row", 'DIKIRIM Tgl : ');
+    $sheet->setCellValue("B$row", formatIndonesianDate($sales_order['send_date']));
+    $row++;
+    $sheet->setCellValue("A$row", 'DIKIRIM KE : ');
+    $sheet->setCellValue("B$row", $sales_order['send_to_address'] ?? '-');
+    $row++;
+
+    $row += 2;
+    $sheet->setCellValue("A$row", 'DIBUAT OLEH,');
+    $sheet->setCellValue("D$row", 'MENGETAHUI OLEH,');
+    $sheet->setCellValue("I$row", 'DISETUJUI OLEH,');
+    $row++;
+    $sheet->setCellValue("A$row", ($sales_order['created_by_name'] ?? '-') . ' pada ' . $sales_order['created_at']);
+    $sheet->setCellValue("D$row", ($sales_order['created_by_name'] ?? '-') . ' pada ' . $sales_order['created_at']);
+    $sheet->setCellValue("I$row", ($sales_order['approved_by_name'] ?? '-') . ' pada ' . ($sales_order['approved_at'] ?? '-'));
+    $row += 3;
+    $sheet->setCellValue("A$row", '( ADMIN SALES )');
+    $sheet->setCellValue("D$row", '( TUKAR FAKTUR )');
+    $sheet->setCellValue("I$row", '( SULANTO )    ( IRENE )');
+
+    foreach (range('A', 'J') as $col) {
+        $sheet->getColumnDimension($col)->setAutoSize(true);
+    }
+
+    streamXlsx($spreadsheet, 'sales_order_' . sanitizeFilename($sales_order['so_display_number']) . '.xlsx');
+}
+
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
 $authUser   = requireAuth();
@@ -394,6 +531,10 @@ try {
 
     } elseif ($sales_order_id && $sub_action === 'items') {
         require __DIR__ . '/items.php';
+
+    } elseif ($sales_order_id && $sub_action === 'export') {
+        if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
+        exportSalesOrder($conn, $sales_order_id, $company_id);
 
     } elseif ($sales_order_id && $sub_action !== '') {
         $input = in_array($method, ['POST', 'PUT', 'PATCH'])

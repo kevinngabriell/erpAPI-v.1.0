@@ -1,6 +1,6 @@
 # Sales Order API
 
-> **Last updated:** 2026-07-14 05:56:38 WIB
+> **Last updated:** 2026-07-20 18:58:14 WIB
 > **Base URL:** `/api/v2/sales-order`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -20,6 +20,7 @@
 | PATCH  | `/api/v2/sales-order/{id}/approve` | Approve a sales order |
 | PATCH  | `/api/v2/sales-order/{id}/reject` | Reject a sales order |
 | PATCH  | `/api/v2/sales-order/{id}/revise` | Move a rejected sales order back to Draft |
+| GET    | `/api/v2/sales-order/{id}/export` | Download the sales order as an `.xlsx` file |
 | GET    | `/api/v2/sales-order/{id}/items` | List items of a sales order |
 | POST   | `/api/v2/sales-order/{id}/items` | Add an item to a sales order |
 | GET    | `/api/v2/sales-order/{id}/items/{item_id}` | Get a single sales order item |
@@ -487,6 +488,39 @@ Returned when the sales order's current status is not `Rejected` (e.g. it's `Dra
 
 ---
 
+### GET `/api/v2/sales-order/{id}/export`
+
+Download the sales order as a formatted `.xlsx` file (via PhpSpreadsheet), matching the layout of the legacy v1 export (`sales/SOExport.php`). Header info, item table (with `DPP`/`PPN` columns computed server-side from `ppn_type.ppn_percentage`), TOP, totals, and signature block.
+
+#### Path parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| id | string | The sales order ID |
+
+#### Response `200 OK`
+
+Binary `.xlsx` file. Headers:
+
+```
+Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+Content-Disposition: attachment; filename="sales_order_{so_display_number}.xlsx"
+```
+
+The filename's `so_display_number` has any character outside `[A-Za-z0-9_-]` replaced with `-` (the generated display number contains `/`, which is not a valid filename character).
+
+#### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Sales order not found",
+  "data": []
+}
+```
+
+---
+
 ### Sales order items (`/api/v2/sales-order/{id}/items`)
 
 Items are also a sub-resource in their own right, separate from the nested `items` array returned on the sales order itself. `{id}` below is the parent sales order ID; the item's own ID is `{item_id}`.
@@ -719,4 +753,5 @@ Soft-deletes the sales order item (sets `deleted_at`) — it will no longer appe
 - **List and detail responses now include resolved names alongside their IDs** — `customer_name` (joined from `customer`), `ppn_name` (joined from `ppn_type`), and `status_name` (joined from `sales_status`) are returned next to `customer_id`, `ppn_type_id`, and `status_id` respectively. The frontend no longer needs a separate lookup call just to display these values in a list or detail view; the IDs are still returned and still required for `PUT`/filter requests. Any of the three may be `null` if the referenced master-data row was deleted.
 - If `sales_status` is ever missing a `Draft`/`Approved`/`Rejected` row (non-deleted), the corresponding endpoint returns `500` with a message naming the missing status — this indicates a master-data configuration problem, not a client error.
 - `GET /api/v2/sales-order/generate-number` counts existing rows (including soft-deleted ones) whose `so_display_number` matches the current company/month/year pattern, so the sequence never repeats within a month even if a sales order is later deleted.
+- **`GET /api/v2/sales-order/{id}/export` downloads a formatted `.xlsx`**, replicating the legacy v1 export layout. The header "PO NO" cell shows the linked purchase order's `po_display_number` from the *first* item that has one (v1 had a single header-level PO number field; v2's schema links `purchase_order_id` per item instead, so there is no single header PO number to show if items reference different purchase orders).
 - **`created_by`, `updated_by`, and `approved_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a sales order or a sales order item — list, detail, and the nested `items` array. Previously these fields held the raw user ID. There is no separate `*_id` field for these three — the resolved name **is** the value; the raw ID is no longer returned anywhere in the response. `updated_by`/`approved_by` are `null` until the record has actually been updated/approved; `created_by` can be `null` only if the user who created the record has since been deleted.

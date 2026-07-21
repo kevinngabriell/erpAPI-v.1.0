@@ -1,6 +1,6 @@
 # Purchase Order API
 
-> **Last updated:** 2026-07-19 15:25:59 WIB
+> **Last updated:** 2026-07-20 00:00:00 WIB
 > **Base URL:** `/api/v2/purchase-order`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -17,6 +17,7 @@
 | DELETE | `/api/v2/purchase-order/{id}` | Delete a purchase order |
 | PATCH  | `/api/v2/purchase-order/{id}/approve` | Approve a purchase order |
 | PATCH  | `/api/v2/purchase-order/{id}/reject` | Reject a purchase order |
+| PATCH  | `/api/v2/purchase-order/{id}/revise` | Revise a rejected purchase order back to Draft |
 | GET    | `/api/v2/purchase-order/{id}/items` | List items of a purchase order |
 | POST   | `/api/v2/purchase-order/{id}/items` | Add an item to a purchase order |
 | GET    | `/api/v2/purchase-order/{id}/items/{item_id}` | Get a single purchase order item |
@@ -67,7 +68,7 @@ List all purchase orders belonging to the authenticated company.
         "shipping_marks": "N/A",
         "remarks": "Urgent order",
         "status_id": "a7b8c9d0-e1f2-4a5b-4c5d-6e7f8a9b0c1d",
-        "status_name": "Approve",
+        "status_name": "Approved",
         "type_id": "b8c9d0e1-f2a3-4b5c-5d6e-7f8a9b0c1d2e",
         "type_name": "Import",
         "currency_id": "c9d0e1f2-a3b4-4c5d-6e7f-8a9b0c1d2e3f",
@@ -113,7 +114,7 @@ List all purchase orders belonging to the authenticated company.
 
 ### POST `/api/v2/purchase-order`
 
-Create a new purchase order together with its items.
+Create a new purchase order together with its items. Server-side sets `status_id` to the `Draft` purchase status — the client does not send `status_id`.
 
 #### Request body (`application/json`)
 
@@ -122,7 +123,6 @@ Create a new purchase order together with its items.
 | po_display_number | string | Yes | Unique display number for the PO |
 | po_date | string (date) | Yes | PO date |
 | supplier_id | string | Yes | Supplier ID |
-| status_id | string | Yes | Initial status ID |
 | items | array | Yes | Non-empty array of order items — see below |
 | shipment_method | string | No | One of `FOB`, `CIF`, `EXW`, `CFR`, `CIP`, `DAP`, `DDP`, `FCA` |
 | shipment_date | string (date) | No | — |
@@ -243,7 +243,7 @@ Get detail of a single purchase order, including its nested `items` array.
     "shipping_marks": "N/A",
     "remarks": "Urgent order",
     "status_id": "a7b8c9d0-e1f2-4a5b-4c5d-6e7f8a9b0c1d",
-    "status_name": "Approve",
+    "status_name": "Approved",
     "type_id": "b8c9d0e1-f2a3-4b5c-5d6e-7f8a9b0c1d2e",
     "type_name": "Import",
     "currency_id": "c9d0e1f2-a3b4-4c5d-6e7f-8a9b0c1d2e3f",
@@ -298,7 +298,7 @@ Get detail of a single purchase order, including its nested `items` array.
 
 ### PUT `/api/v2/purchase-order/{id}`
 
-Update a purchase order. Only send the fields you want to change. Does not update items — use the items sub-resource for that.
+Update a purchase order. Only send the fields you want to change. Does not update items — use the items sub-resource for that. `status_id` cannot be changed here — status transitions only happen via `approve`/`reject`/`revise`.
 
 #### Path parameters
 
@@ -317,7 +317,6 @@ Update a purchase order. Only send the fields you want to change. Does not updat
 | origin_id | string | No | Cannot be empty if provided |
 | shipping_marks | string | No | Cannot be empty if provided |
 | remarks | string | No | Cannot be empty if provided |
-| status_id | string | No | Cannot be empty if provided |
 | type_id | string | No | Cannot be empty if provided |
 | currency_id | string | No | Cannot be empty if provided |
 | ppn_type_id | string | No | Cannot be empty if provided |
@@ -396,7 +395,7 @@ Soft-deletes the purchase order (sets `deleted_at`) — it will no longer appear
 
 ### PATCH `/api/v2/purchase-order/{id}/approve`
 
-Approve a purchase order. Sets `status_id`, `approved_by`, `approved_at`.
+Approve a purchase order. Server-side sets `status_id` to the `Approved` purchase status, plus `approved_by`, `approved_at`. The client does not send `status_id`.
 
 #### Path parameters
 
@@ -408,7 +407,6 @@ Approve a purchase order. Sets `status_id`, `approved_by`, `approved_at`.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| status_id | string | Yes | The status to set on approval |
 | notes | string | No | Optional note recorded on the audit log entry |
 
 #### Response `200 OK`
@@ -417,16 +415,6 @@ Approve a purchase order. Sets `status_id`, `approved_by`, `approved_at`.
 {
   "status_code": 200,
   "status_message": "Purchase order approved successfully",
-  "data": []
-}
-```
-
-#### Response `400 Bad Request`
-
-```json
-{
-  "status_code": 400,
-  "status_message": "status_id is required",
   "data": []
 }
 ```
@@ -445,7 +433,7 @@ Approve a purchase order. Sets `status_id`, `approved_by`, `approved_at`.
 
 ### PATCH `/api/v2/purchase-order/{id}/reject`
 
-Reject a purchase order. Sets `status_id` only (does not set `approved_by`/`approved_at`).
+Reject a purchase order. Server-side sets `status_id` to the `Rejected` purchase status (does not set `approved_by`/`approved_at`). The client does not send `status_id`.
 
 #### Path parameters
 
@@ -457,7 +445,6 @@ Reject a purchase order. Sets `status_id` only (does not set `approved_by`/`appr
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| status_id | string | Yes | The status to set on rejection |
 | notes | string | No | Optional note recorded on the audit log entry |
 
 #### Response `200 OK`
@@ -470,12 +457,50 @@ Reject a purchase order. Sets `status_id` only (does not set `approved_by`/`appr
 }
 ```
 
+#### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Purchase order not found",
+  "data": []
+}
+```
+
+---
+
+### PATCH `/api/v2/purchase-order/{id}/revise`
+
+Move a rejected purchase order back to `Draft` so it can be edited and resubmitted. Only allowed when the current status is `Rejected`.
+
+#### Path parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| id | string | The purchase order ID |
+
+#### Request body (`application/json`)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| notes | string | No | Optional note recorded on the audit log entry |
+
+#### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Purchase order revised successfully",
+  "data": []
+}
+```
+
 #### Response `400 Bad Request`
 
 ```json
 {
   "status_code": 400,
-  "status_message": "status_id is required",
+  "status_message": "Only rejected purchase orders can be revised",
   "data": []
 }
 ```
@@ -712,7 +737,9 @@ Soft-deletes the purchase order item (sets `deleted_at`) — it will no longer a
 - `shipment_method`, when provided, must be one of: `FOB`, `CIF`, `EXW`, `CFR`, `CIP`, `DAP`, `DDP`, `FCA`.
 - Header + items creation is wrapped in a single database transaction — either the purchase order and all its items are created together, or nothing is saved.
 - The list endpoint (`GET /api/v2/purchase-order`) does not include the nested `items` array; only the detail endpoint (`GET /api/v2/purchase-order/{id}`) does. The create response only returns `purchase_order_id`.
-- Approve/reject write an `audit_log` row with action `approved`/`rejected`; create/update/delete write `created`/`updated`/`deleted` audit_log rows. Query this history via `GET /api/v2/audit-log?module=purchase_order&reference_id={id}` — see the `audit-log` module doc.
-- `approve` sets `approved_by` and `approved_at`; `reject` does not.
+- Approve/reject/revise write an `audit_log` row with action `approved`/`rejected`/`revised`; create/update/delete write `created`/`updated`/`deleted` audit_log rows. Query this history via `GET /api/v2/audit-log?module=purchase_order&reference_id={id}` — see the `audit-log` module doc.
+- `approve` sets `approved_by` and `approved_at`; `reject` and `revise` do not.
+- **`status_id` is no longer a client-supplied field on any endpoint.** It is resolved server-side by matching `purchase_status.status_name`: `POST` sets it to `"Draft"`, `PATCH .../approve` sets it to `"Approved"`, `PATCH .../reject` sets it to `"Rejected"`, `PATCH .../revise` sets it back to `"Draft"`. `PUT` (general update) cannot change `status_id` at all — status transitions only happen via `approve`/`reject`/`revise`. This removes the previous requirement for the frontend to know/send a `status_id` UUID, and the correctness risk that came with it (`purchase_status.id` is a UUID generated independently per environment — the same status name has a different `id` in dev vs. production).
+- `revise` only succeeds when the purchase order's current status is `Rejected`; any other status returns `400`.
 - **`created_by`, `updated_by`, and `approved_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a purchase order or a purchase order item — list, detail, and items. Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by`/`approved_by` are `null` until the record has actually been updated/approved; `created_by` can be `null` only if the creating user has since been deleted.
 - **List and detail responses now also resolve reference IDs to their display names**, alongside the existing `*_id` field (both are returned): `supplier_id` → `supplier_name`, `status_id` → `status_name`, `term_id` → `term_name`, `payment_method_id` → `method_name`, `origin_id` → `origin_name`, `type_id` → `type_name`, `currency_id` → `currency_code` + `currency_name`, `ppn_type_id` → `ppn_name`. All are `LEFT JOIN`ed, so the resolved field is `null` if the referenced master record is missing or was deleted; the `*_id` field is unaffected either way.

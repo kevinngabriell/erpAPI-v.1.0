@@ -6,6 +6,13 @@ require_once __DIR__ . '/../../helpers/audit_log.php';
 
 const PURCHASE_ORDER_SHIPMENT_METHODS = ['FOB', 'CIF', 'EXW', 'CFR', 'CIP', 'DAP', 'DDP', 'FCA'];
 
+function getPurchaseStatusIdByName($conn, $status_name) {
+    $status_name = mysqli_real_escape_string($conn, $status_name);
+    $result = mysqli_query($conn, "SELECT id FROM " . APP_SCHEMA . ".purchase_status WHERE status_name = '$status_name' AND deleted_at IS NULL LIMIT 1");
+    $row = $result ? mysqli_fetch_assoc($result) : null;
+    return $row ? $row['id'] : null;
+}
+
 function getAllPurchaseOrders($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
     $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
@@ -71,7 +78,7 @@ function getAllPurchaseOrders($conn, $company_id, $params) {
 }
 
 function createPurchaseOrder($conn, $input, $username, $company_id) {
-    $required = ['po_display_number', 'po_date', 'supplier_id', 'status_id', 'items'];
+    $required = ['po_display_number', 'po_date', 'supplier_id', 'items'];
     foreach ($required as $field) {
         if (!isset($input[$field]) || (is_string($input[$field]) && trim($input[$field]) === '')) {
             jsonResponse(400, "$field is required");
@@ -106,11 +113,16 @@ function createPurchaseOrder($conn, $input, $username, $company_id) {
     $po_display_number = trim(mysqli_real_escape_string($conn, $input['po_display_number']));
     $po_date            = mysqli_real_escape_string($conn, $input['po_date']);
     $supplier_id        = mysqli_real_escape_string($conn, $input['supplier_id']);
-    $status_id          = mysqli_real_escape_string($conn, $input['status_id']);
 
     $dup = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".purchase_order WHERE company_id = '$company_id' AND po_display_number = '$po_display_number' AND deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($dup) > 0) {
         jsonResponse(409, 'Purchase order already exists');
+        return;
+    }
+
+    $status_id = getPurchaseStatusIdByName($conn, 'Draft');
+    if (!$status_id) {
+        jsonResponse(500, 'Default purchase status "Draft" is not configured');
         return;
     }
 
@@ -231,7 +243,7 @@ function updatePurchaseOrder($conn, $purchase_order_id, $input, $username, $comp
 
     $string_fields = [
         'po_display_number', 'supplier_id', 'term_id', 'payment_method_id', 'origin_id',
-        'shipping_marks', 'remarks', 'status_id', 'type_id', 'currency_id', 'ppn_type_id',
+        'shipping_marks', 'remarks', 'type_id', 'currency_id', 'ppn_type_id',
         'container_number', 'bl_number', 'vessel_name',
     ];
     foreach ($string_fields as $field) {
@@ -296,20 +308,20 @@ function deletePurchaseOrder($conn, $purchase_order_id, $username, $company_id) 
 }
 
 function approvePurchaseOrder($conn, $purchase_order_id, $input, $username, $company_id) {
-    if (!isset($input['status_id']) || trim($input['status_id']) === '') {
-        jsonResponse(400, 'status_id is required');
-        return;
-    }
-
     $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".purchase_order WHERE id = '$purchase_order_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Purchase order not found');
         return;
     }
 
-    $status_id = mysqli_real_escape_string($conn, $input['status_id']);
-    $now       = date('Y-m-d H:i:s');
-    $notes     = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
+    $status_id = getPurchaseStatusIdByName($conn, 'Approved');
+    if (!$status_id) {
+        jsonResponse(500, 'Purchase status "Approved" is not configured');
+        return;
+    }
+
+    $now   = date('Y-m-d H:i:s');
+    $notes = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
 
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".purchase_order
             SET status_id = '$status_id', approved_by = '$username', approved_at = '$now', updated_by = '$username', updated_at = '$now'
@@ -322,20 +334,20 @@ function approvePurchaseOrder($conn, $purchase_order_id, $input, $username, $com
 }
 
 function rejectPurchaseOrder($conn, $purchase_order_id, $input, $username, $company_id) {
-    if (!isset($input['status_id']) || trim($input['status_id']) === '') {
-        jsonResponse(400, 'status_id is required');
-        return;
-    }
-
     $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".purchase_order WHERE id = '$purchase_order_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Purchase order not found');
         return;
     }
 
-    $status_id = mysqli_real_escape_string($conn, $input['status_id']);
-    $now       = date('Y-m-d H:i:s');
-    $notes     = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
+    $status_id = getPurchaseStatusIdByName($conn, 'Rejected');
+    if (!$status_id) {
+        jsonResponse(500, 'Purchase status "Rejected" is not configured');
+        return;
+    }
+
+    $now   = date('Y-m-d H:i:s');
+    $notes = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
 
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".purchase_order
             SET status_id = '$status_id', updated_by = '$username', updated_at = '$now'
@@ -344,6 +356,40 @@ function rejectPurchaseOrder($conn, $purchase_order_id, $input, $username, $comp
         jsonResponse(200, 'Purchase order rejected successfully');
     } else {
         jsonResponse(500, 'Failed to reject purchase order', ['error' => mysqli_error($conn)]);
+    }
+}
+
+function revisePurchaseOrder($conn, $purchase_order_id, $input, $username, $company_id) {
+    $check = mysqli_query($conn, "SELECT ps.status_name FROM " . APP_SCHEMA . ".purchase_order po
+            LEFT JOIN " . APP_SCHEMA . ".purchase_status ps ON ps.id = po.status_id
+            WHERE po.id = '$purchase_order_id' AND po.company_id = '$company_id' AND po.deleted_at IS NULL LIMIT 1");
+    if (mysqli_num_rows($check) === 0) {
+        jsonResponse(404, 'Purchase order not found');
+        return;
+    }
+
+    $purchase_order = mysqli_fetch_assoc($check);
+    if ($purchase_order['status_name'] !== 'Rejected') {
+        jsonResponse(400, 'Only rejected purchase orders can be revised');
+        return;
+    }
+
+    $status_id = getPurchaseStatusIdByName($conn, 'Draft');
+    if (!$status_id) {
+        jsonResponse(500, 'Default purchase status "Draft" is not configured');
+        return;
+    }
+
+    $now   = date('Y-m-d H:i:s');
+    $notes = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
+
+    if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".purchase_order
+            SET status_id = '$status_id', updated_by = '$username', updated_at = '$now'
+            WHERE id = '$purchase_order_id' AND company_id = '$company_id'")) {
+        insertAuditLog($conn, $company_id, 'purchase_order', $purchase_order_id, 'revised', $username, $notes);
+        jsonResponse(200, 'Purchase order revised successfully');
+    } else {
+        jsonResponse(500, 'Failed to revise purchase order', ['error' => mysqli_error($conn)]);
     }
 }
 
@@ -381,6 +427,10 @@ try {
             case 'reject':
                 if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
                 rejectPurchaseOrder($conn, $purchase_order_id, $input, $username, $company_id);
+                break;
+            case 'revise':
+                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                revisePurchaseOrder($conn, $purchase_order_id, $input, $username, $company_id);
                 break;
             default:
                 jsonResponse(404, 'Route not found');

@@ -3,11 +3,23 @@
 require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
 require_once __DIR__ . '/../../helpers/audit_log.php';
+require_once __DIR__ . '/../../helpers/excel_export.php';
+
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use PhpOffice\PhpSpreadsheet\Style\Border;
 
 function getCompanyCode($conn, $company_id) {
     $result = mysqli_query($conn, "SELECT company_code FROM " . CORE_SCHEMA . ".app_company WHERE company_id = '$company_id' LIMIT 1");
     $row = $result ? mysqli_fetch_assoc($result) : null;
     return $row ? strtoupper($row['company_code']) : null;
+}
+
+function getSalesStatusIdByName($conn, $status_name) {
+    $status_name = mysqli_real_escape_string($conn, $status_name);
+    $result = mysqli_query($conn, "SELECT id FROM " . APP_SCHEMA . ".sales_status WHERE status_name = '$status_name' AND deleted_at IS NULL LIMIT 1");
+    $row = $result ? mysqli_fetch_assoc($result) : null;
+    return $row ? $row['id'] : null;
 }
 
 function generateSalesSppbNumber($conn, $company_id) {
@@ -61,12 +73,15 @@ function getAllSalesSppbs($conn, $company_id, $params) {
     $from = APP_SCHEMA . ".sales_sppb ssp
             LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = ssp.customer_id
             LEFT JOIN " . APP_SCHEMA . ".sales_order so ON so.id = ssp.sales_order_id
+            LEFT JOIN " . APP_SCHEMA . ".sales_status ss ON ss.id = ssp.status_id
             LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = ssp.created_by
-            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = ssp.updated_by";
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = ssp.updated_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user au ON au.user_id COLLATE utf8mb4_general_ci = ssp.approved_by";
 
-    $result       = mysqli_query($conn, "SELECT ssp.*, c.customer_name, so.so_display_number,
+    $result       = mysqli_query($conn, "SELECT ssp.*, c.customer_name, so.so_display_number, ss.status_name,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
-            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by,
+            CONCAT(au.first_name, ' ', au.last_name) AS approved_by
             FROM $from WHERE $where ORDER BY ssp.created_at DESC LIMIT $limit OFFSET $offset");
     $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM $from WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
@@ -127,15 +142,21 @@ function createSalesSppb($conn, $input, $username, $company_id) {
         return;
     }
 
+    $status_id = getSalesStatusIdByName($conn, 'Draft');
+    if (!$status_id) {
+        jsonResponse(500, 'Default sales status "Draft" is not configured');
+        return;
+    }
+
     $sales_sppb_id = generateUUID();
     $now           = date('Y-m-d H:i:s');
 
     $conn->begin_transaction();
     try {
         $sql = "INSERT INTO " . APP_SCHEMA . ".sales_sppb
-                (id, company_id, sppb_display_number, sales_order_id, sppb_date, customer_id, created_by, created_at)
+                (id, company_id, sppb_display_number, sales_order_id, sppb_date, customer_id, status_id, created_by, created_at)
                 VALUES
-                ('$sales_sppb_id', '$company_id', '$sppb_display_number', '$sales_order_id', '$sppb_date', '$customer_id', '$username', '$now')";
+                ('$sales_sppb_id', '$company_id', '$sppb_display_number', '$sales_order_id', '$sppb_date', '$customer_id', '$status_id', '$username', '$now')";
 
         if (!mysqli_query($conn, $sql)) {
             throw new Exception(mysqli_error($conn));
@@ -175,11 +196,14 @@ function getDetailSalesSppb($conn, $sales_sppb_id, $company_id) {
     $from   = APP_SCHEMA . ".sales_sppb ssp
             LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = ssp.customer_id
             LEFT JOIN " . APP_SCHEMA . ".sales_order so ON so.id = ssp.sales_order_id
+            LEFT JOIN " . APP_SCHEMA . ".sales_status ss ON ss.id = ssp.status_id
             LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = ssp.created_by
-            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = ssp.updated_by";
-    $result = mysqli_query($conn, "SELECT ssp.*, c.customer_name, so.so_display_number,
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = ssp.updated_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user au ON au.user_id COLLATE utf8mb4_general_ci = ssp.approved_by";
+    $result = mysqli_query($conn, "SELECT ssp.*, c.customer_name, so.so_display_number, ss.status_name,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
-            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by,
+            CONCAT(au.first_name, ' ', au.last_name) AS approved_by
             FROM $from WHERE ssp.id = '$sales_sppb_id' AND ssp.company_id = '$company_id' AND ssp.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Sales SPPB not found');
@@ -261,6 +285,190 @@ function deleteSalesSppb($conn, $sales_sppb_id, $username, $company_id) {
     }
 }
 
+function approveSalesSppb($conn, $sales_sppb_id, $input, $username, $company_id) {
+    $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".sales_sppb WHERE id = '$sales_sppb_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    if (mysqli_num_rows($check) === 0) {
+        jsonResponse(404, 'Sales SPPB not found');
+        return;
+    }
+
+    $status_id = getSalesStatusIdByName($conn, 'Approved');
+    if (!$status_id) {
+        jsonResponse(500, 'Sales status "Approved" is not configured');
+        return;
+    }
+
+    $now   = date('Y-m-d H:i:s');
+    $notes = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
+
+    if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".sales_sppb
+            SET status_id = '$status_id', approved_by = '$username', approved_at = '$now', updated_by = '$username', updated_at = '$now'
+            WHERE id = '$sales_sppb_id' AND company_id = '$company_id'")) {
+        insertAuditLog($conn, $company_id, 'sales_sppb', $sales_sppb_id, 'approved', $username, $notes);
+        jsonResponse(200, 'Sales SPPB approved successfully');
+    } else {
+        jsonResponse(500, 'Failed to approve sales SPPB', ['error' => mysqli_error($conn)]);
+    }
+}
+
+function rejectSalesSppb($conn, $sales_sppb_id, $input, $username, $company_id) {
+    $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".sales_sppb WHERE id = '$sales_sppb_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    if (mysqli_num_rows($check) === 0) {
+        jsonResponse(404, 'Sales SPPB not found');
+        return;
+    }
+
+    $status_id = getSalesStatusIdByName($conn, 'Rejected');
+    if (!$status_id) {
+        jsonResponse(500, 'Sales status "Rejected" is not configured');
+        return;
+    }
+
+    $now   = date('Y-m-d H:i:s');
+    $notes = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
+
+    if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".sales_sppb
+            SET status_id = '$status_id', updated_by = '$username', updated_at = '$now'
+            WHERE id = '$sales_sppb_id' AND company_id = '$company_id'")) {
+        insertAuditLog($conn, $company_id, 'sales_sppb', $sales_sppb_id, 'rejected', $username, $notes);
+        jsonResponse(200, 'Sales SPPB rejected successfully');
+    } else {
+        jsonResponse(500, 'Failed to reject sales SPPB', ['error' => mysqli_error($conn)]);
+    }
+}
+
+function reviseSalesSppb($conn, $sales_sppb_id, $input, $username, $company_id) {
+    $check = mysqli_query($conn, "SELECT ss.status_name FROM " . APP_SCHEMA . ".sales_sppb ssp
+            LEFT JOIN " . APP_SCHEMA . ".sales_status ss ON ss.id = ssp.status_id
+            WHERE ssp.id = '$sales_sppb_id' AND ssp.company_id = '$company_id' AND ssp.deleted_at IS NULL LIMIT 1");
+    if (mysqli_num_rows($check) === 0) {
+        jsonResponse(404, 'Sales SPPB not found');
+        return;
+    }
+
+    $sales_sppb = mysqli_fetch_assoc($check);
+    if ($sales_sppb['status_name'] !== 'Rejected') {
+        jsonResponse(400, 'Only rejected sales SPPBs can be revised');
+        return;
+    }
+
+    $status_id = getSalesStatusIdByName($conn, 'Draft');
+    if (!$status_id) {
+        jsonResponse(500, 'Default sales status "Draft" is not configured');
+        return;
+    }
+
+    $now   = date('Y-m-d H:i:s');
+    $notes = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
+
+    if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".sales_sppb
+            SET status_id = '$status_id', updated_by = '$username', updated_at = '$now'
+            WHERE id = '$sales_sppb_id' AND company_id = '$company_id'")) {
+        insertAuditLog($conn, $company_id, 'sales_sppb', $sales_sppb_id, 'revised', $username, $notes);
+        jsonResponse(200, 'Sales SPPB revised successfully');
+    } else {
+        jsonResponse(500, 'Failed to revise sales SPPB', ['error' => mysqli_error($conn)]);
+    }
+}
+
+function exportSalesSppb($conn, $sales_sppb_id, $company_id) {
+    $sales_sppb_id = mysqli_real_escape_string($conn, $sales_sppb_id);
+
+    $from   = APP_SCHEMA . ".sales_sppb ssp
+            LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = ssp.customer_id
+            LEFT JOIN " . APP_SCHEMA . ".sales_order so ON so.id = ssp.sales_order_id
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = ssp.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user au ON au.user_id COLLATE utf8mb4_general_ci = ssp.approved_by";
+    $result = mysqli_query($conn, "SELECT ssp.*, c.customer_name, so.so_display_number,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by_name,
+            CONCAT(au.first_name, ' ', au.last_name) AS approved_by_name
+            FROM $from WHERE ssp.id = '$sales_sppb_id' AND ssp.company_id = '$company_id' AND ssp.deleted_at IS NULL LIMIT 1");
+    if (!$result || mysqli_num_rows($result) === 0) {
+        jsonResponse(404, 'Sales SPPB not found');
+        return;
+    }
+
+    $sales_sppb = mysqli_fetch_assoc($result);
+
+    $items_from   = APP_SCHEMA . ".sales_sppb_item sspi
+            LEFT JOIN " . APP_SCHEMA . ".unit_of_measure uom ON uom.id = sspi.uom_id";
+    $items_result = mysqli_query($conn, "SELECT sspi.*, uom.uom_name
+            FROM $items_from WHERE sspi.sales_sppb_id = '$sales_sppb_id' AND sspi.deleted_at IS NULL ORDER BY sspi.created_at ASC");
+    $items = $items_result ? mysqli_fetch_all($items_result, MYSQLI_ASSOC) : [];
+
+    $spreadsheet = new Spreadsheet();
+    $sheet       = $spreadsheet->getActiveSheet();
+
+    $sheet->setCellValue('A1', 'SURAT PERMINTAAN PENGELUARAN BARANG (SPPB)');
+    $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(14);
+
+    $sheet->getColumnDimension('A')->setWidth(20);
+    $sheet->getColumnDimension('B')->setWidth(25);
+    $sheet->getColumnDimension('C')->setWidth(35);
+
+    $sheet->mergeCells('A1:C1');
+    $sheet->getStyle('A1')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_LEFT);
+    $sheet->getStyle('A1')->getAlignment()->setWrapText(true);
+
+    $sheet->mergeCells('A2:B2');
+    $sheet->setCellValue('A2', 'No SPPB : ');
+    $sheet->setCellValue('C2', $sales_sppb['sppb_display_number']);
+    $sheet->mergeCells('A3:B3');
+    $sheet->setCellValue('A3', 'Tanggal : ');
+    $sheet->setCellValue('C3', formatIndonesianDate($sales_sppb['sppb_date']));
+    $sheet->mergeCells('A4:B4');
+    $sheet->setCellValue('A4', 'Customer : ');
+    $sheet->setCellValue('C4', $sales_sppb['customer_name']);
+
+    $table_headers = ['', 'NO SO', 'DIKIRIM KE', 'Tgl Kirim', 'Nama Barang', 'QTY', 'SAT', 'Keterangan'];
+    $sheet->fromArray($table_headers, null, 'A5');
+    $sheet->getStyle('A5:H5')->getFont()->setBold(true);
+    $sheet->getStyle('A5:H5')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+    $sheet->getStyle('A5:H5')->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+
+    $row = 6;
+    $no  = 1;
+
+    foreach ($items as $item) {
+        $sheet->setCellValue("A$row", $no);
+        $sheet->setCellValue("B$row", $sales_sppb['so_display_number'] ?? '-');
+        $sheet->setCellValue("C$row", $item['send_to_address']);
+        $sheet->setCellValue("D$row", formatIndonesianDate($item['send_date']));
+        $sheet->setCellValue("E$row", $item['product_name']);
+        $sheet->setCellValue("F$row", number_format((float)$item['quantity'], 2));
+        $sheet->setCellValue("G$row", $item['uom_name']);
+        $sheet->setCellValue("H$row", $item['description']);
+
+        $sheet->getStyle("A$row:H$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+
+        $row++;
+        $no++;
+    }
+
+    $sheet->getStyle("A$row:H$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+    $row++;
+    $sheet->getStyle("A$row:H$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+    $row++;
+
+    $sheet->setCellValue("A$row", 'DIBUAT OLEH,');
+    $sheet->setCellValue("C$row", 'MENGETAHUI OLEH,');
+    $sheet->setCellValue("E$row", 'DISETUJUI OLEH,');
+    $row++;
+    $sheet->setCellValue("A$row", ($sales_sppb['created_by_name'] ?? '-') . ' pada ' . $sales_sppb['created_at']);
+    $sheet->setCellValue("C$row", ($sales_sppb['created_by_name'] ?? '-') . ' pada ' . $sales_sppb['created_at']);
+    $sheet->setCellValue("E$row", ($sales_sppb['approved_by_name'] ?? '-') . ' pada ' . ($sales_sppb['approved_at'] ?? '-'));
+    $row += 3;
+    $sheet->setCellValue("A$row", '( ADMIN SALES )');
+    $sheet->setCellValue("C$row", '( TUKAR FAKTUR )');
+    $sheet->setCellValue("E$row", '( SULANTO )    ( IRENE )');
+
+    foreach (range('A', 'J') as $col) {
+        $sheet->getColumnDimension($col)->setAutoSize(true);
+    }
+
+    streamXlsx($spreadsheet, 'sales_sppb_' . sanitizeFilename($sales_sppb['sppb_display_number']) . '.xlsx');
+}
+
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
 $authUser   = requireAuth();
@@ -274,13 +482,40 @@ if (!$company_id) {
 }
 
 $sales_sppb_id = !empty($action) ? $action : null;
+$sub_action    = $parts[4] ?? '';
 
 try {
     $conn = getConn();
 
-    if ($sales_sppb_id === 'generate-number') {
+    if ($sales_sppb_id === 'generate-number' && $sub_action === '') {
         if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
         generateSalesSppbNumber($conn, $company_id);
+
+    } elseif ($sales_sppb_id && $sub_action === 'export') {
+        if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
+        exportSalesSppb($conn, $sales_sppb_id, $company_id);
+
+    } elseif ($sales_sppb_id && $sub_action !== '') {
+        $input = in_array($method, ['POST', 'PUT', 'PATCH'])
+            ? (json_decode(file_get_contents('php://input'), true) ?? [])
+            : [];
+
+        switch ($sub_action) {
+            case 'approve':
+                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                approveSalesSppb($conn, $sales_sppb_id, $input, $username, $company_id);
+                break;
+            case 'reject':
+                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                rejectSalesSppb($conn, $sales_sppb_id, $input, $username, $company_id);
+                break;
+            case 'revise':
+                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                reviseSalesSppb($conn, $sales_sppb_id, $input, $username, $company_id);
+                break;
+            default:
+                jsonResponse(404, 'Route not found');
+        }
 
     } elseif ($sales_sppb_id) {
         switch ($method) {

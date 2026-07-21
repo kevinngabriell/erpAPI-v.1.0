@@ -22,7 +22,8 @@ This document captures the exact patterns, conventions, and architectural decisi
 14. [Naming Conventions](#14-naming-conventions)
 15. [Error Handling](#15-error-handling)
 16. [SQL Patterns](#16-sql-patterns)
-17. [Complete File Templates](#17-complete-file-templates)
+17. [Database Schema Changes & Migrations](#17-database-schema-changes--migrations)
+18. [Complete File Templates](#18-complete-file-templates)
 
 ---
 
@@ -1216,7 +1217,33 @@ $row = mysqli_fetch_assoc($result);
 
 ---
 
-## 17. Complete File Templates
+## 17. Database Schema Changes & Migrations
+
+**Any task that requires altering the database — new columns, new tables, new enum values, new rows in shared lookup/permission tables — is not done when the PHP code passes standards review. It is only done once a migration doc exists documenting the exact DDL/DML for every environment.**
+
+This applies whenever a task needs a schema or seed-data change to work at all — not just large data migrations. A single `ALTER TABLE` to support one new endpoint follows the same rule as a full-table migration.
+
+### Rule
+
+1. **Never hand-edit or freehand a schema change against a live database without capturing it in a migration doc first.** Write the doc as you go, not as an afterthought — the doc is derived from the exact statements you're about to run, not reconstructed from memory after.
+2. **Every schema change doc covers every environment the codebase talks to** (dev at minimum; prod if the codebase has one). One section per environment. If an environment's DB isn't reachable from the current session, still write its section — mark it **NOT yet applied** and give the exact runnable SQL, not a description of what someone should do.
+3. **DDL must be idempotent.** Guard `ALTER TABLE` with an `information_schema.COLUMNS` check + dynamic SQL (`PREPARE`/`EXECUTE`), not `ADD COLUMN IF NOT EXISTS` — that syntax requires MySQL 8.0.29+ and hard-errors on older servers instead of skipping. Guard `INSERT` into shared/lookup tables with `WHERE NOT EXISTS (...)` or an equivalent existence check. A doc that isn't safe to run twice isn't done.
+4. **Never auto-backfill an identity, approver, or ownership column with a guess.** If historical rows need a value for a new column and there's no real source data to derive it from (an approver that was never recorded, a role that didn't exist yet), leave it `NULL` and say so explicitly in the doc — do not invent a plausible-looking default. This mirrors the "don't guess" policy already used throughout this project's data migrations.
+5. **State what happens if the schema change and the code deployment land out of sync** — which direction is safe (old code against new schema) and which isn't (new code against old schema will error on every request touching the new columns).
+6. **Dev may be applied directly during the task** (with a smoke test verifying the change end-to-end, then cleaning up any test data/temp grants used for that test). **Prod is never applied automatically** — write the script, mark it clearly unrun, and say so in your response to the user. Applying anything to a shared production database requires the user's explicit go-ahead, same as any other hard-to-reverse action against shared infrastructure.
+7. **New permission keys or role/permission assignments are schema-adjacent and follow the same rule**, with one addition: creating a `permission_key` row is fine to do directly (it's inert until assigned), but **assigning that permission to a role is a business decision, not an inference** — never guess which role should get a new permission, even when the mapping looks obvious. Leave it as a checklist item for the user and say so plainly. A newly-added approval gate with no role holding its permission key is the correct, safe end state of a migration doc — not a bug to quietly "fix" by picking a role yourself.
+8. **File location and naming:** save the doc under `v2/docs/migrations/`, named for what it does, not just a date — `v21_finance_dual_approval_schema.md`, not `2026-07-20-changes.md`. If the codebase's own migration history already uses a version scheme (check `v2/docs/migrations/` and any migration docs referenced in project memory), continue that scheme rather than starting a new one.
+
+### What the doc must contain
+
+- One-paragraph summary of what's changing and why, including which prior migration or open question this resolves (if any).
+- Per-environment SQL block: idempotent, copy-paste runnable, with `-- WHY` comments on anything non-obvious (same comment discipline as the rest of this doc — explain hidden constraints and rationale, not what the SQL obviously does).
+- A verification block (`SELECT` queries) proving the change landed correctly — row counts, `NULL` checks on anything that was backfilled, existence checks on new permission rows.
+- A post-migration checklist: anything left deliberately `NULL`/unassigned and why, any environment ordering requirement (e.g. "prod needs migration X applied first"), and any manual admin action still required (role/permission assignment, new role creation) before the feature is actually usable end-to-end.
+
+---
+
+## 18. Complete File Templates
 
 ### New module file
 

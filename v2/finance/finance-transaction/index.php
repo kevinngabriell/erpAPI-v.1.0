@@ -3,6 +3,7 @@
 require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
 require_once __DIR__ . '/../../helpers/audit_log.php';
+require_once __DIR__ . '/../../helpers/dual_approval.php';
 
 function getAllFinanceTransactions($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
@@ -22,17 +23,25 @@ function getAllFinanceTransactions($conn, $company_id, $params) {
         $finance_category_id = mysqli_real_escape_string($conn, $params['finance_category_id']);
         $where .= " AND ft.finance_category_id = '$finance_category_id'";
     }
+    if (isset($params['transaction_status']) && trim($params['transaction_status']) !== '') {
+        $transaction_status = mysqli_real_escape_string($conn, $params['transaction_status']);
+        $where .= " AND ft.transaction_status = '$transaction_status'";
+    }
 
     $from = APP_SCHEMA . ".finance_transaction ft
             LEFT JOIN " . APP_SCHEMA . ".bank_account ba ON ba.id = ft.bank_account_id
             LEFT JOIN " . APP_SCHEMA . ".account_code ac ON ac.id = ft.account_code_id
             LEFT JOIN " . APP_SCHEMA . ".finance_category fc ON fc.id = ft.finance_category_id
             LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = ft.created_by
-            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = ft.updated_by";
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = ft.updated_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user ow ON ow.user_id COLLATE utf8mb4_general_ci = ft.approved_by_owner_id
+            LEFT JOIN " . CORE_SCHEMA . ".app_user tr ON tr.user_id COLLATE utf8mb4_general_ci = ft.approved_by_treasury_id";
 
     $result       = mysqli_query($conn, "SELECT ft.*, ba.bank_name, ba.bank_number, ac.account_code, ac.account_code_name, fc.category_name,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
-            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by,
+            CONCAT(ow.first_name, ' ', ow.last_name) AS approved_by_owner,
+            CONCAT(tr.first_name, ' ', tr.last_name) AS approved_by_treasury
             FROM $from WHERE $where ORDER BY ft.created_at DESC LIMIT $limit OFFSET $offset");
     $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".finance_transaction ft WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
@@ -113,10 +122,14 @@ function getDetailFinanceTransaction($conn, $finance_transaction_id, $company_id
             LEFT JOIN " . APP_SCHEMA . ".account_code ac ON ac.id = ft.account_code_id
             LEFT JOIN " . APP_SCHEMA . ".finance_category fc ON fc.id = ft.finance_category_id
             LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = ft.created_by
-            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = ft.updated_by";
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = ft.updated_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user ow ON ow.user_id COLLATE utf8mb4_general_ci = ft.approved_by_owner_id
+            LEFT JOIN " . CORE_SCHEMA . ".app_user tr ON tr.user_id COLLATE utf8mb4_general_ci = ft.approved_by_treasury_id";
     $result = mysqli_query($conn, "SELECT ft.*, ba.bank_name, ba.bank_number, ac.account_code, ac.account_code_name, fc.category_name,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
-            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by,
+            CONCAT(ow.first_name, ' ', ow.last_name) AS approved_by_owner,
+            CONCAT(tr.first_name, ' ', tr.last_name) AS approved_by_treasury
             FROM $from WHERE ft.id = '$finance_transaction_id' AND ft.company_id = '$company_id' AND ft.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Finance transaction not found');
@@ -200,12 +213,42 @@ function deleteFinanceTransaction($conn, $finance_transaction_id, $username, $co
     }
 }
 
+function approveFinanceTransaction($conn, $finance_transaction_id, $input, $username, $app_role_id, $company_id) {
+    $result = applyDualApproval($conn, APP_SCHEMA . '.finance_transaction', $finance_transaction_id, $company_id, $username, $app_role_id);
+
+    if ($result['code'] !== 200) {
+        jsonResponse($result['code'], $result['message'], isset($result['error']) ? ['error' => $result['error']] : []);
+        return;
+    }
+
+    $notes = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
+    insertAuditLog($conn, $company_id, 'finance_transaction', $finance_transaction_id, "approved_{$result['slot']}", $username, $notes);
+    jsonResponse(200, 'Finance transaction approved successfully', [
+        'approved_slot'      => $result['slot'],
+        'transaction_status' => $result['transaction_status'],
+    ]);
+}
+
+function rejectFinanceTransaction($conn, $finance_transaction_id, $input, $username, $app_role_id, $company_id) {
+    $result = rejectDualApproval($conn, APP_SCHEMA . '.finance_transaction', $finance_transaction_id, $company_id, $username, $app_role_id);
+
+    if ($result['code'] !== 200) {
+        jsonResponse($result['code'], $result['message'], isset($result['error']) ? ['error' => $result['error']] : []);
+        return;
+    }
+
+    $notes = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
+    insertAuditLog($conn, $company_id, 'finance_transaction', $finance_transaction_id, 'rejected', $username, $notes);
+    jsonResponse(200, 'Finance transaction rejected successfully');
+}
+
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
-$authUser   = requireAuth();
-$method     = $_SERVER['REQUEST_METHOD'];
-$company_id = $authUser['company_id'] ?? null;
-$username   = $authUser['user_id'] ?? null;
+$authUser    = requireAuth();
+$method      = $_SERVER['REQUEST_METHOD'];
+$company_id  = $authUser['company_id'] ?? null;
+$username    = $authUser['user_id'] ?? null;
+$app_role_id = $authUser['app_role_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
@@ -213,11 +256,30 @@ if (!$company_id) {
 }
 
 $finance_transaction_id = !empty($action) ? $action : null;
+$sub_action             = $parts[4] ?? '';
 
 try {
     $conn = getConn();
 
-    if ($finance_transaction_id) {
+    if ($finance_transaction_id && $sub_action !== '') {
+        $input = in_array($method, ['POST', 'PUT', 'PATCH'])
+            ? (json_decode(file_get_contents('php://input'), true) ?? [])
+            : [];
+
+        switch ($sub_action) {
+            case 'approve':
+                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                approveFinanceTransaction($conn, $finance_transaction_id, $input, $username, $app_role_id, $company_id);
+                break;
+            case 'reject':
+                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                rejectFinanceTransaction($conn, $finance_transaction_id, $input, $username, $app_role_id, $company_id);
+                break;
+            default:
+                jsonResponse(404, 'Route not found');
+        }
+
+    } elseif ($finance_transaction_id) {
         switch ($method) {
             case 'GET':
                 getDetailFinanceTransaction($conn, $finance_transaction_id, $company_id);

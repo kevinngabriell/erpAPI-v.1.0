@@ -1,6 +1,6 @@
 # Finance Payment API
 
-> **Last updated:** 2026-07-11 18:49:02 WIB
+> **Last updated:** 2026-07-20 WIB
 > **Base URL:** `/api/v2/finance-payment`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -15,6 +15,8 @@
 | GET    | `/api/v2/finance-payment/{id}` | Get finance payment detail |
 | PUT    | `/api/v2/finance-payment/{id}` | Update a finance payment |
 | DELETE | `/api/v2/finance-payment/{id}` | Delete a finance payment |
+| PATCH  | `/api/v2/finance-payment/{id}/approve` | Sign the A/P or A/R payment as Business Owner or Treasury/Controller |
+| PATCH  | `/api/v2/finance-payment/{id}/reject` | Reject the payment |
 
 ---
 
@@ -31,6 +33,7 @@ List all finance payments belonging to the authenticated company.
 | search | string | No | — | Search on `invoice_number` |
 | customer_id | string | No | — | Filter by `customer_id` |
 | supplier_id | string | No | — | Filter by `supplier_id` |
+| transaction_status | string | No | — | Filter by `transaction_status`: `draft` \| `submitted` \| `partially_approved` \| `posted` \| `rejected` |
 
 #### Response `200 OK`
 
@@ -58,10 +61,17 @@ List all finance payments belonging to the authenticated company.
         "memo": "Partial invoice settlement",
         "recipient": "PT Sumber Makmur",
         "discount_amount": 0,
+        "transaction_status": "posted",
+        "approved_by_owner_id": "614442bc-476a-4bbb-81f1-b3ccc2523d50",
+        "approved_by_owner_at": "2026-07-02 09:15:00",
+        "approved_by_treasury_id": "b7d39398-4f4d-4c87-be7c-95b5a9baf56e",
+        "approved_by_treasury_at": "2026-07-02 14:30:00",
         "created_by": "Budi Santoso",
         "created_at": "2026-07-01 10:00:00",
-        "updated_by": null,
-        "updated_at": null,
+        "updated_by": "Kevin 2",
+        "updated_at": "2026-07-02 14:30:00",
+        "approved_by_owner": "Kevin Gabriel",
+        "approved_by_treasury": "Kevin 2",
         "deleted_at": null
       }
     ],
@@ -187,10 +197,17 @@ Get detail of a single finance payment.
     "memo": "Partial invoice settlement",
     "recipient": "PT Sumber Makmur",
     "discount_amount": 0,
+    "transaction_status": "posted",
+    "approved_by_owner_id": "614442bc-476a-4bbb-81f1-b3ccc2523d50",
+    "approved_by_owner_at": "2026-07-02 09:15:00",
+    "approved_by_treasury_id": "b7d39398-4f4d-4c87-be7c-95b5a9baf56e",
+    "approved_by_treasury_at": "2026-07-02 14:30:00",
     "created_by": "Budi Santoso",
     "created_at": "2026-07-01 10:00:00",
-    "updated_by": null,
-    "updated_at": null,
+    "updated_by": "Kevin 2",
+    "updated_at": "2026-07-02 14:30:00",
+    "approved_by_owner": "Kevin Gabriel",
+    "approved_by_treasury": "Kevin 2",
     "deleted_at": null
   }
 }
@@ -302,15 +319,143 @@ Soft-deletes the finance payment (sets `deleted_at`) — it will no longer appea
 
 ---
 
+### PATCH `/api/v2/finance-payment/{id}/approve`
+
+Signs the A/P (`supplier_id` set) or A/R (`customer_id` set) settlement as either **Business Owner** or **Treasury/Controller** — whichever slot the caller's role is permitted to fill. Same 2-signer gate as `finance-transaction` (see that module's doc for the full slot-assignment rules); both A/P and A/R go through this one endpoint.
+
+#### Path parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| id | string | The finance payment ID |
+
+#### Request body (`application/json`)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| notes | string | No | Optional note recorded on the audit log entry |
+
+#### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Finance payment approved successfully",
+  "data": {
+    "approved_slot": "owner",
+    "transaction_status": "partially_approved"
+  }
+}
+```
+
+#### Response `403 Forbidden`
+
+```json
+{
+  "status_code": 403,
+  "status_message": "You do not have permission to approve this record",
+  "data": []
+}
+```
+
+#### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Record not found",
+  "data": []
+}
+```
+
+#### Response `409 Conflict`
+
+```json
+{
+  "status_code": 409,
+  "status_message": "You have already signed this record",
+  "data": []
+}
+```
+
+```json
+{
+  "status_code": 409,
+  "status_message": "Record is already posted",
+  "data": []
+}
+```
+
+---
+
+### PATCH `/api/v2/finance-payment/{id}/reject`
+
+Rejects the payment. Either signer (owner or treasury permission holder) can reject at any point before it reaches `posted`.
+
+#### Path parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| id | string | The finance payment ID |
+
+#### Request body (`application/json`)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| notes | string | No | Optional note recorded on the audit log entry |
+
+#### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Finance payment rejected successfully",
+  "data": []
+}
+```
+
+#### Response `403 Forbidden`
+
+```json
+{
+  "status_code": 403,
+  "status_message": "You do not have permission to reject this record",
+  "data": []
+}
+```
+
+#### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Record not found",
+  "data": []
+}
+```
+
+#### Response `409 Conflict`
+
+```json
+{
+  "status_code": 409,
+  "status_message": "Record is already rejected",
+  "data": []
+}
+```
+
+---
+
 ## Error responses (all endpoints)
 
 | Code | When |
 |------|------|
 | 400  | Validation failed — missing or invalid field |
 | 401  | Missing or expired Bearer token |
+| 403  | Caller's role does not hold `keuangan.approve_owner`/`keuangan.approve_treasury`, or has already signed the other slot |
 | 404  | Resource not found |
 | 405  | HTTP method not allowed on this path |
-| 409  | Duplicate — resource already exists |
+| 409  | Duplicate — resource already exists, or already signed/finalized |
 | 500  | Internal server error |
 
 ---
@@ -319,5 +464,8 @@ Soft-deletes the finance payment (sets `deleted_at`) — it will no longer appea
 
 - No enum-constrained fields exist on this module. `customer_id` and `supplier_id` are optional and, only when provided, are validated for existence against non-deleted records in the company; neither is required to be mutually exclusive.
 - On update, `customer_id`, `supplier_id`, and `bank_account_id` are not re-validated for existence — only re-checked for emptiness (cleared to `null` if sent empty).
-- create/update/delete write `audit_log` rows with action `created`/`updated`/`deleted`. Query this history via `GET /api/v2/audit-log?module=finance_payment&reference_id={id}` — see the `audit-log` module doc.
+- create/update/delete write `audit_log` rows with action `created`/`updated`/`deleted`; approve writes `approved_owner` or `approved_treasury` depending on which slot was filled; reject writes `rejected`. Query this history via `GET /api/v2/audit-log?module=finance_payment&reference_id={id}` — see the `audit-log` module doc.
 - **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a finance payment (list, detail, and any nested items). Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.
+- **New: dual approval.** `transaction_status` (`draft` \| `submitted` \| `partially_approved` \| `posted` \| `rejected`), `approved_by_owner_id`/`approved_by_owner_at`, and `approved_by_treasury_id`/`approved_by_treasury_at` are new columns — added specifically for this feature, `finance_payment` had no approval tracking before. New payments are created with `transaction_status = 'draft'`. The 582 payments that existed before this change were backfilled to `transaction_status = 'posted'` with `NULL` approvers (they predate the approval workflow — no real approver identity to backfill, same policy used for historical `finance_transaction` rows). `approved_by_owner`/`approved_by_treasury` (resolved display names) are returned alongside the raw `*_id` fields.
+- **Permission model:** shared with `finance-transaction` — `keuangan.approve_owner` and `keuangan.approve_treasury` gate both modules' approve/reject endpoints identically; this is one 2-signer workflow reused across Pembayaran, Penerimaan, A/P, and A/R, not four separate ones. The existing `keuangan.ap.approve`/`keuangan.ar.approve` permission keys are unaffected by this change and continue to mean whatever they meant before (this endpoint does not check them). **As of this writing, no role has `keuangan.approve_owner`/`keuangan.approve_treasury` assigned** — see the `finance-transaction` doc's note on assigning these via the roles/permissions admin UI before go-live.
+- Update/delete are **not** blocked by `transaction_status`, matching this codebase's existing precedent elsewhere (see `finance-transaction` doc).

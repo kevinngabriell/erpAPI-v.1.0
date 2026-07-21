@@ -1,6 +1,6 @@
 # Sales Delivery API
 
-> **Last updated:** 2026-07-11 18:49:02 WIB
+> **Last updated:** 2026-07-20 18:58:14 WIB
 > **Base URL:** `/api/v2/sales-delivery`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -15,6 +15,10 @@
 | GET    | `/api/v2/sales-delivery/{id}` | Get sales delivery detail (with items) |
 | PUT    | `/api/v2/sales-delivery/{id}` | Update a sales delivery |
 | DELETE | `/api/v2/sales-delivery/{id}` | Delete a sales delivery |
+| PATCH  | `/api/v2/sales-delivery/{id}/approve` | Approve a sales delivery |
+| PATCH  | `/api/v2/sales-delivery/{id}/reject` | Reject a sales delivery |
+| PATCH  | `/api/v2/sales-delivery/{id}/revise` | Move a rejected sales delivery back to Draft |
+| GET    | `/api/v2/sales-delivery/{id}/export` | Download the sales delivery (surat jalan) as an `.xlsx` file |
 
 ---
 
@@ -58,6 +62,10 @@ List all sales deliveries belonging to the authenticated company.
         "vessel_name": "MV Nusantara",
         "etd_date": "2026-07-10",
         "eta_date": "2026-07-20",
+        "status_id": "e5f6a7b8-c9d0-4e5f-2a3b-4c5d6e7f8a9b",
+        "status_name": "Draft",
+        "approved_by": null,
+        "approved_at": null,
         "created_by": "Budi Santoso",
         "created_at": "2026-07-01 10:00:00",
         "updated_by": null,
@@ -89,7 +97,7 @@ List all sales deliveries belonging to the authenticated company.
 
 ### POST `/api/v2/sales-delivery`
 
-Create a new sales delivery together with its items.
+Create a new sales delivery together with its items. Server-side sets `status_id` to the `Draft` sales status — the client does not send `status_id`.
 
 #### Request body (`application/json`)
 
@@ -174,6 +182,18 @@ Create a new sales delivery together with its items.
 }
 ```
 
+#### Response `500 Internal Server Error`
+
+```json
+{
+  "status_code": 500,
+  "status_message": "Default sales status \"Draft\" is not configured",
+  "data": []
+}
+```
+
+Returned if `sales_status` has no non-deleted row with `status_name = 'Draft'` — a master-data configuration problem, not a client error.
+
 ---
 
 ### GET `/api/v2/sales-delivery/{id}`
@@ -208,6 +228,10 @@ Get detail of a single sales delivery, including its nested `items` array.
     "vessel_name": "MV Nusantara",
     "etd_date": "2026-07-10",
     "eta_date": "2026-07-20",
+    "status_id": "e5f6a7b8-c9d0-4e5f-2a3b-4c5d6e7f8a9b",
+    "status_name": "Draft",
+    "approved_by": null,
+    "approved_at": null,
     "created_by": "Budi Santoso",
     "created_at": "2026-07-01 10:00:00",
     "updated_by": null,
@@ -245,7 +269,7 @@ Get detail of a single sales delivery, including its nested `items` array.
 
 ### PUT `/api/v2/sales-delivery/{id}`
 
-Update a sales delivery. Only send the fields you want to change. Does not update items.
+Update a sales delivery. Only send the fields you want to change. Does not update items. `status_id` is not updatable here — use `PATCH .../approve` or `PATCH .../reject` to change status.
 
 #### Path parameters
 
@@ -332,6 +356,167 @@ Soft-deletes the sales delivery (sets `deleted_at`) — it will no longer appear
 
 ---
 
+### PATCH `/api/v2/sales-delivery/{id}/approve`
+
+Approve a sales delivery. Server-side sets `status_id` to the `Approved` sales status, plus `approved_by`, `approved_at`. The client does not send `status_id`.
+
+#### Path parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| id | string | The sales delivery ID |
+
+#### Request body (`application/json`)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| notes | string | No | Optional note recorded on the audit log entry |
+
+#### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Sales delivery approved successfully",
+  "data": []
+}
+```
+
+#### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Sales delivery not found",
+  "data": []
+}
+```
+
+---
+
+### PATCH `/api/v2/sales-delivery/{id}/reject`
+
+Reject a sales delivery. Server-side sets `status_id` to the `Rejected` sales status (does not set `approved_by`/`approved_at`). The client does not send `status_id`.
+
+#### Path parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| id | string | The sales delivery ID |
+
+#### Request body (`application/json`)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| notes | string | No | Optional note recorded on the audit log entry |
+
+#### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Sales delivery rejected successfully",
+  "data": []
+}
+```
+
+#### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Sales delivery not found",
+  "data": []
+}
+```
+
+---
+
+### PATCH `/api/v2/sales-delivery/{id}/revise`
+
+Move a rejected sales delivery back to `Draft` status so it can be edited and resubmitted for approval. Only allowed when the sales delivery's current status is `Rejected`.
+
+Use `PUT /api/v2/sales-delivery/{id}` to edit the delivery's fields (before or after calling this endpoint) — `revise` only changes status, it does not accept or update any other field.
+
+#### Path parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| id | string | The sales delivery ID |
+
+#### Request body (`application/json`)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| notes | string | No | Optional note recorded on the audit log entry |
+
+#### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Sales delivery revised successfully",
+  "data": []
+}
+```
+
+#### Response `400 Bad Request`
+
+```json
+{
+  "status_code": 400,
+  "status_message": "Only rejected sales deliveries can be revised",
+  "data": []
+}
+```
+
+Returned when the sales delivery's current status is not `Rejected` (e.g. it's `Draft` or `Approve`).
+
+#### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Sales delivery not found",
+  "data": []
+}
+```
+
+---
+
+### GET `/api/v2/sales-delivery/{id}/export`
+
+Download the sales delivery as a formatted `.xlsx` file (via PhpSpreadsheet), matching the fixed cell layout of the legacy v1 export (`sales/SuratJalanExport.php`) — this template targets a pre-printed company letterhead form rather than a title+table layout, so field values are placed at specific cell coordinates (e.g. customer name at `G3`, delivery number at `B5`).
+
+#### Path parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| id | string | The sales delivery ID |
+
+#### Response `200 OK`
+
+Binary `.xlsx` file. Headers:
+
+```
+Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+Content-Disposition: attachment; filename="surat_jalan_{do_display_number}.xlsx"
+```
+
+The filename's `do_display_number` has any character outside `[A-Za-z0-9_-]` replaced with `-`.
+
+#### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Sales delivery not found",
+  "data": []
+}
+```
+
+---
+
 ## Error responses (all endpoints)
 
 | Code | When |
@@ -348,8 +533,12 @@ Soft-deletes the sales delivery (sets `deleted_at`) — it will no longer appear
 ## Notes
 
 - Header + items creation is wrapped in a single database transaction — either the sales delivery and all its items are created together, or nothing is saved.
-- Create/update/delete write `audit_log` rows with action `created`/`updated`/`deleted`. Query this history via `GET /api/v2/audit-log?module=sales_delivery&reference_id={id}` — see the `audit-log` module doc.
+- Create/update/delete write `audit_log` rows with action `created`/`updated`/`deleted`; approve/reject/revise write `approved`/`rejected`/`revised`. Query this history via `GET /api/v2/audit-log?module=sales_delivery&reference_id={id}` — see the `audit-log` module doc.
 - The list endpoint (`GET /api/v2/sales-delivery`) does not include the nested `items` array; only the detail endpoint (`GET /api/v2/sales-delivery/{id}`) does. The create response only returns `sales_delivery_id`.
-- No enum constraints are enforced in this module's source code.
-- **List and detail responses now include resolved names alongside their IDs** — `customer_name` (joined from `customer`) and `so_display_number` (joined from `sales_order`) are returned next to `customer_id` and `sales_order_id` respectively. The frontend no longer needs a separate lookup call just to display these values in a list or detail view; the IDs are still returned and still required for `PUT`/filter requests. Either may be `null` if the referenced record was deleted.
-- **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on both the sales delivery itself and its items. Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.
+- **`status_id` is a server-resolved field, not client-supplied**, matching the pattern already used by sales-order: `POST` sets it to `"Draft"`, `PATCH .../approve` sets it to `"Approve"`, `PATCH .../reject` sets it to `"Rejected"`, `PATCH .../revise` sets it back to `"Draft"`. `PUT` cannot change `status_id` at all. Resolved by matching `sales_status.status_name` — the frontend never needs to know or send a `sales_status.id` UUID. `GET /api/v2/sales-delivery` does not currently expose `status_id` as a list filter (unlike sales-order/sales-sppb).
+- `approve` sets `approved_by` and `approved_at`; `reject` and `revise` do not. If `sales_status` is ever missing a `Draft`/`Approve`/`Rejected` row (non-deleted), the corresponding endpoint returns `500` naming the missing status — a master-data configuration problem, not a client error.
+- `revise` only works when the current status is `Rejected` — there is no "un-approve" action; approved deliveries cannot be reverted to `Draft` through the API.
+- **`GET /api/v2/sales-delivery/{id}/export` downloads a formatted `.xlsx`**, replicating the legacy v1 letterhead-positioned layout. Two v1 quirks were fixed rather than copied verbatim: cell `G5` (previously duplicated the customer's billing address due to a copy-paste bug in the v1 script) now shows `ship_to_address`; and the fixed signer name hardcoded in v1 (`'Intan'`, cell `G24`) now shows the record's resolved `approved_by` name instead, falling back to `-` if not yet approved.
+- No enum constraints are enforced in this module's source code, other than `status_id` (see above).
+- **List and detail responses now include resolved names alongside their IDs** — `customer_name` (joined from `customer`), `so_display_number` (joined from `sales_order`), and `status_name` (joined from `sales_status`) are returned next to `customer_id`, `sales_order_id`, and `status_id` respectively. The frontend no longer needs a separate lookup call just to display these values in a list or detail view; the IDs are still returned and still required for `PUT`/filter requests. Any may be `null` if the referenced record was deleted.
+- **`created_by`, `updated_by`, and `approved_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on both the sales delivery itself and its items. Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by`/`approved_by` are `null` until the record has actually been updated/approved; `created_by` can be `null` only if the creating user has since been deleted.

@@ -3,6 +3,16 @@
 require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
 require_once __DIR__ . '/../../helpers/audit_log.php';
+require_once __DIR__ . '/../../helpers/excel_export.php';
+
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+
+function getSalesStatusIdByName($conn, $status_name) {
+    $status_name = mysqli_real_escape_string($conn, $status_name);
+    $result = mysqli_query($conn, "SELECT id FROM " . APP_SCHEMA . ".sales_status WHERE status_name = '$status_name' AND deleted_at IS NULL LIMIT 1");
+    $row = $result ? mysqli_fetch_assoc($result) : null;
+    return $row ? $row['id'] : null;
+}
 
 function getAllSalesDeliveries($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
@@ -34,12 +44,15 @@ function getAllSalesDeliveries($conn, $company_id, $params) {
     $from = APP_SCHEMA . ".sales_delivery sd
             LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = sd.customer_id
             LEFT JOIN " . APP_SCHEMA . ".sales_order so ON so.id = sd.sales_order_id
+            LEFT JOIN " . APP_SCHEMA . ".sales_status ss ON ss.id = sd.status_id
             LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = sd.created_by
-            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = sd.updated_by";
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = sd.updated_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user au ON au.user_id COLLATE utf8mb4_general_ci = sd.approved_by";
 
-    $result       = mysqli_query($conn, "SELECT sd.*, c.customer_name, so.so_display_number,
+    $result       = mysqli_query($conn, "SELECT sd.*, c.customer_name, so.so_display_number, ss.status_name,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
-            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by,
+            CONCAT(au.first_name, ' ', au.last_name) AS approved_by
             FROM $from WHERE $where ORDER BY sd.created_at DESC LIMIT $limit OFFSET $offset");
     $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM $from WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
@@ -102,6 +115,12 @@ function createSalesDelivery($conn, $input, $username, $company_id) {
         return;
     }
 
+    $status_id = getSalesStatusIdByName($conn, 'Draft');
+    if (!$status_id) {
+        jsonResponse(500, 'Default sales status "Draft" is not configured');
+        return;
+    }
+
     $container_number_sql = isset($input['container_number']) && trim($input['container_number']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['container_number']) . "'" : 'NULL';
     $bl_number_sql        = isset($input['bl_number']) && trim($input['bl_number']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['bl_number']) . "'" : 'NULL';
     $vessel_name_sql      = isset($input['vessel_name']) && trim($input['vessel_name']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['vessel_name']) . "'" : 'NULL';
@@ -115,10 +134,10 @@ function createSalesDelivery($conn, $input, $username, $company_id) {
     try {
         $sql = "INSERT INTO " . APP_SCHEMA . ".sales_delivery
                 (id, company_id, do_display_number, customer_id, sales_order_id, delivery_date, bill_to_address, ship_to_address,
-                 container_number, bl_number, vessel_name, etd_date, eta_date, created_by, created_at)
+                 container_number, bl_number, vessel_name, etd_date, eta_date, status_id, created_by, created_at)
                 VALUES
                 ('$sales_delivery_id', '$company_id', '$do_display_number', '$customer_id', '$sales_order_id', '$delivery_date', '$bill_to_address', '$ship_to_address',
-                 $container_number_sql, $bl_number_sql, $vessel_name_sql, $etd_date_sql, $eta_date_sql, '$username', '$now')";
+                 $container_number_sql, $bl_number_sql, $vessel_name_sql, $etd_date_sql, $eta_date_sql, '$status_id', '$username', '$now')";
 
         if (!mysqli_query($conn, $sql)) {
             throw new Exception(mysqli_error($conn));
@@ -155,11 +174,14 @@ function getDetailSalesDelivery($conn, $sales_delivery_id, $company_id) {
     $from   = APP_SCHEMA . ".sales_delivery sd
             LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = sd.customer_id
             LEFT JOIN " . APP_SCHEMA . ".sales_order so ON so.id = sd.sales_order_id
+            LEFT JOIN " . APP_SCHEMA . ".sales_status ss ON ss.id = sd.status_id
             LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = sd.created_by
-            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = sd.updated_by";
-    $result = mysqli_query($conn, "SELECT sd.*, c.customer_name, so.so_display_number,
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = sd.updated_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user au ON au.user_id COLLATE utf8mb4_general_ci = sd.approved_by";
+    $result = mysqli_query($conn, "SELECT sd.*, c.customer_name, so.so_display_number, ss.status_name,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
-            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by,
+            CONCAT(au.first_name, ' ', au.last_name) AS approved_by
             FROM $from WHERE sd.id = '$sales_delivery_id' AND sd.company_id = '$company_id' AND sd.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Sales delivery not found');
@@ -244,6 +266,145 @@ function deleteSalesDelivery($conn, $sales_delivery_id, $username, $company_id) 
     }
 }
 
+function approveSalesDelivery($conn, $sales_delivery_id, $input, $username, $company_id) {
+    $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".sales_delivery WHERE id = '$sales_delivery_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    if (mysqli_num_rows($check) === 0) {
+        jsonResponse(404, 'Sales delivery not found');
+        return;
+    }
+
+    $status_id = getSalesStatusIdByName($conn, 'Approved');
+    if (!$status_id) {
+        jsonResponse(500, 'Sales status "Approved" is not configured');
+        return;
+    }
+
+    $now   = date('Y-m-d H:i:s');
+    $notes = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
+
+    if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".sales_delivery
+            SET status_id = '$status_id', approved_by = '$username', approved_at = '$now', updated_by = '$username', updated_at = '$now'
+            WHERE id = '$sales_delivery_id' AND company_id = '$company_id'")) {
+        insertAuditLog($conn, $company_id, 'sales_delivery', $sales_delivery_id, 'approved', $username, $notes);
+        jsonResponse(200, 'Sales delivery approved successfully');
+    } else {
+        jsonResponse(500, 'Failed to approve sales delivery', ['error' => mysqli_error($conn)]);
+    }
+}
+
+function rejectSalesDelivery($conn, $sales_delivery_id, $input, $username, $company_id) {
+    $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".sales_delivery WHERE id = '$sales_delivery_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    if (mysqli_num_rows($check) === 0) {
+        jsonResponse(404, 'Sales delivery not found');
+        return;
+    }
+
+    $status_id = getSalesStatusIdByName($conn, 'Rejected');
+    if (!$status_id) {
+        jsonResponse(500, 'Sales status "Rejected" is not configured');
+        return;
+    }
+
+    $now   = date('Y-m-d H:i:s');
+    $notes = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
+
+    if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".sales_delivery
+            SET status_id = '$status_id', updated_by = '$username', updated_at = '$now'
+            WHERE id = '$sales_delivery_id' AND company_id = '$company_id'")) {
+        insertAuditLog($conn, $company_id, 'sales_delivery', $sales_delivery_id, 'rejected', $username, $notes);
+        jsonResponse(200, 'Sales delivery rejected successfully');
+    } else {
+        jsonResponse(500, 'Failed to reject sales delivery', ['error' => mysqli_error($conn)]);
+    }
+}
+
+function reviseSalesDelivery($conn, $sales_delivery_id, $input, $username, $company_id) {
+    $check = mysqli_query($conn, "SELECT ss.status_name FROM " . APP_SCHEMA . ".sales_delivery sd
+            LEFT JOIN " . APP_SCHEMA . ".sales_status ss ON ss.id = sd.status_id
+            WHERE sd.id = '$sales_delivery_id' AND sd.company_id = '$company_id' AND sd.deleted_at IS NULL LIMIT 1");
+    if (mysqli_num_rows($check) === 0) {
+        jsonResponse(404, 'Sales delivery not found');
+        return;
+    }
+
+    $sales_delivery = mysqli_fetch_assoc($check);
+    if ($sales_delivery['status_name'] !== 'Rejected') {
+        jsonResponse(400, 'Only rejected sales deliveries can be revised');
+        return;
+    }
+
+    $status_id = getSalesStatusIdByName($conn, 'Draft');
+    if (!$status_id) {
+        jsonResponse(500, 'Default sales status "Draft" is not configured');
+        return;
+    }
+
+    $now   = date('Y-m-d H:i:s');
+    $notes = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
+
+    if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".sales_delivery
+            SET status_id = '$status_id', updated_by = '$username', updated_at = '$now'
+            WHERE id = '$sales_delivery_id' AND company_id = '$company_id'")) {
+        insertAuditLog($conn, $company_id, 'sales_delivery', $sales_delivery_id, 'revised', $username, $notes);
+        jsonResponse(200, 'Sales delivery revised successfully');
+    } else {
+        jsonResponse(500, 'Failed to revise sales delivery', ['error' => mysqli_error($conn)]);
+    }
+}
+
+function exportSalesDelivery($conn, $sales_delivery_id, $company_id) {
+    $sales_delivery_id = mysqli_real_escape_string($conn, $sales_delivery_id);
+
+    $from   = APP_SCHEMA . ".sales_delivery sd
+            LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = sd.customer_id
+            LEFT JOIN " . CORE_SCHEMA . ".app_user au ON au.user_id COLLATE utf8mb4_general_ci = sd.approved_by";
+    $result = mysqli_query($conn, "SELECT sd.*, c.customer_name, c.customer_address, c.customer_phone,
+            CONCAT(au.first_name, ' ', au.last_name) AS approved_by_name
+            FROM $from WHERE sd.id = '$sales_delivery_id' AND sd.company_id = '$company_id' AND sd.deleted_at IS NULL LIMIT 1");
+    if (!$result || mysqli_num_rows($result) === 0) {
+        jsonResponse(404, 'Sales delivery not found');
+        return;
+    }
+
+    $sales_delivery = mysqli_fetch_assoc($result);
+
+    $items_result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".sales_delivery_item
+            WHERE sales_delivery_id = '$sales_delivery_id' AND deleted_at IS NULL ORDER BY created_at ASC");
+    $items = $items_result ? mysqli_fetch_all($items_result, MYSQLI_ASSOC) : [];
+
+    $spreadsheet = new Spreadsheet();
+    $sheet       = $spreadsheet->getActiveSheet();
+
+    $sheet->setCellValue('G1', formatIndonesianDate($sales_delivery['delivery_date']));
+    $sheet->setCellValue('G3', $sales_delivery['customer_name']);
+    $sheet->setCellValue('G4', $sales_delivery['customer_address']);
+    $sheet->setCellValue('B5', $sales_delivery['do_display_number']);
+    $sheet->setCellValue('G5', $sales_delivery['ship_to_address']);
+    $sheet->setCellValue('G6', $sales_delivery['customer_phone']);
+    $sheet->setCellValue('A8', 'Banyaknya');
+    $sheet->setCellValue('C8', 'Nama Barang');
+
+    $row = 9;
+    foreach ($items as $item) {
+        $sheet->setCellValue("A$row", $item['quantity']);
+        $sheet->setCellValue("C$row", $item['product_name']);
+        $row++;
+        $sheet->setCellValue("C$row", $item['notes'] ?? '');
+        $row++;
+        $sheet->setCellValue("C$row", 'Lot No:');
+        $sheet->setCellValue("D$row", '[Nomor Lot]');
+        $row++;
+    }
+
+    $sheet->setCellValue('G24', $sales_delivery['approved_by_name'] ?? '-');
+
+    foreach (range('A', 'J') as $col) {
+        $sheet->getColumnDimension($col)->setAutoSize(true);
+    }
+
+    streamXlsx($spreadsheet, 'surat_jalan_' . sanitizeFilename($sales_delivery['do_display_number']) . '.xlsx');
+}
+
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
 $authUser   = requireAuth();
@@ -257,11 +418,38 @@ if (!$company_id) {
 }
 
 $sales_delivery_id = !empty($action) ? $action : null;
+$sub_action         = $parts[4] ?? '';
 
 try {
     $conn = getConn();
 
-    if ($sales_delivery_id) {
+    if ($sales_delivery_id && $sub_action === 'export') {
+        if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
+        exportSalesDelivery($conn, $sales_delivery_id, $company_id);
+
+    } elseif ($sales_delivery_id && $sub_action !== '') {
+        $input = in_array($method, ['POST', 'PUT', 'PATCH'])
+            ? (json_decode(file_get_contents('php://input'), true) ?? [])
+            : [];
+
+        switch ($sub_action) {
+            case 'approve':
+                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                approveSalesDelivery($conn, $sales_delivery_id, $input, $username, $company_id);
+                break;
+            case 'reject':
+                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                rejectSalesDelivery($conn, $sales_delivery_id, $input, $username, $company_id);
+                break;
+            case 'revise':
+                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                reviseSalesDelivery($conn, $sales_delivery_id, $input, $username, $company_id);
+                break;
+            default:
+                jsonResponse(404, 'Route not found');
+        }
+
+    } elseif ($sales_delivery_id) {
         switch ($method) {
             case 'GET':
                 getDetailSalesDelivery($conn, $sales_delivery_id, $company_id);

@@ -1,6 +1,6 @@
 # Purchase Invoice API
 
-> **Last updated:** 2026-07-19 15:25:59 WIB
+> **Last updated:** 2026-07-20 00:00:00 WIB
 > **Base URL:** `/api/v2/purchase-invoice`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -15,6 +15,9 @@
 | GET    | `/api/v2/purchase-invoice/{id}` | Get purchase invoice detail (with items) |
 | PUT    | `/api/v2/purchase-invoice/{id}` | Update a purchase invoice |
 | DELETE | `/api/v2/purchase-invoice/{id}` | Delete a purchase invoice |
+| PATCH  | `/api/v2/purchase-invoice/{id}/approve` | Approve a purchase invoice |
+| PATCH  | `/api/v2/purchase-invoice/{id}/reject` | Reject a purchase invoice |
+| PATCH  | `/api/v2/purchase-invoice/{id}/revise` | Revise a rejected purchase invoice back to Draft |
 
 ---
 
@@ -30,6 +33,7 @@ List all purchase invoices belonging to the authenticated company.
 | limit       | int    | No       | 10      | Items per page (max 100) |
 | search      | string | No       | —       | Search on `invoice_display_number` |
 | supplier_id | string | No       | —       | Filter by `supplier_id` |
+| status_id   | string | No       | —       | Filter by `status_id` |
 | date_from   | string (date) | No | —    | Filter `invoice_date >=` this date (`YYYY-MM-DD`) |
 | date_to     | string (date) | No | —    | Filter `invoice_date <=` this date (`YYYY-MM-DD`) |
 
@@ -55,6 +59,10 @@ List all purchase invoices belonging to the authenticated company.
         "kurs": 15500,
         "term_id": "e5f6a7b8-c9d0-4e5f-2a3b-4c5d6e7f8a9b",
         "term_name": "Net 30",
+        "status_id": "f6a7b8c9-d0e1-4f5a-3b4c-5d6e7f8a9b0c",
+        "status_name": "Draft",
+        "approved_by": null,
+        "approved_at": null,
         "created_by": "Budi Santoso",
         "created_at": "2026-07-05 09:00:00",
         "updated_by": null,
@@ -86,7 +94,7 @@ List all purchase invoices belonging to the authenticated company.
 
 ### POST `/api/v2/purchase-invoice`
 
-Create a new purchase invoice together with its items. Requires the referenced purchase order to exist for the authenticated company, and `invoice_display_number` to be unique within the company.
+Create a new purchase invoice together with its items. Requires the referenced purchase order to exist for the authenticated company, and `invoice_display_number` to be unique within the company. Server-side sets `status_id` to the `Draft` purchase status — the client does not send `status_id`.
 
 #### Request body (`application/json`)
 
@@ -203,6 +211,10 @@ Get detail of a single purchase invoice, including its nested `items` array.
     "kurs": 15500,
     "term_id": "e5f6a7b8-c9d0-4e5f-2a3b-4c5d6e7f8a9b",
     "term_name": "Net 30",
+    "status_id": "f6a7b8c9-d0e1-4f5a-3b4c-5d6e7f8a9b0c",
+    "status_name": "Draft",
+    "approved_by": null,
+    "approved_at": null,
     "created_by": "Budi Santoso",
     "created_at": "2026-07-05 09:00:00",
     "updated_by": null,
@@ -243,7 +255,7 @@ Get detail of a single purchase invoice, including its nested `items` array.
 
 ### PUT `/api/v2/purchase-invoice/{id}`
 
-Update a purchase invoice. Only send the fields you want to change. Does not update `purchase_order_id` or items.
+Update a purchase invoice. Only send the fields you want to change. Does not update `purchase_order_id`, items, or `status_id` — status transitions only happen via `approve`/`reject`/`revise`.
 
 #### Path parameters
 
@@ -335,6 +347,130 @@ Soft-deletes the purchase invoice (sets `deleted_at`) — it will no longer appe
 
 ---
 
+### PATCH `/api/v2/purchase-invoice/{id}/approve`
+
+Approve a purchase invoice. Server-side sets `status_id` to the `Approved` purchase status, plus `approved_by`, `approved_at`. The client does not send `status_id`.
+
+#### Path parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| id | string | The purchase invoice ID |
+
+#### Request body (`application/json`)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| notes | string | No | Optional note recorded on the audit log entry |
+
+#### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Purchase invoice approved successfully",
+  "data": []
+}
+```
+
+#### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Purchase invoice not found",
+  "data": []
+}
+```
+
+---
+
+### PATCH `/api/v2/purchase-invoice/{id}/reject`
+
+Reject a purchase invoice. Server-side sets `status_id` to the `Rejected` purchase status (does not set `approved_by`/`approved_at`). The client does not send `status_id`.
+
+#### Path parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| id | string | The purchase invoice ID |
+
+#### Request body (`application/json`)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| notes | string | No | Optional note recorded on the audit log entry |
+
+#### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Purchase invoice rejected successfully",
+  "data": []
+}
+```
+
+#### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Purchase invoice not found",
+  "data": []
+}
+```
+
+---
+
+### PATCH `/api/v2/purchase-invoice/{id}/revise`
+
+Move a rejected purchase invoice back to `Draft` so it can be edited and resubmitted. Only allowed when the current status is `Rejected`.
+
+#### Path parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| id | string | The purchase invoice ID |
+
+#### Request body (`application/json`)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| notes | string | No | Optional note recorded on the audit log entry |
+
+#### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Purchase invoice revised successfully",
+  "data": []
+}
+```
+
+#### Response `400 Bad Request`
+
+```json
+{
+  "status_code": 400,
+  "status_message": "Only rejected purchase invoices can be revised",
+  "data": []
+}
+```
+
+#### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Purchase invoice not found",
+  "data": []
+}
+```
+
+---
+
 ## Error responses (all endpoints)
 
 | Code | When |
@@ -351,9 +487,11 @@ Soft-deletes the purchase invoice (sets `deleted_at`) — it will no longer appe
 ## Notes
 
 - Header + items creation is wrapped in a single database transaction — either the purchase invoice and all its items are created together, or nothing is saved.
-- Create/update/delete write `audit_log` rows with action `created`/`updated`/`deleted` (only `created` is currently wired up in the source — update/delete do not call `insertAuditLog`). Query this history via `GET /api/v2/audit-log?module=purchase_invoice&reference_id={id}` — see the `audit-log` module doc.
-- No enum-constrained fields were found in this module's source.
+- Approve/reject/revise write an `audit_log` row with action `approved`/`rejected`/`revised`; create writes a `created` audit_log row (update/delete do not call `insertAuditLog` — pre-existing gap, unrelated to the approval stage added here). Query this history via `GET /api/v2/audit-log?module=purchase_invoice&reference_id={id}` — see the `audit-log` module doc.
+- **`status_id`, `approved_by`, and `approved_at` are new as of this addendum** — added specifically to bring purchase-invoice's approval workflow in line with purchase-order/sales. `status_id` is resolved server-side by matching `purchase_status.status_name` (the same shared lookup table `purchase_order` uses): `POST` sets it to `"Draft"`, `PATCH .../approve` sets it to `"Approved"`, `PATCH .../reject` sets it to `"Rejected"`, `PATCH .../revise` sets it back to `"Draft"`. `PUT` cannot change `status_id` — status transitions only happen via `approve`/`reject`/`revise`. `approve` sets `approved_by`/`approved_at`; `reject` and `revise` do not.
+- `revise` only succeeds when the purchase invoice's current status is `Rejected`; any other status returns `400`.
+- Purchase invoices created before this addendum were backfilled to `Approved` with `approved_by`/`approved_at` left `NULL` (no real approver was ever recorded for them) — see `v2/docs/migrations/v22_purchase_invoice_receive_approval_schema.md`.
 - `invoice_display_number` must be unique per company among non-deleted purchase invoices; violating this returns `409 Conflict`.
 - The create response only returns `purchase_invoice_id`. Only the detail endpoint (`GET /api/v2/purchase-invoice/{id}`) returns the nested `items` array.
-- **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a purchase invoice (list, detail, and any nested items). Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.
-- **List and detail responses now also resolve reference IDs to their display names**, alongside the existing `*_id` field (both are returned): `purchase_order_id` → `po_display_number`, `supplier_id` → `supplier_name`, `term_id` → `term_name`. All are `LEFT JOIN`ed, so the resolved field is `null` if the referenced record is missing, was deleted, or `term_id` was never set; the `*_id` field is unaffected either way.
+- **`created_by`, `updated_by`, and `approved_by` are resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a purchase invoice (list, detail, and any nested items). There is no separate `*_id` field for them, the resolved name **is** the value. `updated_by`/`approved_by` are `null` until the record has actually been updated/approved; `created_by` can be `null` only if the creating user has since been deleted.
+- **List and detail responses also resolve reference IDs to their display names**, alongside the existing `*_id` field (both are returned): `purchase_order_id` → `po_display_number`, `supplier_id` → `supplier_name`, `term_id` → `term_name`, `status_id` → `status_name`. All are `LEFT JOIN`ed, so the resolved field is `null` if the referenced record is missing, was deleted, or the `*_id` was never set; the `*_id` field is unaffected either way.

@@ -4,6 +4,13 @@ require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
 require_once __DIR__ . '/../../helpers/audit_log.php';
 
+function getPurchaseStatusIdByName($conn, $status_name) {
+    $status_name = mysqli_real_escape_string($conn, $status_name);
+    $result = mysqli_query($conn, "SELECT id FROM " . APP_SCHEMA . ".purchase_status WHERE status_name = '$status_name' AND deleted_at IS NULL LIMIT 1");
+    $row = $result ? mysqli_fetch_assoc($result) : null;
+    return $row ? $row['id'] : null;
+}
+
 function getAllPurchaseInvoices($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
     $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
@@ -18,6 +25,10 @@ function getAllPurchaseInvoices($conn, $company_id, $params) {
         $supplier_id = mysqli_real_escape_string($conn, $params['supplier_id']);
         $where .= " AND pi.supplier_id = '$supplier_id'";
     }
+    if (isset($params['status_id']) && trim($params['status_id']) !== '') {
+        $status_id = mysqli_real_escape_string($conn, $params['status_id']);
+        $where .= " AND pi.status_id = '$status_id'";
+    }
     if (isset($params['date_from']) && trim($params['date_from']) !== '') {
         $date_from = mysqli_real_escape_string($conn, $params['date_from']);
         $where .= " AND pi.invoice_date >= '$date_from'";
@@ -31,12 +42,15 @@ function getAllPurchaseInvoices($conn, $company_id, $params) {
             LEFT JOIN " . APP_SCHEMA . ".purchase_order po ON po.id = pi.purchase_order_id
             LEFT JOIN " . APP_SCHEMA . ".supplier s ON s.id = pi.supplier_id
             LEFT JOIN " . APP_SCHEMA . ".payment_term pt ON pt.id = pi.term_id
+            LEFT JOIN " . APP_SCHEMA . ".purchase_status ps ON ps.id = pi.status_id
             LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = pi.created_by
-            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = pi.updated_by";
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = pi.updated_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user au ON au.user_id COLLATE utf8mb4_general_ci = pi.approved_by";
 
-    $result       = mysqli_query($conn, "SELECT pi.*, po.po_display_number, s.supplier_name, pt.term_name,
+    $result       = mysqli_query($conn, "SELECT pi.*, po.po_display_number, s.supplier_name, pt.term_name, ps.status_name,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
-            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by,
+            CONCAT(au.first_name, ' ', au.last_name) AS approved_by
             FROM $from WHERE $where ORDER BY pi.created_at DESC LIMIT $limit OFFSET $offset");
     $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM $from WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
@@ -98,6 +112,12 @@ function createPurchaseInvoice($conn, $input, $username, $company_id) {
         return;
     }
 
+    $status_id = getPurchaseStatusIdByName($conn, 'Draft');
+    if (!$status_id) {
+        jsonResponse(500, 'Default purchase status "Draft" is not configured');
+        return;
+    }
+
     $tax_invoice_number_sql = isset($input['tax_invoice_number']) && trim($input['tax_invoice_number']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['tax_invoice_number']) . "'" : 'NULL';
     $kurs_sql               = isset($input['kurs']) && $input['kurs'] !== '' ? (float)$input['kurs'] : 'NULL';
     $term_id_sql            = isset($input['term_id']) && trim($input['term_id']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['term_id']) . "'" : 'NULL';
@@ -109,9 +129,9 @@ function createPurchaseInvoice($conn, $input, $username, $company_id) {
     try {
         $sql = "INSERT INTO " . APP_SCHEMA . ".purchase_invoice
                 (id, company_id, invoice_display_number, purchase_order_id, supplier_id, invoice_date, ship_date,
-                 tax_invoice_number, kurs, term_id, created_by, created_at)
+                 tax_invoice_number, kurs, term_id, status_id, created_by, created_at)
                 VALUES ('$purchase_invoice_id', '$company_id', '$invoice_display_number', '$purchase_order_id', '$supplier_id', '$invoice_date', '$ship_date',
-                        $tax_invoice_number_sql, $kurs_sql, $term_id_sql, '$username', '$now')";
+                        $tax_invoice_number_sql, $kurs_sql, $term_id_sql, '$status_id', '$username', '$now')";
 
         if (!mysqli_query($conn, $sql)) {
             throw new Exception(mysqli_error($conn));
@@ -152,11 +172,14 @@ function getDetailPurchaseInvoice($conn, $purchase_invoice_id, $company_id) {
             LEFT JOIN " . APP_SCHEMA . ".purchase_order po ON po.id = pi.purchase_order_id
             LEFT JOIN " . APP_SCHEMA . ".supplier s ON s.id = pi.supplier_id
             LEFT JOIN " . APP_SCHEMA . ".payment_term pt ON pt.id = pi.term_id
+            LEFT JOIN " . APP_SCHEMA . ".purchase_status ps ON ps.id = pi.status_id
             LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = pi.created_by
-            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = pi.updated_by";
-    $result = mysqli_query($conn, "SELECT pi.*, po.po_display_number, s.supplier_name, pt.term_name,
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = pi.updated_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user au ON au.user_id COLLATE utf8mb4_general_ci = pi.approved_by";
+    $result = mysqli_query($conn, "SELECT pi.*, po.po_display_number, s.supplier_name, pt.term_name, ps.status_name,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
-            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by,
+            CONCAT(au.first_name, ' ', au.last_name) AS approved_by
             FROM $from WHERE pi.id = '$purchase_invoice_id' AND pi.company_id = '$company_id' AND pi.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Purchase invoice not found');
@@ -243,6 +266,92 @@ function deletePurchaseInvoice($conn, $purchase_invoice_id, $username, $company_
     }
 }
 
+function approvePurchaseInvoice($conn, $purchase_invoice_id, $input, $username, $company_id) {
+    $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".purchase_invoice WHERE id = '$purchase_invoice_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    if (mysqli_num_rows($check) === 0) {
+        jsonResponse(404, 'Purchase invoice not found');
+        return;
+    }
+
+    $status_id = getPurchaseStatusIdByName($conn, 'Approved');
+    if (!$status_id) {
+        jsonResponse(500, 'Purchase status "Approved" is not configured');
+        return;
+    }
+
+    $now   = date('Y-m-d H:i:s');
+    $notes = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
+
+    if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".purchase_invoice
+            SET status_id = '$status_id', approved_by = '$username', approved_at = '$now', updated_by = '$username', updated_at = '$now'
+            WHERE id = '$purchase_invoice_id' AND company_id = '$company_id'")) {
+        insertAuditLog($conn, $company_id, 'purchase_invoice', $purchase_invoice_id, 'approved', $username, $notes);
+        jsonResponse(200, 'Purchase invoice approved successfully');
+    } else {
+        jsonResponse(500, 'Failed to approve purchase invoice', ['error' => mysqli_error($conn)]);
+    }
+}
+
+function rejectPurchaseInvoice($conn, $purchase_invoice_id, $input, $username, $company_id) {
+    $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".purchase_invoice WHERE id = '$purchase_invoice_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    if (mysqli_num_rows($check) === 0) {
+        jsonResponse(404, 'Purchase invoice not found');
+        return;
+    }
+
+    $status_id = getPurchaseStatusIdByName($conn, 'Rejected');
+    if (!$status_id) {
+        jsonResponse(500, 'Purchase status "Rejected" is not configured');
+        return;
+    }
+
+    $now   = date('Y-m-d H:i:s');
+    $notes = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
+
+    if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".purchase_invoice
+            SET status_id = '$status_id', updated_by = '$username', updated_at = '$now'
+            WHERE id = '$purchase_invoice_id' AND company_id = '$company_id'")) {
+        insertAuditLog($conn, $company_id, 'purchase_invoice', $purchase_invoice_id, 'rejected', $username, $notes);
+        jsonResponse(200, 'Purchase invoice rejected successfully');
+    } else {
+        jsonResponse(500, 'Failed to reject purchase invoice', ['error' => mysqli_error($conn)]);
+    }
+}
+
+function revisePurchaseInvoice($conn, $purchase_invoice_id, $input, $username, $company_id) {
+    $check = mysqli_query($conn, "SELECT ps.status_name FROM " . APP_SCHEMA . ".purchase_invoice pi
+            LEFT JOIN " . APP_SCHEMA . ".purchase_status ps ON ps.id = pi.status_id
+            WHERE pi.id = '$purchase_invoice_id' AND pi.company_id = '$company_id' AND pi.deleted_at IS NULL LIMIT 1");
+    if (mysqli_num_rows($check) === 0) {
+        jsonResponse(404, 'Purchase invoice not found');
+        return;
+    }
+
+    $purchase_invoice = mysqli_fetch_assoc($check);
+    if ($purchase_invoice['status_name'] !== 'Rejected') {
+        jsonResponse(400, 'Only rejected purchase invoices can be revised');
+        return;
+    }
+
+    $status_id = getPurchaseStatusIdByName($conn, 'Draft');
+    if (!$status_id) {
+        jsonResponse(500, 'Default purchase status "Draft" is not configured');
+        return;
+    }
+
+    $now   = date('Y-m-d H:i:s');
+    $notes = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
+
+    if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".purchase_invoice
+            SET status_id = '$status_id', updated_by = '$username', updated_at = '$now'
+            WHERE id = '$purchase_invoice_id' AND company_id = '$company_id'")) {
+        insertAuditLog($conn, $company_id, 'purchase_invoice', $purchase_invoice_id, 'revised', $username, $notes);
+        jsonResponse(200, 'Purchase invoice revised successfully');
+    } else {
+        jsonResponse(500, 'Failed to revise purchase invoice', ['error' => mysqli_error($conn)]);
+    }
+}
+
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
 $authUser   = requireAuth();
@@ -256,11 +365,34 @@ if (!$company_id) {
 }
 
 $purchase_invoice_id = !empty($action) ? $action : null;
+$sub_action           = $parts[4] ?? '';
 
 try {
     $conn = getConn();
 
-    if ($purchase_invoice_id) {
+    if ($purchase_invoice_id && $sub_action !== '') {
+        $input = in_array($method, ['POST', 'PUT', 'PATCH'])
+            ? (json_decode(file_get_contents('php://input'), true) ?? [])
+            : [];
+
+        switch ($sub_action) {
+            case 'approve':
+                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                approvePurchaseInvoice($conn, $purchase_invoice_id, $input, $username, $company_id);
+                break;
+            case 'reject':
+                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                rejectPurchaseInvoice($conn, $purchase_invoice_id, $input, $username, $company_id);
+                break;
+            case 'revise':
+                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                revisePurchaseInvoice($conn, $purchase_invoice_id, $input, $username, $company_id);
+                break;
+            default:
+                jsonResponse(404, 'Route not found');
+        }
+
+    } elseif ($purchase_invoice_id) {
         switch ($method) {
             case 'GET':
                 getDetailPurchaseInvoice($conn, $purchase_invoice_id, $company_id);

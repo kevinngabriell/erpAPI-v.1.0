@@ -7,6 +7,71 @@ Intended audience: frontend developers.
 
 ---
 
+## [2026-07-20 22:30:00 WIB] — Purchase order/invoice/receive gain sales-style single-approval workflow; sales approve bug fixed
+
+### Added
+- `PATCH /api/v2/purchase-invoice/{id}/approve`, `.../reject`, `.../revise` — purchase invoice now has the same single-approval workflow as purchase-order/sales (it previously had no status/approval concept at all). New columns `status_id`, `approved_by`, `approved_at` added to `purchase_invoice`.
+- `PATCH /api/v2/purchase-receive/{id}/approve`, `.../reject`, `.../revise` — purchase receive gains the same workflow. New columns `status_id`, `approved_by`, `approved_at` added to `purchase_receive`.
+- `PATCH /api/v2/purchase-order/{id}/revise` — purchase order previously only had `approve`/`reject`; it now also supports moving a rejected order back to `Draft`, matching sales-order/sales-sppb/sales-delivery/sales-profit.
+- `POST /api/v2/purchase-invoice`, `POST /api/v2/purchase-receive` — now set `status_id` to `Draft` server-side on create.
+- `GET /api/v2/purchase-invoice`, `GET /api/v2/purchase-invoice/{id}`, `GET /api/v2/purchase-receive`, `GET /api/v2/purchase-receive/{id}` — responses now include `status_id`, `status_name`, `approved_by`, `approved_at`. Both endpoints also accept a new `status_id` filter on the list route.
+- This is a **single-approval** workflow (one `approved_by`/`approved_at` pair) — unrelated to and not replacing the 2-signer Owner+Treasury dual-approval flow that Finance uses (`finance_transaction`/`finance_payment`); that pattern stays scoped to Finance only.
+
+### Breaking changes
+- **`purchase-order`: `status_id` is no longer a client-supplied field.** `POST` no longer accepts/requires `status_id` (it's auto-set to `Draft`); `PUT` no longer accepts `status_id` at all (status changes only via `approve`/`reject`/`revise`); `PATCH .../approve` and `.../reject` no longer accept/require `status_id` in the body (previously required — the endpoint resolved the status purely from whatever UUID the client sent). Any frontend code currently sending `status_id` on these three requests should stop — it's now ignored on `PUT`/silently unnecessary elsewhere.
+- **Sales approve endpoints were 500ing and are now fixed.** `sales-order`, `sales-delivery`, `sales-sppb`, and `sales-profit`'s `PATCH .../approve` looked up a `sales_status` row named `"Approve"`, but the seeded row is actually named `"Approved"` — every call to these four `approve` endpoints returned `500 Sales status "Approve" is not configured` in every environment. This is now fixed to look up `"Approved"`, so these endpoints work for the first time. No request/response shape changed — this is a bug fix, not a new behavior, but flagging it here since any frontend code that was silently swallowing/retrying the 500 should be revisited.
+
+### Notes for frontend
+- Purchase invoices/receives that existed before this change were backfilled to `status_name = "Approved"` with `approved_by`/`approved_at` left `null` — there's no real approver identity to backfill for records that predate the approval gate.
+- `revise` only succeeds when the current status is `Rejected` on all three purchase modules; any other status returns `400`.
+- See `v2/docs/migrations/v22_purchase_invoice_receive_approval_schema.md` for the schema migration — applied to dev, **prod not yet applied** (pending sign-off, same gate as every other schema change in this project).
+
+---
+
+## [2026-07-20 21:10:00 WIB] — Owner + Treasury dual approval added to finance-transaction and finance-payment
+
+### Added
+- `PATCH /api/v2/finance-transaction/{id}/approve`, `.../reject` — every finance transaction (Pembayaran/cash-out **and** Penerimaan/cash-in alike) now requires two signatures — Business Owner and Treasury/Controller — before it reaches `posted`. Which slot a caller fills is resolved server-side from their permissions, not chosen in the request.
+- `PATCH /api/v2/finance-payment/{id}/approve`, `.../reject` — A/P and A/R settlements (`finance_payment`) now go through the same Owner + Treasury 2-signer workflow.
+- `finance_transaction` and `finance_payment` list/detail responses now include `transaction_status`, `approved_by_owner_id`/`approved_by_owner_at`, `approved_by_treasury_id`/`approved_by_treasury_at`, and resolved display names `approved_by_owner`/`approved_by_treasury`.
+- `GET /api/v2/finance-transaction` and `GET /api/v2/finance-payment` accept a new `transaction_status` filter (`draft` \| `submitted` \| `partially_approved` \| `posted` \| `rejected`).
+- Two new permission keys: `keuangan.approve_owner` and `keuangan.approve_treasury`. Shared across both modules — one 2-signer control, not four separate ones.
+
+### Breaking changes
+None — all changes are additive (new fields, new endpoints, new optional filter). Existing `POST`/`PUT` request bodies are unchanged.
+
+### Notes for frontend
+- New records are created with `transaction_status = 'draft'` by default; nothing changes about the `POST` request shape.
+- The same user can never fill both the owner and treasury slot on one record, even if their role happens to hold both permissions — the second attempt returns `409 You have already signed this record`.
+- **No role currently holds `keuangan.approve_owner` or `keuangan.approve_treasury`** — an admin needs to assign these via the roles/permissions screen before anyone can actually approve anything through these new endpoints. A "Treasury/Controller" role does not exist yet in `movira_core`; it needs to be created (or an existing role repurposed) first.
+- Pre-existing rows were backfilled to `transaction_status = 'posted'` with `NULL` approvers on both tables (4,443 `finance_transaction` rows already had this from an earlier migration; 582 `finance_payment` rows were backfilled as part of this change) — they predate the approval workflow, so there's no real approver identity to backfill.
+- Edits and soft-deletes are **not** blocked by `transaction_status` — a `posted` record can still be updated/deleted via the existing `PUT`/`DELETE` endpoints, matching existing behavior on `purchase_order`/`sales_order`.
+
+---
+
+## [2026-07-20 18:58:14 WIB] — Sales SPPB/delivery/profit gain approve/reject workflow; Excel export added across sales
+
+### Added
+- `GET /api/v2/sales-order/{id}/export`, `GET /api/v2/sales-sppb/{id}/export`, `GET /api/v2/sales-delivery/{id}/export`, `GET /api/v2/sales-profit/{id}/export` — each downloads the record as a formatted `.xlsx` file, replicating the layout of the legacy v1 Excel exports (`sales/SOExport.php`, `sales/SPPBExport.php`, `sales/SuratJalanExport.php`, `sales/ProfitExport.php`). Auth-gated like every other endpoint — requires the same `Authorization: Bearer` header, so a plain `<a href>`/browser navigation won't work; fetch as a blob client-side.
+- `PATCH /api/v2/sales-sppb/{id}/approve`, `.../reject`, `.../revise` — sales SPPB now has the same approval workflow as sales-order: server-resolved `status_id` via `sales_status`, `approved_by`/`approved_at` set on approve.
+- `PATCH /api/v2/sales-delivery/{id}/approve`, `.../reject`, `.../revise` — sales delivery now has the same approval workflow (previously had no status/approval concept at all, unlike v1).
+- `PATCH /api/v2/sales-profit/{id}/approve`, `.../reject`, `.../revise` — sales profit now has the same approval workflow.
+- `POST /api/v2/sales-sppb`, `POST /api/v2/sales-delivery`, `POST /api/v2/sales-profit` — now set `status_id` to `Draft` server-side on create.
+- `GET /api/v2/sales-sppb`, `GET /api/v2/sales-sppb/{id}`, `GET /api/v2/sales-delivery`, `GET /api/v2/sales-delivery/{id}`, `GET /api/v2/sales-profit`, `GET /api/v2/sales-profit/{id}` — responses now include `status_id`, `status_name`, `approved_by`, `approved_at`, matching the fields already returned by sales-order.
+
+### Breaking changes
+None — all changes are additive (new fields, new endpoints). Existing `POST`/`PUT` request bodies for SPPB, delivery, and profit are unchanged.
+
+### Notes for frontend
+- `status_id` is never client-supplied on any of the three modules — same pattern as sales-order. Resolve `sales_status.id` from `GET /api/v2/sales-status` only if you need to filter or display it; transitions happen exclusively via `approve`/`reject`/`revise`.
+- Sales delivery previously had no status concept in the v2 API at all — existing sales-delivery records were implicitly "no status" until this change; after deploying the underlying schema change, treat any pre-existing row's `status_id` as whatever the migration backfilled (check with whoever ran it) before assuming it's `Draft`.
+- The delivery export fixes two bugs present in the v1 script rather than reproducing them: cell `G5` now shows `ship_to_address` instead of duplicating the billing address, and the hardcoded signer name `'Intan'` is replaced with the record's resolved `approved_by` name.
+- The SPPB export's "PO CUSTOMER" column is relabeled "NO SO" and now shows the linked sales order's `so_display_number` — v2's `sales_sppb_item` has no per-item PO number field like v1 did.
+- The sales-order export's header "PO NO" cell shows the first item's linked `po_display_number`, since v2 links purchase orders per-item rather than one PO number per header like v1.
+- None of the export endpoints persist anything — they are pure read/format operations, same transactional guarantees as any other `GET`.
+
+---
+
 ## [2026-07-19 22:54:57 WIB] — Cash book report added
 
 ### Added

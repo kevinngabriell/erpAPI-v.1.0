@@ -1,6 +1,6 @@
 # Purchase Receive API
 
-> **Last updated:** 2026-07-19 15:25:59 WIB
+> **Last updated:** 2026-07-20 00:00:00 WIB
 > **Base URL:** `/api/v2/purchase-receive`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -15,6 +15,9 @@
 | GET    | `/api/v2/purchase-receive/{id}` | Get purchase receive detail (with items) |
 | PUT    | `/api/v2/purchase-receive/{id}` | Update a purchase receive |
 | DELETE | `/api/v2/purchase-receive/{id}` | Delete a purchase receive |
+| PATCH  | `/api/v2/purchase-receive/{id}/approve` | Approve a purchase receive |
+| PATCH  | `/api/v2/purchase-receive/{id}/reject` | Reject a purchase receive |
+| PATCH  | `/api/v2/purchase-receive/{id}/revise` | Revise a rejected purchase receive back to Draft |
 
 ---
 
@@ -31,6 +34,7 @@ List all purchase receives belonging to the authenticated company.
 | search             | string | No       | —       | Search on the linked purchase order's `po_display_number` (left-joined) |
 | purchase_order_id  | string | No       | —       | Filter by `purchase_order_id` |
 | supplier_id        | string | No       | —       | Filter by `supplier_id` |
+| status_id          | string | No       | —       | Filter by `status_id` |
 | date_from          | string (date) | No | —    | Filter `receiving_date >=` this date (`YYYY-MM-DD`) |
 | date_to            | string (date) | No | —    | Filter `receiving_date <=` this date (`YYYY-MM-DD`) |
 
@@ -53,6 +57,10 @@ List all purchase receives belonging to the authenticated company.
         "ship_date": "2026-07-01",
         "ship_via_id": "e5f6a7b8-c9d0-4e5f-2a3b-4c5d6e7f8a9b",
         "ship_name": "Sea Freight",
+        "status_id": "f6a7b8c9-d0e1-4f5a-3b4c-5d6e7f8a9b0c",
+        "status_name": "Draft",
+        "approved_by": null,
+        "approved_at": null,
         "created_by": "Budi Santoso",
         "created_at": "2026-07-05 09:00:00",
         "updated_by": null,
@@ -84,7 +92,7 @@ List all purchase receives belonging to the authenticated company.
 
 ### POST `/api/v2/purchase-receive`
 
-Create a new purchase receive together with its items. Requires the referenced purchase order to exist for the authenticated company.
+Create a new purchase receive together with its items. Requires the referenced purchase order to exist for the authenticated company. Server-side sets `status_id` to the `Draft` purchase status — the client does not send `status_id`.
 
 #### Request body (`application/json`)
 
@@ -185,6 +193,10 @@ Get detail of a single purchase receive, including its nested `items` array.
     "ship_date": "2026-07-01",
     "ship_via_id": "e5f6a7b8-c9d0-4e5f-2a3b-4c5d6e7f8a9b",
     "ship_name": "Sea Freight",
+    "status_id": "f6a7b8c9-d0e1-4f5a-3b4c-5d6e7f8a9b0c",
+    "status_name": "Draft",
+    "approved_by": null,
+    "approved_at": null,
     "created_by": "Budi Santoso",
     "created_at": "2026-07-05 09:00:00",
     "updated_by": null,
@@ -225,7 +237,7 @@ Get detail of a single purchase receive, including its nested `items` array.
 
 ### PUT `/api/v2/purchase-receive/{id}`
 
-Update a purchase receive. Only send the fields you want to change. Does not update `purchase_order_id` or items.
+Update a purchase receive. Only send the fields you want to change. Does not update `purchase_order_id`, items, or `status_id` — status transitions only happen via `approve`/`reject`/`revise`.
 
 #### Path parameters
 
@@ -314,6 +326,130 @@ Soft-deletes the purchase receive (sets `deleted_at`) — it will no longer appe
 
 ---
 
+### PATCH `/api/v2/purchase-receive/{id}/approve`
+
+Approve a purchase receive. Server-side sets `status_id` to the `Approved` purchase status, plus `approved_by`, `approved_at`. The client does not send `status_id`.
+
+#### Path parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| id | string | The purchase receive ID |
+
+#### Request body (`application/json`)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| notes | string | No | Optional note recorded on the audit log entry |
+
+#### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Purchase receive approved successfully",
+  "data": []
+}
+```
+
+#### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Purchase receive not found",
+  "data": []
+}
+```
+
+---
+
+### PATCH `/api/v2/purchase-receive/{id}/reject`
+
+Reject a purchase receive. Server-side sets `status_id` to the `Rejected` purchase status (does not set `approved_by`/`approved_at`). The client does not send `status_id`.
+
+#### Path parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| id | string | The purchase receive ID |
+
+#### Request body (`application/json`)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| notes | string | No | Optional note recorded on the audit log entry |
+
+#### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Purchase receive rejected successfully",
+  "data": []
+}
+```
+
+#### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Purchase receive not found",
+  "data": []
+}
+```
+
+---
+
+### PATCH `/api/v2/purchase-receive/{id}/revise`
+
+Move a rejected purchase receive back to `Draft` so it can be edited and resubmitted. Only allowed when the current status is `Rejected`.
+
+#### Path parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| id | string | The purchase receive ID |
+
+#### Request body (`application/json`)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| notes | string | No | Optional note recorded on the audit log entry |
+
+#### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Purchase receive revised successfully",
+  "data": []
+}
+```
+
+#### Response `400 Bad Request`
+
+```json
+{
+  "status_code": 400,
+  "status_message": "Only rejected purchase receives can be revised",
+  "data": []
+}
+```
+
+#### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Purchase receive not found",
+  "data": []
+}
+```
+
+---
+
 ## Error responses (all endpoints)
 
 | Code | When |
@@ -330,9 +466,11 @@ Soft-deletes the purchase receive (sets `deleted_at`) — it will no longer appe
 ## Notes
 
 - Header + items creation is wrapped in a single database transaction — either the purchase receive and all its items are created together, or nothing is saved.
-- Create/update/delete write `audit_log` rows with action `created`/`updated`/`deleted` (only `created` is currently wired up in the source — update/delete do not call `insertAuditLog`). Query this history via `GET /api/v2/audit-log?module=purchase_receive&reference_id={id}` — see the `audit-log` module doc.
-- No enum-constrained fields were found in this module's source.
+- Approve/reject/revise write an `audit_log` row with action `approved`/`rejected`/`revised`; create writes a `created` audit_log row (update/delete do not call `insertAuditLog` — pre-existing gap, unrelated to the approval stage added here). Query this history via `GET /api/v2/audit-log?module=purchase_receive&reference_id={id}` — see the `audit-log` module doc.
+- **`status_id`, `approved_by`, and `approved_at` are new as of this addendum** — added specifically to bring purchase-receive's approval workflow in line with purchase-order/sales. `status_id` is resolved server-side by matching `purchase_status.status_name` (the same shared lookup table `purchase_order` uses): `POST` sets it to `"Draft"`, `PATCH .../approve` sets it to `"Approved"`, `PATCH .../reject` sets it to `"Rejected"`, `PATCH .../revise` sets it back to `"Draft"`. `PUT` cannot change `status_id` — status transitions only happen via `approve`/`reject`/`revise`. `approve` sets `approved_by`/`approved_at`; `reject` and `revise` do not.
+- `revise` only succeeds when the purchase receive's current status is `Rejected`; any other status returns `400`.
+- Purchase receives created before this addendum were backfilled to `Approved` with `approved_by`/`approved_at` left `NULL` (no real approver was ever recorded for them) — see `v2/docs/migrations/v22_purchase_invoice_receive_approval_schema.md`.
 - The list endpoint (`GET /api/v2/purchase-receive`) does not include the nested `items` array. Only the detail endpoint (`GET /api/v2/purchase-receive/{id}`) returns `items`. The create response only returns `purchase_receive_id`.
 - `search` is matched against the linked purchase order's `po_display_number` via a `LEFT JOIN`, not against any field on the purchase receive record itself — purchase receive rows have no display number of their own. Records whose `purchase_order_id` no longer resolves to a purchase order are excluded from `search` results (but still returned when `search` is omitted).
-- **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a purchase receive (list, detail, and any nested items). Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.
-- **List and detail responses now also resolve reference IDs to their display names**, alongside the existing `*_id` field (both are returned): `purchase_order_id` → `po_display_number`, `supplier_id` → `supplier_name`, `ship_via_id` → `ship_name`. All are `LEFT JOIN`ed, so the resolved field is `null` if the referenced record is missing or was deleted; the `*_id` field is unaffected either way.
+- **`created_by`, `updated_by`, and `approved_by` are resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a purchase receive (list, detail, and any nested items). There is no separate `*_id` field for them, the resolved name **is** the value. `updated_by`/`approved_by` are `null` until the record has actually been updated/approved; `created_by` can be `null` only if the creating user has since been deleted.
+- **List and detail responses also resolve reference IDs to their display names**, alongside the existing `*_id` field (both are returned): `purchase_order_id` → `po_display_number`, `supplier_id` → `supplier_name`, `ship_via_id` → `ship_name`, `status_id` → `status_name`. All are `LEFT JOIN`ed, so the resolved field is `null` if the referenced record is missing or was deleted; the `*_id` field is unaffected either way.

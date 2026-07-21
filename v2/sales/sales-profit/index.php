@@ -3,6 +3,18 @@
 require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
 require_once __DIR__ . '/../../helpers/audit_log.php';
+require_once __DIR__ . '/../../helpers/excel_export.php';
+
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use PhpOffice\PhpSpreadsheet\Style\Border;
+
+function getSalesStatusIdByName($conn, $status_name) {
+    $status_name = mysqli_real_escape_string($conn, $status_name);
+    $result = mysqli_query($conn, "SELECT id FROM " . APP_SCHEMA . ".sales_status WHERE status_name = '$status_name' AND deleted_at IS NULL LIMIT 1");
+    $row = $result ? mysqli_fetch_assoc($result) : null;
+    return $row ? $row['id'] : null;
+}
 
 function getAllSalesProfits($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
@@ -34,12 +46,15 @@ function getAllSalesProfits($conn, $company_id, $params) {
     $from = APP_SCHEMA . ".sales_profit sp
             LEFT JOIN " . APP_SCHEMA . ".sales_order so ON so.id = sp.sales_order_id
             LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = sp.customer_id
+            LEFT JOIN " . APP_SCHEMA . ".sales_status ss ON ss.id = sp.status_id
             LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = sp.created_by
-            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = sp.updated_by";
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = sp.updated_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user au ON au.user_id COLLATE utf8mb4_general_ci = sp.approved_by";
 
-    $result       = mysqli_query($conn, "SELECT sp.*, so.so_display_number, c.customer_name,
+    $result       = mysqli_query($conn, "SELECT sp.*, so.so_display_number, c.customer_name, ss.status_name,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
-            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by,
+            CONCAT(au.first_name, ' ', au.last_name) AS approved_by
             FROM $from WHERE $where ORDER BY sp.created_at DESC LIMIT $limit OFFSET $offset");
     $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM $from WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
@@ -92,15 +107,21 @@ function createSalesProfit($conn, $input, $username, $company_id) {
         return;
     }
 
+    $status_id = getSalesStatusIdByName($conn, 'Draft');
+    if (!$status_id) {
+        jsonResponse(500, 'Default sales status "Draft" is not configured');
+        return;
+    }
+
     $sales_profit_id = generateUUID();
     $now             = date('Y-m-d H:i:s');
 
     $conn->begin_transaction();
     try {
         $sql = "INSERT INTO " . APP_SCHEMA . ".sales_profit
-                (id, company_id, sales_order_id, customer_id, created_by, created_at)
+                (id, company_id, sales_order_id, customer_id, status_id, created_by, created_at)
                 VALUES
-                ('$sales_profit_id', '$company_id', '$sales_order_id', '$customer_id', '$username', '$now')";
+                ('$sales_profit_id', '$company_id', '$sales_order_id', '$customer_id', '$status_id', '$username', '$now')";
 
         if (!mysqli_query($conn, $sql)) {
             throw new Exception(mysqli_error($conn));
@@ -139,11 +160,14 @@ function getDetailSalesProfit($conn, $sales_profit_id, $company_id) {
     $from   = APP_SCHEMA . ".sales_profit sp
             LEFT JOIN " . APP_SCHEMA . ".sales_order so ON so.id = sp.sales_order_id
             LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = sp.customer_id
+            LEFT JOIN " . APP_SCHEMA . ".sales_status ss ON ss.id = sp.status_id
             LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = sp.created_by
-            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = sp.updated_by";
-    $result = mysqli_query($conn, "SELECT sp.*, so.so_display_number, c.customer_name,
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = sp.updated_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user au ON au.user_id COLLATE utf8mb4_general_ci = sp.approved_by";
+    $result = mysqli_query($conn, "SELECT sp.*, so.so_display_number, c.customer_name, ss.status_name,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
-            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by,
+            CONCAT(au.first_name, ' ', au.last_name) AS approved_by
             FROM $from WHERE sp.id = '$sales_profit_id' AND sp.company_id = '$company_id' AND sp.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Sales profit not found');
@@ -230,6 +254,223 @@ function deleteSalesProfit($conn, $sales_profit_id, $username, $company_id) {
     }
 }
 
+function approveSalesProfit($conn, $sales_profit_id, $input, $username, $company_id) {
+    $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".sales_profit WHERE id = '$sales_profit_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    if (mysqli_num_rows($check) === 0) {
+        jsonResponse(404, 'Sales profit not found');
+        return;
+    }
+
+    $status_id = getSalesStatusIdByName($conn, 'Approved');
+    if (!$status_id) {
+        jsonResponse(500, 'Sales status "Approved" is not configured');
+        return;
+    }
+
+    $now   = date('Y-m-d H:i:s');
+    $notes = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
+
+    if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".sales_profit
+            SET status_id = '$status_id', approved_by = '$username', approved_at = '$now', updated_by = '$username', updated_at = '$now'
+            WHERE id = '$sales_profit_id' AND company_id = '$company_id'")) {
+        insertAuditLog($conn, $company_id, 'sales_profit', $sales_profit_id, 'approved', $username, $notes);
+        jsonResponse(200, 'Sales profit approved successfully');
+    } else {
+        jsonResponse(500, 'Failed to approve sales profit', ['error' => mysqli_error($conn)]);
+    }
+}
+
+function rejectSalesProfit($conn, $sales_profit_id, $input, $username, $company_id) {
+    $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".sales_profit WHERE id = '$sales_profit_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    if (mysqli_num_rows($check) === 0) {
+        jsonResponse(404, 'Sales profit not found');
+        return;
+    }
+
+    $status_id = getSalesStatusIdByName($conn, 'Rejected');
+    if (!$status_id) {
+        jsonResponse(500, 'Sales status "Rejected" is not configured');
+        return;
+    }
+
+    $now   = date('Y-m-d H:i:s');
+    $notes = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
+
+    if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".sales_profit
+            SET status_id = '$status_id', updated_by = '$username', updated_at = '$now'
+            WHERE id = '$sales_profit_id' AND company_id = '$company_id'")) {
+        insertAuditLog($conn, $company_id, 'sales_profit', $sales_profit_id, 'rejected', $username, $notes);
+        jsonResponse(200, 'Sales profit rejected successfully');
+    } else {
+        jsonResponse(500, 'Failed to reject sales profit', ['error' => mysqli_error($conn)]);
+    }
+}
+
+function reviseSalesProfit($conn, $sales_profit_id, $input, $username, $company_id) {
+    $check = mysqli_query($conn, "SELECT ss.status_name FROM " . APP_SCHEMA . ".sales_profit sp
+            LEFT JOIN " . APP_SCHEMA . ".sales_status ss ON ss.id = sp.status_id
+            WHERE sp.id = '$sales_profit_id' AND sp.company_id = '$company_id' AND sp.deleted_at IS NULL LIMIT 1");
+    if (mysqli_num_rows($check) === 0) {
+        jsonResponse(404, 'Sales profit not found');
+        return;
+    }
+
+    $sales_profit = mysqli_fetch_assoc($check);
+    if ($sales_profit['status_name'] !== 'Rejected') {
+        jsonResponse(400, 'Only rejected sales profit records can be revised');
+        return;
+    }
+
+    $status_id = getSalesStatusIdByName($conn, 'Draft');
+    if (!$status_id) {
+        jsonResponse(500, 'Default sales status "Draft" is not configured');
+        return;
+    }
+
+    $now   = date('Y-m-d H:i:s');
+    $notes = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
+
+    if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".sales_profit
+            SET status_id = '$status_id', updated_by = '$username', updated_at = '$now'
+            WHERE id = '$sales_profit_id' AND company_id = '$company_id'")) {
+        insertAuditLog($conn, $company_id, 'sales_profit', $sales_profit_id, 'revised', $username, $notes);
+        jsonResponse(200, 'Sales profit revised successfully');
+    } else {
+        jsonResponse(500, 'Failed to revise sales profit', ['error' => mysqli_error($conn)]);
+    }
+}
+
+function exportSalesProfit($conn, $sales_profit_id, $company_id) {
+    $sales_profit_id = mysqli_real_escape_string($conn, $sales_profit_id);
+
+    $from   = APP_SCHEMA . ".sales_profit sp
+            LEFT JOIN " . APP_SCHEMA . ".sales_order so ON so.id = sp.sales_order_id
+            LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = sp.customer_id
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = sp.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user au ON au.user_id COLLATE utf8mb4_general_ci = sp.approved_by";
+    $result = mysqli_query($conn, "SELECT sp.*, so.so_display_number, c.customer_name, c.customer_top_days,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by_name,
+            CONCAT(au.first_name, ' ', au.last_name) AS approved_by_name
+            FROM $from WHERE sp.id = '$sales_profit_id' AND sp.company_id = '$company_id' AND sp.deleted_at IS NULL LIMIT 1");
+    if (!$result || mysqli_num_rows($result) === 0) {
+        jsonResponse(404, 'Sales profit not found');
+        return;
+    }
+
+    $sales_profit = mysqli_fetch_assoc($result);
+
+    $kurs_result = mysqli_query($conn, "SELECT kurs FROM " . APP_SCHEMA . ".sales_order_item
+            WHERE sales_order_id = '" . $sales_profit['sales_order_id'] . "' AND deleted_at IS NULL ORDER BY created_at ASC LIMIT 1");
+    $kurs_row    = $kurs_result ? mysqli_fetch_assoc($kurs_result) : null;
+    $kurs        = $kurs_row ? $kurs_row['kurs'] : null;
+
+    $items_result = mysqli_query($conn, "SELECT * FROM " . APP_SCHEMA . ".sales_profit_item
+            WHERE sales_profit_id = '$sales_profit_id' AND deleted_at IS NULL ORDER BY created_at ASC");
+    $items = $items_result ? mysqli_fetch_all($items_result, MYSQLI_ASSOC) : [];
+
+    $spreadsheet = new Spreadsheet();
+    $sheet       = $spreadsheet->getActiveSheet();
+
+    $sheet->setCellValue('A1', 'PROFIT CALCULATION');
+    $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(14);
+
+    $sheet->getColumnDimension('A')->setWidth(10);
+    $sheet->getColumnDimension('B')->setWidth(45);
+
+    $sheet->mergeCells('A1:B1');
+    $sheet->getStyle('A1')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_LEFT);
+    $sheet->getStyle('A1')->getAlignment()->setWrapText(true);
+
+    $sheet->setCellValue('A3', 'SO : ');
+    $sheet->setCellValue('B3', $sales_profit['so_display_number'] ?? '-');
+    $sheet->setCellValue('A4', 'Cust .');
+    $sheet->setCellValue('B4', $sales_profit['customer_name']);
+
+    $table_headers = ['No', 'Nama Barang', 'Qty', 'Harga Jual Satuan', 'Landed Cost', 'PROFIT', 'Profit %'];
+    $sheet->fromArray($table_headers, null, 'A6');
+    $sheet->getStyle('A6:G6')->getFont()->setBold(true);
+    $sheet->getStyle('A6:G6')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+    $sheet->getStyle('A6:G6')->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+
+    $sheet->setCellValue('B7', 'Kurs = ' . ($kurs ?? 'N/A'));
+    $sheet->getStyle('A7:G7')->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+    $sheet->getStyle('A8:G8')->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+
+    $row              = 9;
+    $no               = 1;
+    $total_qty        = 0;
+    $total_price      = 0;
+    $total_landed     = 0;
+    $total_profit     = 0;
+    $total_percentage = 0;
+
+    foreach ($items as $item) {
+        $quantity    = (float)$item['quantity'];
+        $price       = (float)$item['price'];
+        $landed_cost = (float)$item['landed_cost'];
+        $profit      = $price - $landed_cost;
+        $percentage  = $landed_cost != 0 ? ($profit / $landed_cost * 100) : 0;
+
+        $sheet->setCellValue("A$row", $no);
+        $sheet->setCellValue("B$row", $item['product_name']);
+        $sheet->setCellValue("C$row", number_format($quantity, 0));
+        $sheet->setCellValue("D$row", number_format($price, 2));
+        $sheet->setCellValue("E$row", number_format($landed_cost, 2));
+        $sheet->setCellValue("F$row", number_format($profit, 2));
+        $sheet->setCellValue("G$row", round($percentage, 2));
+
+        $sheet->getStyle("A$row:G$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+
+        $total_qty        += $quantity;
+        $total_price       += $price;
+        $total_landed      += $landed_cost;
+        $total_profit      += $profit;
+        $total_percentage  += $percentage;
+
+        $row++;
+        $no++;
+    }
+
+    $sheet->getStyle("A$row:G$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+    $row++;
+    $sheet->getStyle("A$row:G$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+    $row++;
+    $sheet->getStyle("A$row:G$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+    $row++;
+    $sheet->getStyle("A$row:G$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+    $sheet->setCellValue("A$row", 'TOP :');
+    $sheet->setCellValue("B$row", ($sales_profit['customer_top_days'] ?? '-') . ' hari');
+    $row++;
+
+    $sheet->setCellValue("B$row", 'TOTAL');
+    $sheet->setCellValue("C$row", $total_qty);
+    $sheet->setCellValue("D$row", $total_price);
+    $sheet->setCellValue("E$row", $total_landed);
+    $sheet->setCellValue("F$row", $total_profit);
+    $sheet->setCellValue("G$row", round($total_percentage, 2));
+    $sheet->getStyle("A$row:G$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+    $row++;
+
+    $row += 2;
+    $sheet->setCellValue("A$row", 'DIBUAT OLEH,');
+    $sheet->setCellValue("C$row", 'MENGETAHUI OLEH,');
+    $sheet->setCellValue("F$row", 'DISETUJUI OLEH,');
+    $row++;
+    $sheet->setCellValue("A$row", ($sales_profit['created_by_name'] ?? '-') . ' pada ' . $sales_profit['created_at']);
+    $sheet->setCellValue("C$row", ($sales_profit['created_by_name'] ?? '-') . ' pada ' . $sales_profit['created_at']);
+    $sheet->setCellValue("F$row", ($sales_profit['approved_by_name'] ?? '-') . ' pada ' . ($sales_profit['approved_at'] ?? '-'));
+    $row += 3;
+    $sheet->setCellValue("A$row", '( ADMIN SALES )');
+    $sheet->setCellValue("C$row", '( TUKAR FAKTUR )');
+    $sheet->setCellValue("F$row", '( SULANTO )    ( IRENE )');
+
+    foreach (range('A', 'J') as $col) {
+        $sheet->getColumnDimension($col)->setAutoSize(true);
+    }
+
+    streamXlsx($spreadsheet, 'sales_profit_' . sanitizeFilename($sales_profit['so_display_number'] ?? $sales_profit_id) . '.xlsx');
+}
+
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
 $authUser   = requireAuth();
@@ -243,11 +484,38 @@ if (!$company_id) {
 }
 
 $sales_profit_id = !empty($action) ? $action : null;
+$sub_action       = $parts[4] ?? '';
 
 try {
     $conn = getConn();
 
-    if ($sales_profit_id) {
+    if ($sales_profit_id && $sub_action === 'export') {
+        if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
+        exportSalesProfit($conn, $sales_profit_id, $company_id);
+
+    } elseif ($sales_profit_id && $sub_action !== '') {
+        $input = in_array($method, ['POST', 'PUT', 'PATCH'])
+            ? (json_decode(file_get_contents('php://input'), true) ?? [])
+            : [];
+
+        switch ($sub_action) {
+            case 'approve':
+                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                approveSalesProfit($conn, $sales_profit_id, $input, $username, $company_id);
+                break;
+            case 'reject':
+                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                rejectSalesProfit($conn, $sales_profit_id, $input, $username, $company_id);
+                break;
+            case 'revise':
+                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                reviseSalesProfit($conn, $sales_profit_id, $input, $username, $company_id);
+                break;
+            default:
+                jsonResponse(404, 'Route not found');
+        }
+
+    } elseif ($sales_profit_id) {
         switch ($method) {
             case 'GET':
                 getDetailSalesProfit($conn, $sales_profit_id, $company_id);
