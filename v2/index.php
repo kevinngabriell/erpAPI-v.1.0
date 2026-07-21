@@ -174,6 +174,17 @@ switch ($module) {
         require __DIR__ . '/audit/audit-log/index.php';
         break;
 
+    // ── Notification ─────────────────────────────────────────────────────────
+    case 'notification':
+        require __DIR__ . '/notification/index.php';
+        break;
+    case 'approvals':
+        require __DIR__ . '/notification/approvals.php';
+        break;
+    case 'notification-settings':
+        require __DIR__ . '/notification/settings.php';
+        break;
+
     // ── Dashboard / reporting ────────────────────────────────────────────────
     case 'dashboard':
         require __DIR__ . '/dashboard/index.php';

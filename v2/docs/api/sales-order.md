@@ -1,6 +1,6 @@
 # Sales Order API
 
-> **Last updated:** 2026-07-20 18:58:14 WIB
+> **Last updated:** 2026-07-21 22:47:55 WIB
 > **Base URL:** `/api/v2/sales-order`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -755,3 +755,4 @@ Soft-deletes the sales order item (sets `deleted_at`) — it will no longer appe
 - `GET /api/v2/sales-order/generate-number` counts existing rows (including soft-deleted ones) whose `so_display_number` matches the current company/month/year pattern, so the sequence never repeats within a month even if a sales order is later deleted.
 - **`GET /api/v2/sales-order/{id}/export` downloads a formatted `.xlsx`**, replicating the legacy v1 export layout. The header "PO NO" cell shows the linked purchase order's `po_display_number` from the *first* item that has one (v1 had a single header-level PO number field; v2's schema links `purchase_order_id` per item instead, so there is no single header PO number to show if items reference different purchase orders).
 - **`created_by`, `updated_by`, and `approved_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a sales order or a sales order item — list, detail, and the nested `items` array. Previously these fields held the raw user ID. There is no separate `*_id` field for these three — the resolved name **is** the value; the raw ID is no longer returned anywhere in the response. `updated_by`/`approved_by` are `null` until the record has actually been updated/approved; `created_by` can be `null` only if the user who created the record has since been deleted.
+- **`POST` (create) and `PATCH .../approve`/`.../reject` now trigger notifications** — in-app + WhatsApp to the users holding `notification.sales_order.approver` on create, and to the order's creator on approve/reject. This is a side effect only; it does not change this endpoint's own request/response shape. See `notification.md`.

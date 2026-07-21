@@ -4,6 +4,7 @@ require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
 require_once __DIR__ . '/../../helpers/audit_log.php';
 require_once __DIR__ . '/../../helpers/excel_export.php';
+require_once __DIR__ . '/../../helpers/notification.php';
 
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
@@ -183,6 +184,18 @@ function createSalesOrder($conn, $input, $username, $company_id) {
         insertAuditLog($conn, $company_id, 'sales_order', $sales_order_id, 'created', $username);
 
         $conn->commit();
+
+        notify($conn, [
+            'company_id'         => $company_id,
+            'type'               => 'approval_pending',
+            'source_module'      => 'sales_order',
+            'source_document_id' => $sales_order_id,
+            'title'              => 'Sales Order Menunggu Approval',
+            'body'               => "$so_display_number butuh approval Anda. Silahkan klik link dibawah untuk menyetujui:",
+            'created_by'         => $username,
+            'recipients'         => resolveApprovalRecipients($conn, $company_id, 'sales_order'),
+        ]);
+
         jsonResponse(201, 'Sales order created successfully', ['sales_order_id' => $sales_order_id]);
     } catch (Exception $e) {
         $conn->rollback();
@@ -290,11 +303,12 @@ function deleteSalesOrder($conn, $sales_order_id, $username, $company_id) {
 }
 
 function approveSalesOrder($conn, $sales_order_id, $input, $username, $company_id) {
-    $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".sales_order WHERE id = '$sales_order_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $check = mysqli_query($conn, "SELECT so_display_number, created_by FROM " . APP_SCHEMA . ".sales_order WHERE id = '$sales_order_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Sales order not found');
         return;
     }
+    $sales_order = mysqli_fetch_assoc($check);
 
     $status_id = getSalesStatusIdByName($conn, 'Approved');
     if (!$status_id) {
@@ -309,6 +323,20 @@ function approveSalesOrder($conn, $sales_order_id, $input, $username, $company_i
             SET status_id = '$status_id', approved_by = '$username', approved_at = '$now', updated_by = '$username', updated_at = '$now'
             WHERE id = '$sales_order_id' AND company_id = '$company_id'")) {
         insertAuditLog($conn, $company_id, 'sales_order', $sales_order_id, 'approved', $username, $notes);
+        invalidateApprovalTokens($conn, 'sales_order', $sales_order_id);
+
+        $approver_name = resolveDisplayName($conn, $username);
+        notify($conn, [
+            'company_id'         => $company_id,
+            'type'               => 'approval_approved',
+            'source_module'      => 'sales_order',
+            'source_document_id' => $sales_order_id,
+            'title'              => 'Sales Order Disetujui',
+            'body'               => "{$sales_order['so_display_number']} sudah di-approve oleh $approver_name.",
+            'created_by'         => $username,
+            'recipients'         => [$sales_order['created_by']],
+        ]);
+
         jsonResponse(200, 'Sales order approved successfully');
     } else {
         jsonResponse(500, 'Failed to approve sales order', ['error' => mysqli_error($conn)]);
@@ -316,11 +344,12 @@ function approveSalesOrder($conn, $sales_order_id, $input, $username, $company_i
 }
 
 function rejectSalesOrder($conn, $sales_order_id, $input, $username, $company_id) {
-    $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".sales_order WHERE id = '$sales_order_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $check = mysqli_query($conn, "SELECT so_display_number, created_by FROM " . APP_SCHEMA . ".sales_order WHERE id = '$sales_order_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Sales order not found');
         return;
     }
+    $sales_order = mysqli_fetch_assoc($check);
 
     $status_id = getSalesStatusIdByName($conn, 'Rejected');
     if (!$status_id) {
@@ -335,6 +364,21 @@ function rejectSalesOrder($conn, $sales_order_id, $input, $username, $company_id
             SET status_id = '$status_id', updated_by = '$username', updated_at = '$now'
             WHERE id = '$sales_order_id' AND company_id = '$company_id'")) {
         insertAuditLog($conn, $company_id, 'sales_order', $sales_order_id, 'rejected', $username, $notes);
+        invalidateApprovalTokens($conn, 'sales_order', $sales_order_id);
+
+        $rejector_name = resolveDisplayName($conn, $username);
+        $reason_text   = $notes ? " Alasan: $notes." : '';
+        notify($conn, [
+            'company_id'         => $company_id,
+            'type'               => 'approval_rejected',
+            'source_module'      => 'sales_order',
+            'source_document_id' => $sales_order_id,
+            'title'              => 'Sales Order Ditolak',
+            'body'               => "{$sales_order['so_display_number']} ditolak oleh $rejector_name.$reason_text",
+            'created_by'         => $username,
+            'recipients'         => [$sales_order['created_by']],
+        ]);
+
         jsonResponse(200, 'Sales order rejected successfully');
     } else {
         jsonResponse(500, 'Failed to reject sales order', ['error' => mysqli_error($conn)]);

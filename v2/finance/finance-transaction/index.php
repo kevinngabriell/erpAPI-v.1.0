@@ -4,6 +4,7 @@ require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
 require_once __DIR__ . '/../../helpers/audit_log.php';
 require_once __DIR__ . '/../../helpers/dual_approval.php';
+require_once __DIR__ . '/../../helpers/notification.php';
 
 function getAllFinanceTransactions($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
@@ -108,6 +109,19 @@ function createFinanceTransaction($conn, $input, $username, $company_id) {
 
     if (mysqli_query($conn, $sql)) {
         insertAuditLog($conn, $company_id, 'finance_transaction', $finance_transaction_id, 'created', $username);
+
+        $voucher_display = isset($input['voucher_number']) && trim($input['voucher_number']) !== '' ? trim($input['voucher_number']) : $finance_transaction_id;
+        notify($conn, [
+            'company_id'         => $company_id,
+            'type'               => 'approval_pending',
+            'source_module'      => 'finance_transaction',
+            'source_document_id' => $finance_transaction_id,
+            'title'              => 'Finance Transaction Menunggu Approval',
+            'body'               => "$voucher_display butuh approval Anda (Finance — perlu 2 persetujuan). Silahkan klik link dibawah untuk menyetujui:",
+            'created_by'         => $username,
+            'recipients'         => resolveApprovalRecipients($conn, $company_id, 'finance_transaction'),
+        ]);
+
         jsonResponse(201, 'Finance transaction created successfully', ['finance_transaction_id' => $finance_transaction_id]);
     } else {
         jsonResponse(500, 'Failed to create finance transaction', ['error' => mysqli_error($conn)]);
@@ -214,6 +228,10 @@ function deleteFinanceTransaction($conn, $finance_transaction_id, $username, $co
 }
 
 function approveFinanceTransaction($conn, $finance_transaction_id, $input, $username, $app_role_id, $company_id) {
+    $doc_check = mysqli_query($conn, "SELECT voucher_number, created_by FROM " . APP_SCHEMA . ".finance_transaction WHERE id = '$finance_transaction_id' AND company_id = '$company_id' LIMIT 1");
+    $doc       = $doc_check ? mysqli_fetch_assoc($doc_check) : null;
+    $voucher_display = ($doc && $doc['voucher_number']) ? $doc['voucher_number'] : $finance_transaction_id;
+
     $result = applyDualApproval($conn, APP_SCHEMA . '.finance_transaction', $finance_transaction_id, $company_id, $username, $app_role_id);
 
     if ($result['code'] !== 200) {
@@ -223,6 +241,51 @@ function approveFinanceTransaction($conn, $finance_transaction_id, $input, $user
 
     $notes = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
     insertAuditLog($conn, $company_id, 'finance_transaction', $finance_transaction_id, "approved_{$result['slot']}", $username, $notes);
+
+    $approver_name = resolveDisplayName($conn, $username);
+
+    if ($result['transaction_status'] === 'posted') {
+        invalidateApprovalTokens($conn, 'finance_transaction', $finance_transaction_id);
+        notify($conn, [
+            'company_id'         => $company_id,
+            'type'               => 'approval_approved',
+            'source_module'      => 'finance_transaction',
+            'source_document_id' => $finance_transaction_id,
+            'title'              => 'Finance Transaction Fully Approved',
+            'body'               => "$voucher_display sudah fully approved.",
+            'created_by'         => $username,
+            'recipients'         => $doc ? [$doc['created_by']] : [],
+        ]);
+    } else {
+        // partially_approved: remind whoever hasn't signed yet, and tell the
+        // creator progress so far — no token invalidation, the other signer's
+        // link is still valid.
+        $other_recipients = array_values(array_diff(resolveApprovalRecipients($conn, $company_id, 'finance_transaction'), [$username]));
+        notify($conn, [
+            'company_id'         => $company_id,
+            'type'               => 'approval_pending',
+            'source_module'      => 'finance_transaction',
+            'source_document_id' => $finance_transaction_id,
+            'title'              => 'Finance Transaction — Menunggu Approval Ke-2',
+            'body'               => "$voucher_display sudah disetujui $approver_name. Tinggal persetujuan Anda untuk menyelesaikan approval ini:",
+            'created_by'         => $username,
+            'recipients'         => $other_recipients,
+        ]);
+
+        if ($doc) {
+            notify($conn, [
+                'company_id'         => $company_id,
+                'type'               => 'approval_approved',
+                'source_module'      => 'finance_transaction',
+                'source_document_id' => $finance_transaction_id,
+                'title'              => 'Finance Transaction — Progress Approval',
+                'body'               => "$voucher_display: $approver_name sudah approve. Menunggu approval ke-2.",
+                'created_by'         => $username,
+                'recipients'         => [$doc['created_by']],
+            ]);
+        }
+    }
+
     jsonResponse(200, 'Finance transaction approved successfully', [
         'approved_slot'      => $result['slot'],
         'transaction_status' => $result['transaction_status'],
@@ -230,6 +293,10 @@ function approveFinanceTransaction($conn, $finance_transaction_id, $input, $user
 }
 
 function rejectFinanceTransaction($conn, $finance_transaction_id, $input, $username, $app_role_id, $company_id) {
+    $doc_check = mysqli_query($conn, "SELECT voucher_number, created_by FROM " . APP_SCHEMA . ".finance_transaction WHERE id = '$finance_transaction_id' AND company_id = '$company_id' LIMIT 1");
+    $doc       = $doc_check ? mysqli_fetch_assoc($doc_check) : null;
+    $voucher_display = ($doc && $doc['voucher_number']) ? $doc['voucher_number'] : $finance_transaction_id;
+
     $result = rejectDualApproval($conn, APP_SCHEMA . '.finance_transaction', $finance_transaction_id, $company_id, $username, $app_role_id);
 
     if ($result['code'] !== 200) {
@@ -239,6 +306,21 @@ function rejectFinanceTransaction($conn, $finance_transaction_id, $input, $usern
 
     $notes = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
     insertAuditLog($conn, $company_id, 'finance_transaction', $finance_transaction_id, 'rejected', $username, $notes);
+    invalidateApprovalTokens($conn, 'finance_transaction', $finance_transaction_id);
+
+    $rejector_name = resolveDisplayName($conn, $username);
+    $reason_text   = $notes ? " Alasan: $notes." : '';
+    notify($conn, [
+        'company_id'         => $company_id,
+        'type'               => 'approval_rejected',
+        'source_module'      => 'finance_transaction',
+        'source_document_id' => $finance_transaction_id,
+        'title'              => 'Finance Transaction Ditolak',
+        'body'               => "$voucher_display ditolak oleh $rejector_name.$reason_text",
+        'created_by'         => $username,
+        'recipients'         => $doc ? [$doc['created_by']] : [],
+    ]);
+
     jsonResponse(200, 'Finance transaction rejected successfully');
 }
 

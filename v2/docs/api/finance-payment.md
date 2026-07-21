@@ -1,6 +1,6 @@
 # Finance Payment API
 
-> **Last updated:** 2026-07-20 WIB
+> **Last updated:** 2026-07-21 22:47:55 WIB
 > **Base URL:** `/api/v2/finance-payment`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -469,3 +469,4 @@ Rejects the payment. Either signer (owner or treasury permission holder) can rej
 - **New: dual approval.** `transaction_status` (`draft` \| `submitted` \| `partially_approved` \| `posted` \| `rejected`), `approved_by_owner_id`/`approved_by_owner_at`, and `approved_by_treasury_id`/`approved_by_treasury_at` are new columns — added specifically for this feature, `finance_payment` had no approval tracking before. New payments are created with `transaction_status = 'draft'`. The 582 payments that existed before this change were backfilled to `transaction_status = 'posted'` with `NULL` approvers (they predate the approval workflow — no real approver identity to backfill, same policy used for historical `finance_transaction` rows). `approved_by_owner`/`approved_by_treasury` (resolved display names) are returned alongside the raw `*_id` fields.
 - **Permission model:** shared with `finance-transaction` — `keuangan.approve_owner` and `keuangan.approve_treasury` gate both modules' approve/reject endpoints identically; this is one 2-signer workflow reused across Pembayaran, Penerimaan, A/P, and A/R, not four separate ones. The existing `keuangan.ap.approve`/`keuangan.ar.approve` permission keys are unaffected by this change and continue to mean whatever they meant before (this endpoint does not check them). **As of this writing, no role has `keuangan.approve_owner`/`keuangan.approve_treasury` assigned** — see the `finance-transaction` doc's note on assigning these via the roles/permissions admin UI before go-live.
 - Update/delete are **not** blocked by `transaction_status`, matching this codebase's existing precedent elsewhere (see `finance-transaction` doc).
+- **`POST` (create) and `PATCH .../approve`/`.../reject` now trigger notifications**, identical mechanics to `finance-transaction` (see that doc's note) — create notifies `keuangan.approve_owner`/`keuangan.approve_treasury` holders, partial approval reminds the other slot and updates the creator, full approval and rejection notify the creator. This is a side effect only; it does not change this endpoint's own request/response shape. See `notification.md`.

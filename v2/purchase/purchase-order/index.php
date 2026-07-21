@@ -3,6 +3,7 @@
 require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
 require_once __DIR__ . '/../../helpers/audit_log.php';
+require_once __DIR__ . '/../../helpers/notification.php';
 
 const PURCHASE_ORDER_SHIPMENT_METHODS = ['FOB', 'CIF', 'EXW', 'CFR', 'CIP', 'DAP', 'DDP', 'FCA'];
 
@@ -183,6 +184,18 @@ function createPurchaseOrder($conn, $input, $username, $company_id) {
         insertAuditLog($conn, $company_id, 'purchase_order', $po_id, 'created', $username);
 
         $conn->commit();
+
+        notify($conn, [
+            'company_id'         => $company_id,
+            'type'               => 'approval_pending',
+            'source_module'      => 'purchase_order',
+            'source_document_id' => $po_id,
+            'title'              => 'Purchase Order Menunggu Approval',
+            'body'               => "$po_display_number butuh approval Anda. Silahkan klik link dibawah untuk menyetujui:",
+            'created_by'         => $username,
+            'recipients'         => resolveApprovalRecipients($conn, $company_id, 'purchase_order'),
+        ]);
+
         jsonResponse(201, 'Purchase order created successfully', ['purchase_order_id' => $po_id]);
     } catch (Exception $e) {
         $conn->rollback();
@@ -308,11 +321,12 @@ function deletePurchaseOrder($conn, $purchase_order_id, $username, $company_id) 
 }
 
 function approvePurchaseOrder($conn, $purchase_order_id, $input, $username, $company_id) {
-    $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".purchase_order WHERE id = '$purchase_order_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $check = mysqli_query($conn, "SELECT po_display_number, created_by FROM " . APP_SCHEMA . ".purchase_order WHERE id = '$purchase_order_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Purchase order not found');
         return;
     }
+    $purchase_order = mysqli_fetch_assoc($check);
 
     $status_id = getPurchaseStatusIdByName($conn, 'Approved');
     if (!$status_id) {
@@ -327,6 +341,20 @@ function approvePurchaseOrder($conn, $purchase_order_id, $input, $username, $com
             SET status_id = '$status_id', approved_by = '$username', approved_at = '$now', updated_by = '$username', updated_at = '$now'
             WHERE id = '$purchase_order_id' AND company_id = '$company_id'")) {
         insertAuditLog($conn, $company_id, 'purchase_order', $purchase_order_id, 'approved', $username, $notes);
+        invalidateApprovalTokens($conn, 'purchase_order', $purchase_order_id);
+
+        $approver_name = resolveDisplayName($conn, $username);
+        notify($conn, [
+            'company_id'         => $company_id,
+            'type'               => 'approval_approved',
+            'source_module'      => 'purchase_order',
+            'source_document_id' => $purchase_order_id,
+            'title'              => 'Purchase Order Disetujui',
+            'body'               => "{$purchase_order['po_display_number']} sudah di-approve oleh $approver_name.",
+            'created_by'         => $username,
+            'recipients'         => [$purchase_order['created_by']],
+        ]);
+
         jsonResponse(200, 'Purchase order approved successfully');
     } else {
         jsonResponse(500, 'Failed to approve purchase order', ['error' => mysqli_error($conn)]);
@@ -334,11 +362,12 @@ function approvePurchaseOrder($conn, $purchase_order_id, $input, $username, $com
 }
 
 function rejectPurchaseOrder($conn, $purchase_order_id, $input, $username, $company_id) {
-    $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".purchase_order WHERE id = '$purchase_order_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $check = mysqli_query($conn, "SELECT po_display_number, created_by FROM " . APP_SCHEMA . ".purchase_order WHERE id = '$purchase_order_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Purchase order not found');
         return;
     }
+    $purchase_order = mysqli_fetch_assoc($check);
 
     $status_id = getPurchaseStatusIdByName($conn, 'Rejected');
     if (!$status_id) {
@@ -353,6 +382,21 @@ function rejectPurchaseOrder($conn, $purchase_order_id, $input, $username, $comp
             SET status_id = '$status_id', updated_by = '$username', updated_at = '$now'
             WHERE id = '$purchase_order_id' AND company_id = '$company_id'")) {
         insertAuditLog($conn, $company_id, 'purchase_order', $purchase_order_id, 'rejected', $username, $notes);
+        invalidateApprovalTokens($conn, 'purchase_order', $purchase_order_id);
+
+        $rejector_name = resolveDisplayName($conn, $username);
+        $reason_text   = $notes ? " Alasan: $notes." : '';
+        notify($conn, [
+            'company_id'         => $company_id,
+            'type'               => 'approval_rejected',
+            'source_module'      => 'purchase_order',
+            'source_document_id' => $purchase_order_id,
+            'title'              => 'Purchase Order Ditolak',
+            'body'               => "{$purchase_order['po_display_number']} ditolak oleh $rejector_name.$reason_text",
+            'created_by'         => $username,
+            'recipients'         => [$purchase_order['created_by']],
+        ]);
+
         jsonResponse(200, 'Purchase order rejected successfully');
     } else {
         jsonResponse(500, 'Failed to reject purchase order', ['error' => mysqli_error($conn)]);

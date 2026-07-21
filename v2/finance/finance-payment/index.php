@@ -4,6 +4,7 @@ require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
 require_once __DIR__ . '/../../helpers/audit_log.php';
 require_once __DIR__ . '/../../helpers/dual_approval.php';
+require_once __DIR__ . '/../../helpers/notification.php';
 
 function getAllFinancePayments($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
@@ -115,6 +116,18 @@ function createFinancePayment($conn, $input, $username, $company_id) {
 
     if (mysqli_query($conn, $sql)) {
         insertAuditLog($conn, $company_id, 'finance_payment', $finance_payment_id, 'created', $username);
+
+        notify($conn, [
+            'company_id'         => $company_id,
+            'type'               => 'approval_pending',
+            'source_module'      => 'finance_payment',
+            'source_document_id' => $finance_payment_id,
+            'title'              => 'Finance Payment Menunggu Approval',
+            'body'               => "$invoice_number butuh approval Anda (Finance — perlu 2 persetujuan). Silahkan klik link dibawah untuk menyetujui:",
+            'created_by'         => $username,
+            'recipients'         => resolveApprovalRecipients($conn, $company_id, 'finance_payment'),
+        ]);
+
         jsonResponse(201, 'Finance payment created successfully', ['finance_payment_id' => $finance_payment_id]);
     } else {
         jsonResponse(500, 'Failed to create finance payment', ['error' => mysqli_error($conn)]);
@@ -222,6 +235,9 @@ function deleteFinancePayment($conn, $finance_payment_id, $username, $company_id
 }
 
 function approveFinancePayment($conn, $finance_payment_id, $input, $username, $app_role_id, $company_id) {
+    $doc_check = mysqli_query($conn, "SELECT invoice_number, created_by FROM " . APP_SCHEMA . ".finance_payment WHERE id = '$finance_payment_id' AND company_id = '$company_id' LIMIT 1");
+    $doc       = $doc_check ? mysqli_fetch_assoc($doc_check) : null;
+
     $result = applyDualApproval($conn, APP_SCHEMA . '.finance_payment', $finance_payment_id, $company_id, $username, $app_role_id);
 
     if ($result['code'] !== 200) {
@@ -231,6 +247,49 @@ function approveFinancePayment($conn, $finance_payment_id, $input, $username, $a
 
     $notes = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
     insertAuditLog($conn, $company_id, 'finance_payment', $finance_payment_id, "approved_{$result['slot']}", $username, $notes);
+
+    $approver_name    = resolveDisplayName($conn, $username);
+    $invoice_display  = $doc['invoice_number'] ?? $finance_payment_id;
+
+    if ($result['transaction_status'] === 'posted') {
+        invalidateApprovalTokens($conn, 'finance_payment', $finance_payment_id);
+        notify($conn, [
+            'company_id'         => $company_id,
+            'type'               => 'approval_approved',
+            'source_module'      => 'finance_payment',
+            'source_document_id' => $finance_payment_id,
+            'title'              => 'Finance Payment Fully Approved',
+            'body'               => "$invoice_display sudah fully approved.",
+            'created_by'         => $username,
+            'recipients'         => $doc ? [$doc['created_by']] : [],
+        ]);
+    } else {
+        $other_recipients = array_values(array_diff(resolveApprovalRecipients($conn, $company_id, 'finance_payment'), [$username]));
+        notify($conn, [
+            'company_id'         => $company_id,
+            'type'               => 'approval_pending',
+            'source_module'      => 'finance_payment',
+            'source_document_id' => $finance_payment_id,
+            'title'              => 'Finance Payment — Menunggu Approval Ke-2',
+            'body'               => "$invoice_display sudah disetujui $approver_name. Tinggal persetujuan Anda untuk menyelesaikan approval ini:",
+            'created_by'         => $username,
+            'recipients'         => $other_recipients,
+        ]);
+
+        if ($doc) {
+            notify($conn, [
+                'company_id'         => $company_id,
+                'type'               => 'approval_approved',
+                'source_module'      => 'finance_payment',
+                'source_document_id' => $finance_payment_id,
+                'title'              => 'Finance Payment — Progress Approval',
+                'body'               => "$invoice_display: $approver_name sudah approve. Menunggu approval ke-2.",
+                'created_by'         => $username,
+                'recipients'         => [$doc['created_by']],
+            ]);
+        }
+    }
+
     jsonResponse(200, 'Finance payment approved successfully', [
         'approved_slot'      => $result['slot'],
         'transaction_status' => $result['transaction_status'],
@@ -238,6 +297,9 @@ function approveFinancePayment($conn, $finance_payment_id, $input, $username, $a
 }
 
 function rejectFinancePayment($conn, $finance_payment_id, $input, $username, $app_role_id, $company_id) {
+    $doc_check = mysqli_query($conn, "SELECT invoice_number, created_by FROM " . APP_SCHEMA . ".finance_payment WHERE id = '$finance_payment_id' AND company_id = '$company_id' LIMIT 1");
+    $doc       = $doc_check ? mysqli_fetch_assoc($doc_check) : null;
+
     $result = rejectDualApproval($conn, APP_SCHEMA . '.finance_payment', $finance_payment_id, $company_id, $username, $app_role_id);
 
     if ($result['code'] !== 200) {
@@ -247,6 +309,22 @@ function rejectFinancePayment($conn, $finance_payment_id, $input, $username, $ap
 
     $notes = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
     insertAuditLog($conn, $company_id, 'finance_payment', $finance_payment_id, 'rejected', $username, $notes);
+    invalidateApprovalTokens($conn, 'finance_payment', $finance_payment_id);
+
+    $rejector_name   = resolveDisplayName($conn, $username);
+    $reason_text     = $notes ? " Alasan: $notes." : '';
+    $invoice_display = $doc['invoice_number'] ?? $finance_payment_id;
+    notify($conn, [
+        'company_id'         => $company_id,
+        'type'               => 'approval_rejected',
+        'source_module'      => 'finance_payment',
+        'source_document_id' => $finance_payment_id,
+        'title'              => 'Finance Payment Ditolak',
+        'body'               => "$invoice_display ditolak oleh $rejector_name.$reason_text",
+        'created_by'         => $username,
+        'recipients'         => $doc ? [$doc['created_by']] : [],
+    ]);
+
     jsonResponse(200, 'Finance payment rejected successfully');
 }
 

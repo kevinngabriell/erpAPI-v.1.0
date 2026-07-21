@@ -7,6 +7,28 @@ Intended audience: frontend developers.
 
 ---
 
+## [2026-07-21 22:47:55 WIB] — Notification module added (in-app inbox, WebSocket push, WhatsApp approval pings, one-click approval links, daily digest)
+
+### Added
+- `GET /api/v2/notification` — paginated in-app notification list for the caller, `?unread=1` filter.
+- `PUT /api/v2/notification/{id}/read`, `PUT /api/v2/notification/read-all`, `GET /api/v2/notification/unread-count` — bell/inbox read-state and badge count.
+- `ws(s)://.../notification/stream` — new standalone WebSocket daemon (`v2/notification/ws-server.php`, not part of the HTTP router) pushing `notification:new`/`notification:unread_count` in real time. First category of long-running process in this repo — see the "New infra" note below.
+- `GET /api/v2/approvals/{token}`, `POST /api/v2/approvals/{token}/approve`, `POST /api/v2/approvals/{token}/reject` — one-click WhatsApp approval links. Single-use, scoped to one user + one document, 72h TTL. Approve/reject call the exact same endpoint the app's own approve/reject button uses, so audit trail and Finance dual-approval behavior are unaffected.
+- `GET/POST /api/v2/notification-settings/public-holidays`, `DELETE /api/v2/notification-settings/public-holidays/{id}` — public holiday calendar (national + per-company), used to skip the daily digest on holidays.
+- `GET/PUT /api/v2/notification-settings/working-days` — per-company working-days config (default Mon–Fri), used to gate the daily digest.
+- `POST` (create) and `PATCH .../approve`/`.../reject` on `sales-order`, `purchase-order`, `finance-transaction`, and `finance-payment` now trigger notifications (in-app + WebSocket push + WhatsApp) — see each module's own doc for the exact trigger points. No request/response shape changed on any of these four endpoints; this is a side effect only.
+- New permission keys `notification.sales_order.approver` and `notification.purchase_order.approver` gate who receives Sales/Purchase Order approval notifications. Finance reuses the existing `keuangan.approve_owner`/`keuangan.approve_treasury` keys — no new Finance-specific approver configuration was added.
+- Daily digest (`v2/notification/digest.php`, CLI/cron script, not an HTTP endpoint) — recaps everything still pending approval per recipient, gated on working-days + public holidays, sent once per working day at 08:00 WIB.
+
+### Notes for frontend
+- **Warehouse Adjustment is out of scope** — it has no approval workflow in this codebase yet, so there is nothing to notify on for that module.
+- **No role currently holds `notification.sales_order.approver` or `notification.purchase_order.approver`.** Until an admin grants one of these via the roles/permissions UI, Sales/Purchase Order notifications have zero recipients (the in-app row is still created, just with nobody to deliver it to).
+- **New infra, not yet installed on the server**: the WebSocket daemon needs a systemd unit + an Nginx `wss://` reverse-proxy block, and the digest needs a real crontab entry — neither exists yet. See `v2/docs/migrations/v23_notification_schema.md`'s post-migration checklist.
+- WhatsApp sends are synchronous (same precedent as `send-otp`/`forgot-password`), not queued — a WA failure never fails the triggering create/approve/reject request.
+- See `v2/docs/migrations/v23_notification_schema.md` for the full schema — applied to dev, **prod not yet applied** (pending sign-off, same gate as every other schema change in this project).
+
+---
+
 ## [2026-07-20 22:30:00 WIB] — Purchase order/invoice/receive gain sales-style single-approval workflow; sales approve bug fixed
 
 ### Added
