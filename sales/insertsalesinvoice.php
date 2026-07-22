@@ -33,8 +33,15 @@ if($_SERVER['REQUEST_METHOD'] === 'POST'){
     $bill_to = $_POST['bill_to'];
     $insert_by = $decoded->sub;
     $product_length = $_POST['product_length'];
-    $total_amount = $_POST['total_amount'];
     $sales_order_status = '7c44858e-1efc-11ef-a';
+
+    $total_amount = 0;
+    for ($i = 1; $i <= $product_length; $i++) {
+        $item_quantity = (float)$_POST['quantity_' . $i];
+        $item_price = (float)$_POST['price_' . $i];
+        $item_tax = (float)$_POST['tax_' . $i];
+        $total_amount += ($item_quantity * $item_price) + $item_tax;
+    }
 
     $invoice_timestamp = strtotime(preg_replace('/\s*\(.*\)$/', '', $invoice_date_raw));
     if (!$invoice_timestamp) {
