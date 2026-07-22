@@ -28,13 +28,22 @@ if($_SERVER['REQUEST_METHOD'] === 'POST'){
     $customer_id = $_POST['customer_id'];
     $invoice_id = $_POST['invoice_id'];
     $sales_order = $_POST['sales_order'];
-    $invoice_date = $_POST['invoice_date'];
+    $invoice_date_raw = $_POST['invoice_date'];
     $ship_to = $_POST['ship_to'];
     $bill_to = $_POST['bill_to'];
     $insert_by = $decoded->sub;
     $product_length = $_POST['product_length'];
     $total_amount = $_POST['total_amount'];
     $sales_order_status = '7c44858e-1efc-11ef-a';
+
+    $invoice_timestamp = strtotime(preg_replace('/\s*\(.*\)$/', '', $invoice_date_raw));
+    if (!$invoice_timestamp) {
+        http_response_code(400);
+        echo json_encode(["StatusCode" => 400, "Status" => "Error", "message" => "Invalid invoice_date format: $invoice_date_raw"]);
+        exit;
+    }
+    $invoice_date = date("Y-m-d", $invoice_timestamp);
+
     $currentDateTime = new DateTime();
     $indonesiaTimeZone = new DateTimeZone('Asia/Jakarta');
     $currentDateTime->setTimezone($indonesiaTimeZone);
