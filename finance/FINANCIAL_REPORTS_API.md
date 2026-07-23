@@ -1,7 +1,7 @@
 # Financial Reports API
 
-> **Last updated: 2026-06-02**
-> Changes in this update: added Export Outstanding Hutang & Piutang (Excel) endpoint.
+> **Last updated: 2026-07-23**
+> Changes in this update: Buku Besar Excel export now combines all accounts into a single sheet (was one sheet per account); added HPP endpoint docs and new HPP Excel export.
 
 ---
 
@@ -16,11 +16,14 @@
 7. [Penerimaan Penjualan (Invoice Pelanggan)](#7-penerimaan-penjualan-invoice-pelanggan)
 8. [Penerimaan Pembelian (Invoice Supplier)](#8-penerimaan-pembelian-invoice-supplier)
 9. [Buku Besar](#9-buku-besar)
-10. [Laporan Laba Rugi](#10-laporan-laba-rugi)
-11. [Neraca](#11-neraca)
-12. [Outstanding Hutang & Piutang](#12-outstanding-hutang--piutang)
-13. [Export Outstanding Hutang & Piutang (Excel) ⭐ NEW](#13-export-outstanding-hutang--piutang-excel-new)
-14. [Error Responses](#error-responses)
+10. [Export Buku Besar (Excel) ⭐ UPDATED — now 1 sheet](#10-export-buku-besar-excel-updated--now-1-sheet)
+11. [HPP (Harga Pokok Penjualan)](#11-hpp-harga-pokok-penjualan)
+12. [Export HPP (Excel) ⭐ NEW](#12-export-hpp-excel-new)
+13. [Laporan Laba Rugi](#13-laporan-laba-rugi)
+14. [Neraca](#14-neraca)
+15. [Outstanding Hutang & Piutang](#15-outstanding-hutang--piutang)
+16. [Export Outstanding Hutang & Piutang (Excel)](#16-export-outstanding-hutang--piutang-excel)
+17. [Error Responses](#error-responses)
 
 ---
 
@@ -463,7 +466,152 @@ GET /finance/getbukubesar.php?start_date=2025-05-01&end_date=2025-05-31&account_
 
 ---
 
-## 10. Laporan Laba Rugi
+## 10. Export Buku Besar (Excel) ⭐ UPDATED — now 1 sheet
+
+**File:** `finance/exportbukubesar.php`
+
+Exports the general ledger for the given period to Excel. **All account codes are now combined into a single sheet** (each account is a titled block, one after another, separated by a blank row) — previously this generated one sheet per account, which was unusable for a full year of data (too many tabs).
+
+| Property | Value |
+|---|---|
+| **Method** | `GET` |
+| **Endpoint** | `/finance/exportbukubesar.php` |
+| **Response** | `.xlsx` file download |
+
+### Query Parameters
+
+| Parameter | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `start_date` | `string` (YYYY-MM-DD) | No | first day of current month | Start of reporting period |
+| `end_date` | `string` (YYYY-MM-DD) | No | today | End of reporting period |
+| `account_code` | `string` | No | — | Filter by a specific COA account code |
+
+### Example Request
+```
+GET /finance/exportbukubesar.php?start_date=2025-01-01&end_date=2025-12-31
+```
+
+### Excel Output
+
+**Sheet: Buku Besar** (single sheet, all accounts)
+
+For each account, in order of `account_code`:
+- A grey header row: `AKUN: {code} - {account_name} ({alias})`
+- Column headers: `Tanggal` | `Voucher No` | `Keterangan` | `Debit` | `Kredit` | `Saldo`
+- A `Saldo Awal` (opening balance) row
+- One row per transaction, running balance in `Saldo`
+- A bold `Saldo Akhir` (closing balance) row
+- A blank row before the next account's block
+
+### Notes
+- Filename format: `Buku_Besar_2025-01-01_sd_2025-12-31.xlsx`
+- Safe to request a full calendar year in one call — output stays a single sheet regardless of the number of accounts or the length of the period
+
+---
+
+## 11. HPP (Harga Pokok Penjualan)
+
+**File:** `finance/gethpp.php`
+
+Cost of Goods Sold report. Formula: `HPP = Persediaan Awal + Pembelian Periode - Persediaan Akhir`. Purchase value comes from `purchaseOrderItem` (`POQuantity × POUnitPrice`); inventory value comes from `warehouse.endbalance × average purchase cost per product`.
+
+| Property | Value |
+|---|---|
+| **Method** | `GET` |
+| **Endpoint** | `/finance/gethpp.php` |
+
+### Query Parameters
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `start_date` | `string` (YYYY-MM-DD) | Yes | Start of reporting period |
+| `end_date` | `string` (YYYY-MM-DD) | Yes | End of reporting period |
+
+### Example Request
+```
+GET /finance/gethpp.php?start_date=2025-01-01&end_date=2025-12-31
+```
+
+### Response `200 OK`
+```json
+{
+  "StatusCode": 200,
+  "Status": "Success",
+  "period": { "start_date": "2025-01-01", "end_date": "2025-12-31" },
+  "summary": {
+    "total_pembelian_periode": 2467576074.13,
+    "total_nilai_stok_akhir": 1871756.79,
+    "total_hpp": 118270009.73,
+    "total_nilai_penjualan": 42194187690,
+    "gross_profit": 42075917680.27
+  },
+  "pembelian_periode": [
+    { "nama_produk": "ARA POWDER 20%", "qty_beli": 30000, "nilai_pembelian": 1650000000 }
+  ],
+  "hpp_per_produk": [
+    {
+      "nama_produk": "ARA POWDER 20%",
+      "qty_terjual": 27000,
+      "harga_pokok_rata": 55.0,
+      "hpp": 1485000000,
+      "nilai_penjualan": 26153280000,
+      "gross_profit": 26151795000,
+      "stok_akhir": 0
+    }
+  ]
+}
+```
+
+### Response `400 Bad Request`
+```json
+{ "StatusCode": 400, "Status": "Bad Request", "message": "start_date and end_date are required" }
+```
+
+### Notes
+- `harga_pokok_rata` is the **all-time** average purchase cost per product, not limited to the requested period
+- `stok_akhir` is the product's **current** warehouse balance at the time of the request, not a point-in-time snapshot at `end_date`
+
+---
+
+## 12. Export HPP (Excel) ⭐ NEW
+
+**File:** `finance/exporthpp.php`
+
+Exports the HPP report (same data as section 11) to Excel. Two sheets: **HPP per Produk** (summary block + per-product HPP table) and **Pembelian Periode** (purchases in the period).
+
+| Property | Value |
+|---|---|
+| **Method** | `GET` |
+| **Endpoint** | `/finance/exporthpp.php` |
+| **Response** | `.xlsx` file download |
+
+### Query Parameters
+
+| Parameter | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `start_date` | `string` (YYYY-MM-DD) | No | first day of current month | Start of reporting period |
+| `end_date` | `string` (YYYY-MM-DD) | No | today | End of reporting period |
+
+### Example Request
+```
+GET /finance/exporthpp.php?start_date=2025-01-01&end_date=2025-12-31
+```
+
+### Excel Output
+
+**Sheet: HPP per Produk**
+- Summary block: Total Pembelian, Nilai Stok Akhir, Total HPP, Nilai Penjualan, Gross Profit
+- Table: `Nama Produk` | `Qty Terjual` | `Harga Pokok Rata-Rata` | `HPP` | `Nilai Penjualan` | `Gross Profit` | `Stok Akhir`
+
+**Sheet: Pembelian Periode**
+- Table: `Nama Produk` | `Qty Beli` | `Nilai Pembelian`, with a `TOTAL` row
+
+### Notes
+- Filename format: `HPP_2025-01-01_sd_2025-12-31.xlsx`
+
+---
+
+## 13. Laporan Laba Rugi
 
 **File:** `finance/getlaporanlabarugi.php`
 
@@ -517,7 +665,7 @@ GET /finance/getlaporanlabarugi.php?start_date=2025-05-01&end_date=2025-05-31
 
 ---
 
-## 11. Neraca
+## 14. Neraca
 
 **File:** `finance/getneraca.php`
 
@@ -570,7 +718,7 @@ GET /finance/getneraca.php?as_of_date=2025-05-31
 
 ---
 
-## 12. Outstanding Hutang & Piutang
+## 15. Outstanding Hutang & Piutang
 
 **File:** `finance/getoutstandingpayments.php`
 
@@ -645,7 +793,7 @@ GET /finance/getoutstandingpayments.php?type=all&year=2025&month=5
 
 ---
 
-## 13. Export Outstanding Hutang & Piutang (Excel) ⭐ NEW
+## 16. Export Outstanding Hutang & Piutang (Excel)
 
 **File:** `finance/exportoutstandingpayments.php`
 
@@ -700,6 +848,13 @@ GET /finance/exportoutstandingpayments.php?type=all&year=2025&month=5
 ---
 
 ## Changelog
+
+### 2026-07-23
+- **UPDATED** `GET /finance/exportbukubesar.php` — Excel export now combines all accounts into a **single sheet** (was one sheet per account code). Requested so a full year (or more) of Buku Besar can be pulled into one Excel tab instead of dozens of tabs. Column layout (`Tanggal` | `Voucher No` | `Keterangan` | `Debit` | `Kredit` | `Saldo`) is unchanged — only the sheet structure changed.
+- **NEW** `GET /finance/exporthpp.php` — Excel export for the HPP (Harga Pokok Penjualan) report; same filters as `gethpp.php` (`start_date`, `end_date`); two sheets (HPP per Produk + Pembelian Periode)
+
+### Breaking changes
+- `exportbukubesar.php`: frontend code that reads sheet names/tabs by account code (e.g. iterating workbook sheets) must be updated to instead read one combined sheet and split on the `AKUN: ...` header rows. If the frontend only triggers a browser download and doesn't parse the file, no change is needed.
 
 ### 2026-06-02
 - **NEW** `GET /finance/exportoutstandingpayments.php` — Excel export for Outstanding Hutang & Piutang; supports `type`, `year`, `month` filters; two-sheet output when `type=all`; overdue rows highlighted in red

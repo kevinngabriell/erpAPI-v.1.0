@@ -55,32 +55,41 @@ foreach ($transactions as $row) {
 }
 
 $ss    = new Spreadsheet();
-$ss->removeSheetByIndex(0);
-$sheetIdx = 0;
+$sheet = $ss->getActiveSheet();
+$sheet->setTitle('Buku Besar');
+
+$sheet->mergeCells('A1:F1');
+$sheet->setCellValue('A1', 'BUKU BESAR (GENERAL LEDGER)');
+$sheet->getStyle('A1')->getFont()->setBold(true)->setSize(13);
+$sheet->getStyle('A1')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+
+$sheet->mergeCells('A2:F2');
+$sheet->setCellValue('A2', "Periode: $start_date s/d $end_date");
+$sheet->getStyle('A2')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+
+$r = 4;
+
+if (empty($grouped)) {
+    $sheet->setCellValue("A$r", 'Tidak ada data untuk periode yang dipilih.');
+}
 
 foreach ($grouped as $code => $acct) {
-    $sheet = $ss->createSheet($sheetIdx++);
-    $safe  = substr(preg_replace('/[\/\\\?\*\[\]:]/', '_', $code . ' ' . $acct['alias']), 0, 31);
-    $sheet->setTitle($safe);
-
-    $sheet->mergeCells('A1:F1');
-    $sheet->setCellValue('A1', 'BUKU BESAR: ' . $acct['account_name'] . ' (' . $acct['alias'] . ')');
-    $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(12);
-    $sheet->getStyle('A1')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-
-    $sheet->mergeCells('A2:F2');
-    $sheet->setCellValue('A2', "Periode: $start_date s/d $end_date");
-    $sheet->getStyle('A2')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+    // Account section header
+    $sheet->mergeCells("A{$r}:F{$r}");
+    $sheet->setCellValue("A$r", "AKUN: $code - " . $acct['account_name'] . ' (' . $acct['alias'] . ')');
+    $sheet->getStyle("A$r")->getFont()->setBold(true)->setSize(11);
+    $sheet->getStyle("A{$r}:F{$r}")->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB('FFBFBFBF');
+    $r++;
 
     $headers = ['Tanggal', 'Voucher No', 'Keterangan', 'Debit', 'Kredit', 'Saldo'];
-    $sheet->fromArray($headers, null, 'A4');
-    $sheet->getStyle('A4:F4')->getFont()->setBold(true);
-    $sheet->getStyle('A4:F4')->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
-    $sheet->getStyle('A4:F4')->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB('FFD9E1F2');
-    $sheet->getStyle('A4:F4')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+    $sheet->fromArray($headers, null, "A$r");
+    $sheet->getStyle("A{$r}:F{$r}")->getFont()->setBold(true);
+    $sheet->getStyle("A{$r}:F{$r}")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+    $sheet->getStyle("A{$r}:F{$r}")->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB('FFD9E1F2');
+    $sheet->getStyle("A{$r}:F{$r}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+    $r++;
 
     // Opening balance row
-    $r = 5;
     $sheet->setCellValue("C$r", 'Saldo Awal');
     $sheet->setCellValue("F$r", $acct['opening']);
     $sheet->getStyle("D$r:F$r")->getNumberFormat()->setFormatCode('#,##0.00');
@@ -109,16 +118,14 @@ foreach ($grouped as $code => $acct) {
     $sheet->setCellValue("F$r", $saldo);
     $sheet->getStyle("A$r:F$r")->getFont()->setBold(true);
     $sheet->getStyle("D$r:F$r")->getNumberFormat()->setFormatCode('#,##0.00');
+    $r++;
 
-    foreach (['A', 'B', 'C', 'D', 'E', 'F'] as $col) {
-        $sheet->getColumnDimension($col)->setAutoSize(true);
-    }
+    // Blank separator row between accounts
+    $r++;
 }
 
-if ($ss->getSheetCount() === 0) {
-    $sheet = $ss->createSheet(0);
-    $sheet->setTitle('No Data');
-    $sheet->setCellValue('A1', 'Tidak ada data untuk periode yang dipilih.');
+foreach (['A', 'B', 'C', 'D', 'E', 'F'] as $col) {
+    $sheet->getColumnDimension($col)->setAutoSize(true);
 }
 
 $filename = "Buku_Besar_{$start_date}_sd_{$end_date}.xlsx";
