@@ -1,6 +1,6 @@
 # Cash Book Report API
 
-> **Last updated:** 2026-07-19 22:54:57 WIB
+> **Last updated:** 2026-07-23 22:30:00 WIB
 > **Base URL:** `/api/v2/cash-book`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -141,7 +141,7 @@ Transaction-level detail for a single bank account within a date range, includin
 ## Notes
 
 - `signed_amount` is positive for cash in (debit) and negative for cash out (credit). For `finance_transaction` rows, direction comes from the linked [`finance_category.category_type`](finance-category.md) (`debit` or `credit`). For `finance_payment` rows, direction comes from which party settled: `customer_id` set → debit (cash received), `supplier_id` set → credit (cash paid out). Only `finance_payment` rows with a `bank_account_id` are included.
-- `reference_number` is `voucher_number` for `finance_transaction` rows and `invoice_number` for `finance_payment` rows. `description` (the linked account code name) is only populated for `finance_transaction` rows — always `null` for `finance_payment` rows.
+- `reference_number` is `voucher_number` for `finance_transaction` rows and `invoice_number` for `finance_payment` rows. `description` is only populated for `finance_transaction` rows — always `null` for `finance_payment` rows. Since a `finance_transaction` can now split across multiple `account_code`s via its `details` (see the `finance-transaction` module doc), `description` is the comma-separated list of every account code name on that transaction's detail lines, e.g. `"Office Supplies Expense, Utilities Expense"` — not a single account name.
 - `opening_balance` is the sum of `signed_amount` for all transactions strictly before `date_from`; `closing_balance` = `opening_balance + period_movement` (list endpoint) or the final `running_balance` after the last listed transaction (detail endpoint) — both represent the same figure.
 - The detail endpoint's `transactions` are ordered oldest to newest (`transaction_date ASC, created_at ASC`) so `running_balance` accumulates correctly; pagination applies to this transaction list, not to the opening/closing balance calculation (those are computed from the full unpaginated history/period).
 - This is a read-only reporting endpoint — no `POST`/`PUT`/`DELETE`. It is the v2 equivalent of v1's `getbukukas.php` / `BukuKasdocument.php` / `exportbukukas.php`, minus the Excel export (JSON only, per the current API standard).

@@ -1,6 +1,6 @@
 # Profit & Loss Report API
 
-> **Last updated:** 2026-07-11 19:44:37 WIB
+> **Last updated:** 2026-07-23 22:30:00 WIB
 > **Base URL:** `/api/v2/profit-loss`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -66,7 +66,7 @@ Revenue, expense, and net profit for the authenticated company over a date range
 
 ## Notes
 
-- Figures are `SUM(finance_transaction.account_amount)` grouped by `account_code`, scoped to `account_code.account_type IN ('revenue', 'expense')` and `finance_transaction.deleted_at IS NULL`.
+- Figures are `SUM(finance_transaction_detail.amount)` grouped by `account_code`, scoped to `account_code.account_type IN ('revenue', 'expense')` and the owning `finance_transaction.deleted_at IS NULL`. Each `finance_transaction` can now split across multiple `account_code`s via its `details` — see the `finance-transaction` module doc — so a single transaction can contribute to more than one row here.
 - `by_account` only lists accounts with a non-zero total in the selected date range (`HAVING total != 0`) — accounts with no activity in the period are omitted.
 - `net_profit` is `revenue.total - expense.total`.
 - This is a read-only reporting endpoint — no `POST`/`PUT`/`DELETE`. It generalizes the dashboard's fixed current-month-only `pnl_snapshot` widget (`GET /api/v2/dashboard`) into a date-range report with a per-account breakdown.

@@ -4,6 +4,7 @@ require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
 require_once __DIR__ . '/../../helpers/audit_log.php';
 require_once __DIR__ . '/../../helpers/excel_export.php';
+require_once __DIR__ . '/../../helpers/notification.php';
 
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
@@ -14,6 +15,13 @@ function getSalesStatusIdByName($conn, $status_name) {
     $result = mysqli_query($conn, "SELECT id FROM " . APP_SCHEMA . ".sales_status WHERE status_name = '$status_name' AND deleted_at IS NULL LIMIT 1");
     $row = $result ? mysqli_fetch_assoc($result) : null;
     return $row ? $row['id'] : null;
+}
+
+function calculateSalesProfitTotal($conn, $sales_profit_id) {
+    $sales_profit_id = mysqli_real_escape_string($conn, $sales_profit_id);
+    $result = mysqli_query($conn, "SELECT SUM(quantity * (price - landed_cost)) AS total_profit
+            FROM " . APP_SCHEMA . ".sales_profit_item WHERE sales_profit_id = '$sales_profit_id' AND deleted_at IS NULL");
+    return $result ? (float)(mysqli_fetch_assoc($result)['total_profit'] ?? 0) : 0;
 }
 
 function getAllSalesProfits($conn, $company_id, $params) {
@@ -218,20 +226,75 @@ function updateSalesProfit($conn, $sales_profit_id, $input, $username, $company_
         $updates[] = "sales_order_id = '$sales_order_id'";
     }
 
-    if (empty($updates)) {
+    // items is optional: when present, it fully replaces the profit's existing items
+    // (old rows soft-deleted, new rows inserted) — same shape/validation as create,
+    // so a rejected profit can correct item-level fields (landed_cost, price, quantity)
+    // before resubmitting.
+    $items_provided = array_key_exists('items', $input);
+    if ($items_provided) {
+        if (!is_array($input['items']) || count($input['items']) === 0) {
+            jsonResponse(400, 'items must be a non-empty array');
+            return;
+        }
+        foreach ($input['items'] as $item) {
+            $item_required = ['product_name', 'quantity', 'price', 'landed_cost'];
+            foreach ($item_required as $field) {
+                if (!isset($item[$field]) || (is_string($item[$field]) && trim($item[$field]) === '')) {
+                    jsonResponse(400, "items.$field is required");
+                    return;
+                }
+            }
+        }
+    }
+
+    if (empty($updates) && !$items_provided) {
         jsonResponse(400, 'No fields provided for update');
         return;
     }
 
     $now = date('Y-m-d H:i:s');
-    $updates[] = "updated_by = '$username'";
-    $updates[] = "updated_at = '$now'";
 
-    if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".sales_profit SET " . implode(', ', $updates) . " WHERE id = '$sales_profit_id' AND company_id = '$company_id'")) {
+    $conn->begin_transaction();
+    try {
+        if (!empty($updates)) {
+            $header_updates   = $updates;
+            $header_updates[] = "updated_by = '$username'";
+            $header_updates[] = "updated_at = '$now'";
+            if (!mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".sales_profit SET " . implode(', ', $header_updates) . " WHERE id = '$sales_profit_id' AND company_id = '$company_id'")) {
+                throw new Exception(mysqli_error($conn));
+            }
+        }
+
+        if ($items_provided) {
+            if (!mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".sales_profit_item SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE sales_profit_id = '$sales_profit_id' AND deleted_at IS NULL")) {
+                throw new Exception(mysqli_error($conn));
+            }
+
+            foreach ($input['items'] as $item) {
+                $item_id      = generateUUID();
+                $product_name = mysqli_real_escape_string($conn, $item['product_name']);
+                $quantity     = (float)$item['quantity'];
+                $price        = (float)$item['price'];
+                $landed_cost  = (float)$item['landed_cost'];
+                $purchase_order_id_sql = isset($item['purchase_order_id']) && trim($item['purchase_order_id']) !== '' ? "'" . mysqli_real_escape_string($conn, $item['purchase_order_id']) . "'" : 'NULL';
+
+                $item_sql = "INSERT INTO " . APP_SCHEMA . ".sales_profit_item
+                             (id, sales_profit_id, purchase_order_id, product_name, quantity, price, landed_cost, created_by, created_at)
+                             VALUES ('$item_id', '$sales_profit_id', $purchase_order_id_sql, '$product_name', $quantity, $price, $landed_cost, '$username', '$now')";
+
+                if (!mysqli_query($conn, $item_sql)) {
+                    throw new Exception(mysqli_error($conn));
+                }
+            }
+        }
+
         insertAuditLog($conn, $company_id, 'sales_profit', $sales_profit_id, 'updated', $username);
+
+        $conn->commit();
         jsonResponse(200, 'Sales profit updated successfully');
-    } else {
-        jsonResponse(500, 'Failed to update sales profit', ['error' => mysqli_error($conn)]);
+    } catch (Exception $e) {
+        $conn->rollback();
+        jsonResponse(500, 'Failed to update sales profit', ['error' => $e->getMessage()]);
     }
 }
 
@@ -255,11 +318,16 @@ function deleteSalesProfit($conn, $sales_profit_id, $username, $company_id) {
 }
 
 function approveSalesProfit($conn, $sales_profit_id, $input, $username, $company_id) {
-    $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".sales_profit WHERE id = '$sales_profit_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $check = mysqli_query($conn, "SELECT sp.created_by, so.so_display_number, c.customer_name
+            FROM " . APP_SCHEMA . ".sales_profit sp
+            LEFT JOIN " . APP_SCHEMA . ".sales_order so ON so.id = sp.sales_order_id
+            LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = sp.customer_id
+            WHERE sp.id = '$sales_profit_id' AND sp.company_id = '$company_id' AND sp.deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Sales profit not found');
         return;
     }
+    $sales_profit = mysqli_fetch_assoc($check);
 
     $status_id = getSalesStatusIdByName($conn, 'Approved');
     if (!$status_id) {
@@ -274,6 +342,25 @@ function approveSalesProfit($conn, $sales_profit_id, $input, $username, $company
             SET status_id = '$status_id', approved_by = '$username', approved_at = '$now', updated_by = '$username', updated_at = '$now'
             WHERE id = '$sales_profit_id' AND company_id = '$company_id'")) {
         insertAuditLog($conn, $company_id, 'sales_profit', $sales_profit_id, 'approved', $username, $notes);
+
+        $approver_name = resolveDisplayName($conn, $username);
+        $total_profit  = calculateSalesProfitTotal($conn, $sales_profit_id);
+        $detail_link   = rtrim(APPROVAL_BASE_URL, '/') . '/sales/sales-profit/' . $sales_profit_id;
+
+        notify($conn, [
+            'company_id'         => $company_id,
+            'type'               => 'approval_approved',
+            'source_module'      => 'sales_profit',
+            'source_document_id' => $sales_profit_id,
+            'title'              => 'Sales Profit Disetujui',
+            'body'               => "Profit {$sales_profit['so_display_number']} telah disetujui oleh $approver_name pada " . formatIndonesianDate($now) . ', ' . date('H:i', strtotime($now)) . " WIB.\n\n" .
+                                     "Customer: {$sales_profit['customer_name']}\n" .
+                                     'Total Profit: Rp ' . number_format($total_profit, 0, ',', '.') . "\n\n" .
+                                     "Lihat detail: $detail_link",
+            'created_by'         => $username,
+            'recipients'         => [$sales_profit['created_by']],
+        ]);
+
         jsonResponse(200, 'Sales profit approved successfully');
     } else {
         jsonResponse(500, 'Failed to approve sales profit', ['error' => mysqli_error($conn)]);
@@ -281,11 +368,15 @@ function approveSalesProfit($conn, $sales_profit_id, $input, $username, $company
 }
 
 function rejectSalesProfit($conn, $sales_profit_id, $input, $username, $company_id) {
-    $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".sales_profit WHERE id = '$sales_profit_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $check = mysqli_query($conn, "SELECT sp.created_by, so.so_display_number
+            FROM " . APP_SCHEMA . ".sales_profit sp
+            LEFT JOIN " . APP_SCHEMA . ".sales_order so ON so.id = sp.sales_order_id
+            WHERE sp.id = '$sales_profit_id' AND sp.company_id = '$company_id' AND sp.deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Sales profit not found');
         return;
     }
+    $sales_profit = mysqli_fetch_assoc($check);
 
     $status_id = getSalesStatusIdByName($conn, 'Rejected');
     if (!$status_id) {
@@ -300,6 +391,21 @@ function rejectSalesProfit($conn, $sales_profit_id, $input, $username, $company_
             SET status_id = '$status_id', updated_by = '$username', updated_at = '$now'
             WHERE id = '$sales_profit_id' AND company_id = '$company_id'")) {
         insertAuditLog($conn, $company_id, 'sales_profit', $sales_profit_id, 'rejected', $username, $notes);
+
+        $rejector_name = resolveDisplayName($conn, $username);
+        $reason_text   = $notes ? " Alasan: $notes" : '';
+
+        notify($conn, [
+            'company_id'         => $company_id,
+            'type'               => 'approval_rejected',
+            'source_module'      => 'sales_profit',
+            'source_document_id' => $sales_profit_id,
+            'title'              => 'Sales Profit Ditolak',
+            'body'               => "Profit {$sales_profit['so_display_number']} ditolak oleh $rejector_name.$reason_text",
+            'created_by'         => $username,
+            'recipients'         => [$sales_profit['created_by']],
+        ]);
+
         jsonResponse(200, 'Sales profit rejected successfully');
     } else {
         jsonResponse(500, 'Failed to reject sales profit', ['error' => mysqli_error($conn)]);

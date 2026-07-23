@@ -285,7 +285,9 @@ Get detail of a single sales SPPB, including its nested `items` array.
 
 ### PUT `/api/v2/sales-sppb/{id}`
 
-Update a sales SPPB. Only send the fields you want to change. Does not update items. `status_id` is not updatable here — use `PATCH .../approve` or `PATCH .../reject` to change status.
+Update a sales SPPB. Only send the fields you want to change. `status_id` is not updatable here — use `PATCH .../approve` or `PATCH .../reject` to change status.
+
+If `items` is included, it **fully replaces** the SPPB's existing items: the current (non-deleted) `sales_sppb_item` rows are soft-deleted and the array is inserted as new rows, in one transaction with any header field changes. Omit `items` entirely to leave the existing items untouched.
 
 #### Path parameters
 
@@ -300,6 +302,7 @@ Update a sales SPPB. Only send the fields you want to change. Does not update it
 | sppb_display_number | string | No | Cannot be empty if provided |
 | customer_id | string | No | Cannot be empty if provided |
 | sppb_date | string (date) | No | — |
+| items | array | No | If present, replaces all existing items — non-empty array, same shape/validation as `POST` (see above) |
 
 #### Response `200 OK`
 
@@ -320,6 +323,8 @@ Update a sales SPPB. Only send the fields you want to change. Does not update it
   "data": []
 }
 ```
+
+Also returned as `"items must be a non-empty array"` or `"items.{field} is required"` if `items` is provided but invalid — same validation as `POST`.
 
 #### Response `404 Not Found`
 

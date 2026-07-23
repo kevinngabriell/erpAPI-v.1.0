@@ -1,6 +1,6 @@
 # Balance Sheet Report API
 
-> **Last updated:** 2026-07-11 19:44:37 WIB
+> **Last updated:** 2026-07-23 22:30:00 WIB
 > **Base URL:** `/api/v2/balance-sheet`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -69,6 +69,6 @@ Asset, liability, and equity balances for the authenticated company as of a give
 
 ## Notes
 
-- Each balance is `SUM(finance_transaction.account_amount)` cumulative from all history through `as_of_date` (`transaction_date <= as_of_date`), grouped by `account_code`, scoped to `account_code.account_type IN ('asset', 'liability', 'equity')` and `finance_transaction.deleted_at IS NULL`.
+- Each balance is `SUM(finance_transaction_detail.amount)` cumulative from all history through `as_of_date` (`transaction_date <= as_of_date`), grouped by `account_code`, scoped to `account_code.account_type IN ('asset', 'liability', 'equity')` and the owning `finance_transaction.deleted_at IS NULL`. Each `finance_transaction` can now split across multiple `account_code`s via its `details` — see the `finance-transaction` module doc — so a single transaction can contribute to more than one row here.
 - `by_account` only lists accounts with a non-zero cumulative balance as of the given date (`HAVING total != 0`).
 - This is a read-only reporting endpoint — no `POST`/`PUT`/`DELETE`. It generalizes the dashboard's fixed all-time `neraca_snapshot` widget (`GET /api/v2/dashboard`) into an as-of-date report with a per-account breakdown.

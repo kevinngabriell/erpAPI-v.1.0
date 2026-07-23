@@ -4,6 +4,7 @@ require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
 require_once __DIR__ . '/../../helpers/audit_log.php';
 require_once __DIR__ . '/../../helpers/excel_export.php';
+require_once __DIR__ . '/../../helpers/notification.php';
 
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
@@ -249,20 +250,76 @@ function updateSalesSppb($conn, $sales_sppb_id, $input, $username, $company_id) 
         $updates[] = "sppb_date = '$val'";
     }
 
-    if (empty($updates)) {
+    // items is optional: when present, it fully replaces the SPPB's existing items
+    // (old rows soft-deleted, new rows inserted) — same shape/validation as create,
+    // so a rejected SPPB can correct item-level fields (send_to_address, send_date,
+    // quantity, product_name, uom_id, description) before resubmitting.
+    $items_provided = array_key_exists('items', $input);
+    if ($items_provided) {
+        if (!is_array($input['items']) || count($input['items']) === 0) {
+            jsonResponse(400, 'items must be a non-empty array');
+            return;
+        }
+        foreach ($input['items'] as $item) {
+            $item_required = ['send_to_address', 'send_date', 'product_name', 'quantity', 'uom_id'];
+            foreach ($item_required as $field) {
+                if (!isset($item[$field]) || (is_string($item[$field]) && trim($item[$field]) === '')) {
+                    jsonResponse(400, "items.$field is required");
+                    return;
+                }
+            }
+        }
+    }
+
+    if (empty($updates) && !$items_provided) {
         jsonResponse(400, 'No fields provided for update');
         return;
     }
 
     $now = date('Y-m-d H:i:s');
-    $updates[] = "updated_by = '$username'";
-    $updates[] = "updated_at = '$now'";
 
-    if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".sales_sppb SET " . implode(', ', $updates) . " WHERE id = '$sales_sppb_id' AND company_id = '$company_id'")) {
+    $conn->begin_transaction();
+    try {
+        if (!empty($updates)) {
+            $header_updates   = $updates;
+            $header_updates[] = "updated_by = '$username'";
+            $header_updates[] = "updated_at = '$now'";
+            if (!mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".sales_sppb SET " . implode(', ', $header_updates) . " WHERE id = '$sales_sppb_id' AND company_id = '$company_id'")) {
+                throw new Exception(mysqli_error($conn));
+            }
+        }
+
+        if ($items_provided) {
+            if (!mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".sales_sppb_item SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE sales_sppb_id = '$sales_sppb_id' AND deleted_at IS NULL")) {
+                throw new Exception(mysqli_error($conn));
+            }
+
+            foreach ($input['items'] as $item) {
+                $item_id          = generateUUID();
+                $send_to_address  = mysqli_real_escape_string($conn, $item['send_to_address']);
+                $send_date        = mysqli_real_escape_string($conn, $item['send_date']);
+                $product_name     = mysqli_real_escape_string($conn, $item['product_name']);
+                $quantity         = (float)$item['quantity'];
+                $uom_id           = mysqli_real_escape_string($conn, $item['uom_id']);
+                $description_sql  = isset($item['description']) && trim($item['description']) !== '' ? "'" . mysqli_real_escape_string($conn, $item['description']) . "'" : 'NULL';
+
+                $item_sql = "INSERT INTO " . APP_SCHEMA . ".sales_sppb_item
+                             (id, sales_sppb_id, send_to_address, send_date, product_name, quantity, uom_id, description, created_by, created_at)
+                             VALUES ('$item_id', '$sales_sppb_id', '$send_to_address', '$send_date', '$product_name', $quantity, '$uom_id', $description_sql, '$username', '$now')";
+
+                if (!mysqli_query($conn, $item_sql)) {
+                    throw new Exception(mysqli_error($conn));
+                }
+            }
+        }
+
         insertAuditLog($conn, $company_id, 'sales_sppb', $sales_sppb_id, 'updated', $username);
+
+        $conn->commit();
         jsonResponse(200, 'Sales SPPB updated successfully');
-    } else {
-        jsonResponse(500, 'Failed to update sales SPPB', ['error' => mysqli_error($conn)]);
+    } catch (Exception $e) {
+        $conn->rollback();
+        jsonResponse(500, 'Failed to update sales SPPB', ['error' => $e->getMessage()]);
     }
 }
 
@@ -286,11 +343,15 @@ function deleteSalesSppb($conn, $sales_sppb_id, $username, $company_id) {
 }
 
 function approveSalesSppb($conn, $sales_sppb_id, $input, $username, $company_id) {
-    $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".sales_sppb WHERE id = '$sales_sppb_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $check = mysqli_query($conn, "SELECT ssp.sppb_display_number, ssp.created_by, c.customer_name
+            FROM " . APP_SCHEMA . ".sales_sppb ssp
+            LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = ssp.customer_id
+            WHERE ssp.id = '$sales_sppb_id' AND ssp.company_id = '$company_id' AND ssp.deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Sales SPPB not found');
         return;
     }
+    $sales_sppb = mysqli_fetch_assoc($check);
 
     $status_id = getSalesStatusIdByName($conn, 'Approved');
     if (!$status_id) {
@@ -305,6 +366,23 @@ function approveSalesSppb($conn, $sales_sppb_id, $input, $username, $company_id)
             SET status_id = '$status_id', approved_by = '$username', approved_at = '$now', updated_by = '$username', updated_at = '$now'
             WHERE id = '$sales_sppb_id' AND company_id = '$company_id'")) {
         insertAuditLog($conn, $company_id, 'sales_sppb', $sales_sppb_id, 'approved', $username, $notes);
+
+        $approver_name = resolveDisplayName($conn, $username);
+        $detail_link   = rtrim(APPROVAL_BASE_URL, '/') . '/sales/sales-sppb/' . $sales_sppb_id;
+
+        notify($conn, [
+            'company_id'         => $company_id,
+            'type'               => 'approval_approved',
+            'source_module'      => 'sales_sppb',
+            'source_document_id' => $sales_sppb_id,
+            'title'              => 'Sales SPPB Disetujui',
+            'body'               => "{$sales_sppb['sppb_display_number']} telah disetujui oleh $approver_name pada " . formatIndonesianDate($now) . ', ' . date('H:i', strtotime($now)) . " WIB.\n\n" .
+                                     "Customer: {$sales_sppb['customer_name']}\n\n" .
+                                     "Lihat detail: $detail_link",
+            'created_by'         => $username,
+            'recipients'         => [$sales_sppb['created_by']],
+        ]);
+
         jsonResponse(200, 'Sales SPPB approved successfully');
     } else {
         jsonResponse(500, 'Failed to approve sales SPPB', ['error' => mysqli_error($conn)]);
@@ -312,11 +390,12 @@ function approveSalesSppb($conn, $sales_sppb_id, $input, $username, $company_id)
 }
 
 function rejectSalesSppb($conn, $sales_sppb_id, $input, $username, $company_id) {
-    $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".sales_sppb WHERE id = '$sales_sppb_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $check = mysqli_query($conn, "SELECT sppb_display_number, created_by FROM " . APP_SCHEMA . ".sales_sppb WHERE id = '$sales_sppb_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Sales SPPB not found');
         return;
     }
+    $sales_sppb = mysqli_fetch_assoc($check);
 
     $status_id = getSalesStatusIdByName($conn, 'Rejected');
     if (!$status_id) {
@@ -331,6 +410,21 @@ function rejectSalesSppb($conn, $sales_sppb_id, $input, $username, $company_id) 
             SET status_id = '$status_id', updated_by = '$username', updated_at = '$now'
             WHERE id = '$sales_sppb_id' AND company_id = '$company_id'")) {
         insertAuditLog($conn, $company_id, 'sales_sppb', $sales_sppb_id, 'rejected', $username, $notes);
+
+        $rejector_name = resolveDisplayName($conn, $username);
+        $reason_text   = $notes ? " Alasan: $notes" : '';
+
+        notify($conn, [
+            'company_id'         => $company_id,
+            'type'               => 'approval_rejected',
+            'source_module'      => 'sales_sppb',
+            'source_document_id' => $sales_sppb_id,
+            'title'              => 'Sales SPPB Ditolak',
+            'body'               => "{$sales_sppb['sppb_display_number']} ditolak oleh $rejector_name.$reason_text",
+            'created_by'         => $username,
+            'recipients'         => [$sales_sppb['created_by']],
+        ]);
+
         jsonResponse(200, 'Sales SPPB rejected successfully');
     } else {
         jsonResponse(500, 'Failed to reject sales SPPB', ['error' => mysqli_error($conn)]);

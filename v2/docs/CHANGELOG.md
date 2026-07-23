@@ -7,6 +7,36 @@ Intended audience: frontend developers.
 
 ---
 
+## [2026-07-23 23:15:00 WIB] — Sales profit `PUT` can now correct item data before resubmit
+
+### Updated
+- `PUT /api/v2/sales-profit/{id}` — now accepts an optional `items` array. When provided, it fully replaces the record's existing items (same required fields as `POST`: `product_name`, `quantity`, `price`, `landed_cost`, optional `purchase_order_id`), letting the frontend fix a `Rejected` record's item-level values (e.g. `landed_cost`) before calling `PATCH .../revise` and resubmitting. Previously the endpoint silently ignored any `items` sent in the body.
+
+### Notes for frontend
+- Sending `items` replaces the entire set — always resend the full array (including unchanged items), not just the one being corrected.
+
+---
+
+## [2026-07-23 22:30:00 WIB] — Finance transaction supports multiple GL accounts per voucher (`details`)
+
+### Added
+- `GET /api/v2/finance-transaction/{id}/details`, `POST /api/v2/finance-transaction/{id}/details`, `GET/PUT/DELETE /api/v2/finance-transaction/{id}/details/{detail_id}` — new sub-resource for managing individual GL account splits on a finance transaction, same pattern as `sales-order/{id}/items`.
+- `GET /api/v2/finance-transaction` (list) and `GET /api/v2/finance-transaction/{id}` (detail) — detail response now includes a nested `details` array (list response does not).
+
+### Breaking changes
+- `POST /api/v2/finance-transaction` no longer accepts `account_code_id`/`account_amount`/`account_memo`. It now requires `details` — a non-empty array of `{account_code_id, amount, memo?}` — and rejects the request with `400 details is required` if it's missing, or `400 Sum of details.amount must equal amount` if the lines don't reconcile with the total `amount`.
+- `account_code_id`, `account_amount`, `account_code`, and `account_code_name` no longer appear anywhere on the `finance_transaction` header row — list, detail, or `PUT` update. That information now lives only in each `details[]` entry (or via the new `/details` sub-resource).
+- `PUT /api/v2/finance-transaction/{id}` no longer accepts `account_code_id`/`account_amount`.
+- `GET /api/v2/general-ledger/{account_code_id}` — each row in `transactions` is now a `finance_transaction_detail` line rather than a `finance_transaction` header, so a transaction with multiple account splits now contributes one row per matching line instead of one row per transaction. `id` is the detail line's own ID.
+- `GET /api/v2/cash-book/{bank_account_id}` — `description` on `finance_transaction` rows is now a comma-separated list of every account code name on that transaction (was a single account name).
+
+### Notes for frontend
+- This unblocks the "Detail Penerimaan"/"Detail Pembayaran" multi-line UI, which was already sending a `details` array that the API previously rejected with `400 account_code_id is required`.
+- `dashboard` (`pnl_snapshot`, `neraca_snapshot`, `buku_besar_summary` widgets), `profit-loss`, `balance-sheet`, `general-ledger`, and `cash-book` all now aggregate through `finance_transaction_detail` instead of the old header columns — their request/response shapes are otherwise unchanged.
+- See `v2/docs/migrations/v26_finance_transaction_multi_account_detail_schema.md` for the schema change. Applied to dev (4,443 existing rows backfilled 1:1, sums verified exact); **prod not yet applied** — same sign-off gate as every other schema change in this project, and prod's column-drop step must not run until this code is deployed and live.
+
+---
+
 ## [2026-07-21 22:47:55 WIB] — Notification module added (in-app inbox, WebSocket push, WhatsApp approval pings, one-click approval links, daily digest)
 
 ### Added

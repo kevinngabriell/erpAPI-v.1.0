@@ -16,12 +16,14 @@ function getAllGeneralLedgerAccounts($conn, $company_id, $params) {
     $where = "ac.company_id = '$company_id' AND ac.deleted_at IS NULL";
 
     $result = mysqli_query($conn, "SELECT ac.id AS account_code_id, ac.account_code, ac.account_code_name, ac.account_type,
-            COALESCE(SUM(CASE WHEN ft.transaction_date < '$date_from' THEN ft.account_amount ELSE 0 END), 0) AS opening_balance,
-            COALESCE(SUM(CASE WHEN ft.transaction_date BETWEEN '$date_from' AND '$date_to' THEN ft.account_amount ELSE 0 END), 0) AS period_movement
+            COALESCE(SUM(CASE WHEN ft.transaction_date < '$date_from' THEN ftd.amount ELSE 0 END), 0) AS opening_balance,
+            COALESCE(SUM(CASE WHEN ft.transaction_date BETWEEN '$date_from' AND '$date_to' THEN ftd.amount ELSE 0 END), 0) AS period_movement
         FROM " . APP_SCHEMA . ".account_code ac
+        LEFT JOIN " . APP_SCHEMA . ".finance_transaction_detail ftd
+               ON ftd.account_code_id = ac.id AND ftd.deleted_at IS NULL
         LEFT JOIN " . APP_SCHEMA . ".finance_transaction ft
-               ON ft.account_code_id = ac.id AND ft.deleted_at IS NULL AND ft.transaction_date <= '$date_to'
-        WHERE $where
+               ON ft.id = ftd.finance_transaction_id AND ft.deleted_at IS NULL AND ft.transaction_date <= '$date_to'
+        WHERE $where AND (ftd.id IS NULL OR ft.id IS NOT NULL)
         GROUP BY ac.id, ac.account_code, ac.account_code_name, ac.account_type
         ORDER BY ac.account_code ASC LIMIT $limit OFFSET $offset");
     $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".account_code ac WHERE $where");
@@ -63,24 +65,28 @@ function getDetailGeneralLedgerAccount($conn, $account_code_id, $company_id, $pa
     $date_from = mysqli_real_escape_string($conn, $date_from);
     $date_to   = mysqli_real_escape_string($conn, $date_to);
 
-    $opening_result = mysqli_query($conn, "SELECT COALESCE(SUM(account_amount), 0) AS opening_balance
-        FROM " . APP_SCHEMA . ".finance_transaction
-        WHERE account_code_id = '$account_code_id' AND company_id = '$company_id' AND deleted_at IS NULL
-          AND transaction_date < '$date_from'");
+    $opening_from   = APP_SCHEMA . ".finance_transaction_detail ftd
+            JOIN " . APP_SCHEMA . ".finance_transaction ft ON ft.id = ftd.finance_transaction_id AND ft.deleted_at IS NULL";
+    $opening_result = mysqli_query($conn, "SELECT COALESCE(SUM(ftd.amount), 0) AS opening_balance
+        FROM $opening_from
+        WHERE ftd.account_code_id = '$account_code_id' AND ft.company_id = '$company_id' AND ftd.deleted_at IS NULL
+          AND ft.transaction_date < '$date_from'");
     $opening_balance = (float)mysqli_fetch_assoc($opening_result)['opening_balance'];
 
     $page   = max(1, (int)($params['page']  ?? 1));
     $limit  = min(100, max(1, (int)($params['limit'] ?? 20)));
     $offset = ($page - 1) * $limit;
 
-    $where = "account_code_id = '$account_code_id' AND company_id = '$company_id' AND deleted_at IS NULL
-              AND transaction_date BETWEEN '$date_from' AND '$date_to'";
+    $from  = APP_SCHEMA . ".finance_transaction_detail ftd
+            JOIN " . APP_SCHEMA . ".finance_transaction ft ON ft.id = ftd.finance_transaction_id AND ft.deleted_at IS NULL";
+    $where = "ftd.account_code_id = '$account_code_id' AND ft.company_id = '$company_id' AND ftd.deleted_at IS NULL
+              AND ft.transaction_date BETWEEN '$date_from' AND '$date_to'";
 
-    $result = mysqli_query($conn, "SELECT id, transaction_date, voucher_number, memo, account_amount
-        FROM " . APP_SCHEMA . ".finance_transaction
+    $result = mysqli_query($conn, "SELECT ftd.id, ft.transaction_date, ft.voucher_number, ft.memo, ftd.amount AS account_amount
+        FROM $from
         WHERE $where
-        ORDER BY transaction_date ASC, created_at ASC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".finance_transaction WHERE $where");
+        ORDER BY ft.transaction_date ASC, ft.created_at ASC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM $from WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     $running_balance = $opening_balance;

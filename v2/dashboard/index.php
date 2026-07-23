@@ -257,10 +257,11 @@ function buildFinanceEntriesToday($conn, $company_id) {
 // ── Accounting ───────────────────────────────────────────────────────────────
 
 function buildPnlSnapshot($conn, $company_id) {
-    $result = mysqli_query($conn, "SELECT ac.account_type, COALESCE(SUM(ft.account_amount), 0) AS total
-        FROM " . APP_SCHEMA . ".finance_transaction ft
-        JOIN " . APP_SCHEMA . ".account_code ac ON ac.id = ft.account_code_id
-        WHERE ft.company_id = '$company_id' AND ft.deleted_at IS NULL
+    $result = mysqli_query($conn, "SELECT ac.account_type, COALESCE(SUM(ftd.amount), 0) AS total
+        FROM " . APP_SCHEMA . ".finance_transaction_detail ftd
+        JOIN " . APP_SCHEMA . ".finance_transaction ft ON ft.id = ftd.finance_transaction_id AND ft.deleted_at IS NULL
+        JOIN " . APP_SCHEMA . ".account_code ac ON ac.id = ftd.account_code_id
+        WHERE ft.company_id = '$company_id' AND ftd.deleted_at IS NULL
           AND ac.account_type IN ('revenue', 'expense')
           AND MONTH(ft.transaction_date) = MONTH(CURDATE()) AND YEAR(ft.transaction_date) = YEAR(CURDATE())
         GROUP BY ac.account_type");
@@ -278,10 +279,11 @@ function buildPnlSnapshot($conn, $company_id) {
 }
 
 function buildNeracaSnapshot($conn, $company_id) {
-    $result = mysqli_query($conn, "SELECT ac.account_type, COALESCE(SUM(ft.account_amount), 0) AS total
-        FROM " . APP_SCHEMA . ".finance_transaction ft
-        JOIN " . APP_SCHEMA . ".account_code ac ON ac.id = ft.account_code_id
-        WHERE ft.company_id = '$company_id' AND ft.deleted_at IS NULL
+    $result = mysqli_query($conn, "SELECT ac.account_type, COALESCE(SUM(ftd.amount), 0) AS total
+        FROM " . APP_SCHEMA . ".finance_transaction_detail ftd
+        JOIN " . APP_SCHEMA . ".finance_transaction ft ON ft.id = ftd.finance_transaction_id AND ft.deleted_at IS NULL
+        JOIN " . APP_SCHEMA . ".account_code ac ON ac.id = ftd.account_code_id
+        WHERE ft.company_id = '$company_id' AND ftd.deleted_at IS NULL
           AND ac.account_type IN ('asset', 'liability', 'equity')
         GROUP BY ac.account_type");
 
@@ -295,11 +297,14 @@ function buildNeracaSnapshot($conn, $company_id) {
 
 function buildBukuBesarSummary($conn, $company_id) {
     $result = mysqli_query($conn, "SELECT ac.id AS account_code_id, ac.account_code, ac.account_code_name,
-            COALESCE(SUM(ft.account_amount), 0) AS total
+            COALESCE(SUM(ftd.amount), 0) AS total
         FROM " . APP_SCHEMA . ".account_code ac
+        LEFT JOIN " . APP_SCHEMA . ".finance_transaction_detail ftd
+               ON ftd.account_code_id = ac.id AND ftd.deleted_at IS NULL
         LEFT JOIN " . APP_SCHEMA . ".finance_transaction ft
-               ON ft.account_code_id = ac.id AND ft.deleted_at IS NULL
+               ON ft.id = ftd.finance_transaction_id AND ft.deleted_at IS NULL
         WHERE ac.company_id = '$company_id' AND ac.deleted_at IS NULL
+          AND (ftd.id IS NULL OR ft.id IS NOT NULL)
         GROUP BY ac.id, ac.account_code, ac.account_code_name
         ORDER BY ac.account_code ASC");
 

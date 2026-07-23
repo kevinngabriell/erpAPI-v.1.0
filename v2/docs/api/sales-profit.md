@@ -1,6 +1,6 @@
 # Sales Profit API
 
-> **Last updated:** 2026-07-20 18:58:14 WIB
+> **Last updated:** 2026-07-23 23:15:00 WIB
 > **Base URL:** `/api/v2/sales-profit`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -236,7 +236,7 @@ Get detail of a single sales profit record, including its nested `items` array.
 
 ### PUT `/api/v2/sales-profit/{id}`
 
-Update a sales profit record. Only send the fields you want to change. Does not update items. `status_id` is not updatable here — use `PATCH .../approve` or `PATCH .../reject` to change status.
+Update a sales profit record. Only send the fields you want to change. `status_id` is not updatable here — use `PATCH .../approve` or `PATCH .../reject` to change status.
 
 #### Path parameters
 
@@ -250,6 +250,17 @@ Update a sales profit record. Only send the fields you want to change. Does not 
 |-------|------|----------|-------------|
 | customer_id | string | No | Cannot be empty if provided |
 | sales_order_id | string | No | Cannot be empty if provided; must exist and belong to the company |
+| items | array | No | When provided, must be a non-empty array and **fully replaces** the record's existing items — see below |
+
+**`items[]` object (required per item when `items` is provided):**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| product_name | string | Yes | — |
+| quantity | number | Yes | — |
+| price | number | Yes | Sale price |
+| landed_cost | number | Yes | Landed cost of the item |
+| purchase_order_id | string | No | Related purchase order ID |
 
 #### Response `200 OK`
 
@@ -267,6 +278,22 @@ Update a sales profit record. Only send the fields you want to change. Does not 
 {
   "status_code": 400,
   "status_message": "No fields provided for update",
+  "data": []
+}
+```
+
+```json
+{
+  "status_code": 400,
+  "status_message": "items must be a non-empty array",
+  "data": []
+}
+```
+
+```json
+{
+  "status_code": 400,
+  "status_message": "items.landed_cost is required",
   "data": []
 }
 ```
@@ -403,7 +430,7 @@ Reject a sales profit record. Server-side sets `status_id` to the `Rejected` sal
 
 Move a rejected sales profit record back to `Draft` status so it can be edited and resubmitted for approval. Only allowed when the record's current status is `Rejected`.
 
-Use `PUT /api/v2/sales-profit/{id}` to edit the record's fields (before or after calling this endpoint) — `revise` only changes status, it does not accept or update any other field.
+Use `PUT /api/v2/sales-profit/{id}` to edit the record's fields — including item-level corrections like `landed_cost` — before or after calling this endpoint. `revise` only changes status, it does not accept or update any other field.
 
 #### Path parameters
 
@@ -500,6 +527,7 @@ The filename's `so_display_number` has any character outside `[A-Za-z0-9_-]` rep
 ## Notes
 
 - Header + items creation is wrapped in a single database transaction — either the sales profit record and all its items are created together, or nothing is saved.
+- **`PUT` item replacement is also transactional and destructive-by-replace**: when `items` is provided, all of the record's existing (non-deleted) items are soft-deleted and the submitted array is inserted as entirely new rows (new `id`s) in the same transaction as any header field changes. There is no per-item partial update — omitting an existing item from the array removes it; the whole set must be resent even to change a single item's `landed_cost`. This mirrors the `sales-sppb` module's `PUT` behavior and is the mechanism for correcting item data on a `Rejected` record before resubmitting via `revise`.
 - Create/update/delete write `audit_log` rows with action `created`/`updated`/`deleted` and module string `sales_profit`; approve/reject/revise write `approved`/`rejected`/`revised`. Query this history via `GET /api/v2/audit-log?module=sales_profit&reference_id={id}` — see the `audit-log` module doc.
 - The list endpoint (`GET /api/v2/sales-profit`) does not include the nested `items` array; only the detail endpoint (`GET /api/v2/sales-profit/{id}`) does. The create response only returns `sales_profit_id`.
 - Unlike sales SPPB, this module has no unique display-number field and no duplicate (409) check on create.

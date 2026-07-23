@@ -1,6 +1,6 @@
 # General Ledger Report API
 
-> **Last updated:** 2026-07-11 19:44:37 WIB
+> **Last updated:** 2026-07-23 22:30:00 WIB
 > **Base URL:** `/api/v2/general-ledger`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -95,7 +95,7 @@ Transaction-level detail for a single account within a date range, including a r
     "opening_balance": 480000000,
     "transactions": [
       {
-        "id": "ft_a1b2c3",
+        "id": "f6a7b8c9-d0e1-4f5a-3b4c-5d6e7f8a9b0c",
         "transaction_date": "2026-07-03",
         "voucher_number": "V-2026-0301",
         "memo": "Customer payment received",
@@ -140,6 +140,7 @@ Transaction-level detail for a single account within a date range, including a r
 
 ## Notes
 
-- `opening_balance` is `SUM(finance_transaction.account_amount)` for all transactions strictly before `date_from`; `closing_balance` = `opening_balance + period_movement` (list endpoint) or the final `running_balance` after the last listed transaction (detail endpoint) — both represent the same figure.
+- `opening_balance` is `SUM(finance_transaction_detail.amount)` for all detail lines posted against this account strictly before `date_from`; `closing_balance` = `opening_balance + period_movement` (list endpoint) or the final `running_balance` after the last listed transaction (detail endpoint) — both represent the same figure.
+- **Each row in `transactions` is a `finance_transaction_detail` line, not a `finance_transaction` header** — a single finance transaction with multiple `account_code`s in its `details` (see the `finance-transaction` module doc) now contributes one row per matching detail line here, not one row per transaction. `id` is the detail line's own ID; `transaction_date`, `voucher_number`, and `memo` are still resolved from the parent header.
 - The detail endpoint's `transactions` are ordered oldest to newest (`transaction_date ASC, created_at ASC`) so `running_balance` accumulates correctly; pagination applies to this transaction list, not to the opening/closing balance calculation (those are computed from the full unpaginated history/period).
 - This is a read-only reporting endpoint — no `POST`/`PUT`/`DELETE`. It generalizes the dashboard's fixed all-time `buku_besar_summary` widget (`GET /api/v2/dashboard`) into a date-range report with pagination and a per-account transaction drill-down.

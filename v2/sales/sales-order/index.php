@@ -17,6 +17,19 @@ function getSalesStatusIdByName($conn, $status_name) {
     return $row ? $row['id'] : null;
 }
 
+function calculateSalesOrderTotal($conn, $sales_order_id, $ppn_percentage, $ppn_name) {
+    $sales_order_id = mysqli_real_escape_string($conn, $sales_order_id);
+    $result = mysqli_query($conn, "SELECT SUM(quantity * unit_price * kurs) AS subtotal
+            FROM " . APP_SCHEMA . ".sales_order_item WHERE sales_order_id = '$sales_order_id' AND deleted_at IS NULL");
+    $subtotal = $result ? (float)(mysqli_fetch_assoc($result)['subtotal'] ?? 0) : 0;
+
+    $ppn_percentage = (float)$ppn_percentage;
+    $is_11_12_method = $ppn_percentage === 12.0 && str_contains($ppn_name ?? '', '11/12');
+    $tax_rate        = $is_11_12_method ? (11 / 12 * 0.12) : (in_array($ppn_percentage, [11.0, 12.0], true) ? $ppn_percentage / 100 : 0);
+
+    return $subtotal * (1 + $tax_rate);
+}
+
 function getCompanyCode($conn, $company_id) {
     $result = mysqli_query($conn, "SELECT company_code FROM " . CORE_SCHEMA . ".app_company WHERE company_id = '$company_id' LIMIT 1");
     $row = $result ? mysqli_fetch_assoc($result) : null;
@@ -303,7 +316,11 @@ function deleteSalesOrder($conn, $sales_order_id, $username, $company_id) {
 }
 
 function approveSalesOrder($conn, $sales_order_id, $input, $username, $company_id) {
-    $check = mysqli_query($conn, "SELECT so_display_number, created_by FROM " . APP_SCHEMA . ".sales_order WHERE id = '$sales_order_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $check = mysqli_query($conn, "SELECT so.so_display_number, so.created_by, c.customer_name, pt.ppn_percentage, pt.ppn_name
+            FROM " . APP_SCHEMA . ".sales_order so
+            LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = so.customer_id
+            LEFT JOIN " . APP_SCHEMA . ".ppn_type pt ON pt.id = so.ppn_type_id
+            WHERE so.id = '$sales_order_id' AND so.company_id = '$company_id' AND so.deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Sales order not found');
         return;
@@ -326,13 +343,19 @@ function approveSalesOrder($conn, $sales_order_id, $input, $username, $company_i
         invalidateApprovalTokens($conn, 'sales_order', $sales_order_id);
 
         $approver_name = resolveDisplayName($conn, $username);
+        $total         = calculateSalesOrderTotal($conn, $sales_order_id, $sales_order['ppn_percentage'] ?? 0, $sales_order['ppn_name'] ?? '');
+        $detail_link   = rtrim(APPROVAL_BASE_URL, '/') . '/sales/sales-order/' . $sales_order_id;
+
         notify($conn, [
             'company_id'         => $company_id,
             'type'               => 'approval_approved',
             'source_module'      => 'sales_order',
             'source_document_id' => $sales_order_id,
             'title'              => 'Sales Order Disetujui',
-            'body'               => "{$sales_order['so_display_number']} sudah di-approve oleh $approver_name.",
+            'body'               => "{$sales_order['so_display_number']} telah disetujui oleh $approver_name pada " . formatIndonesianDate($now) . ', ' . date('H:i', strtotime($now)) . " WIB.\n\n" .
+                                     "Customer: {$sales_order['customer_name']}\n" .
+                                     'Total: Rp ' . number_format($total, 0, ',', '.') . "\n\n" .
+                                     "Lihat detail: $detail_link",
             'created_by'         => $username,
             'recipients'         => [$sales_order['created_by']],
         ]);

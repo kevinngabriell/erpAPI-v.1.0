@@ -4,6 +4,7 @@ require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
 require_once __DIR__ . '/../../helpers/audit_log.php';
 require_once __DIR__ . '/../../helpers/excel_export.php';
+require_once __DIR__ . '/../../helpers/notification.php';
 
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 
@@ -267,11 +268,15 @@ function deleteSalesDelivery($conn, $sales_delivery_id, $username, $company_id) 
 }
 
 function approveSalesDelivery($conn, $sales_delivery_id, $input, $username, $company_id) {
-    $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".sales_delivery WHERE id = '$sales_delivery_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $check = mysqli_query($conn, "SELECT sd.do_display_number, sd.created_by, c.customer_name
+            FROM " . APP_SCHEMA . ".sales_delivery sd
+            LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = sd.customer_id
+            WHERE sd.id = '$sales_delivery_id' AND sd.company_id = '$company_id' AND sd.deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Sales delivery not found');
         return;
     }
+    $sales_delivery = mysqli_fetch_assoc($check);
 
     $status_id = getSalesStatusIdByName($conn, 'Approved');
     if (!$status_id) {
@@ -286,6 +291,23 @@ function approveSalesDelivery($conn, $sales_delivery_id, $input, $username, $com
             SET status_id = '$status_id', approved_by = '$username', approved_at = '$now', updated_by = '$username', updated_at = '$now'
             WHERE id = '$sales_delivery_id' AND company_id = '$company_id'")) {
         insertAuditLog($conn, $company_id, 'sales_delivery', $sales_delivery_id, 'approved', $username, $notes);
+
+        $approver_name = resolveDisplayName($conn, $username);
+        $detail_link   = rtrim(APPROVAL_BASE_URL, '/') . '/sales/sales-delivery/' . $sales_delivery_id;
+
+        notify($conn, [
+            'company_id'         => $company_id,
+            'type'               => 'approval_approved',
+            'source_module'      => 'sales_delivery',
+            'source_document_id' => $sales_delivery_id,
+            'title'              => 'Sales Delivery Disetujui',
+            'body'               => "{$sales_delivery['do_display_number']} telah disetujui oleh $approver_name pada " . formatIndonesianDate($now) . ', ' . date('H:i', strtotime($now)) . " WIB.\n\n" .
+                                     "Customer: {$sales_delivery['customer_name']}\n\n" .
+                                     "Lihat detail: $detail_link",
+            'created_by'         => $username,
+            'recipients'         => [$sales_delivery['created_by']],
+        ]);
+
         jsonResponse(200, 'Sales delivery approved successfully');
     } else {
         jsonResponse(500, 'Failed to approve sales delivery', ['error' => mysqli_error($conn)]);
@@ -293,11 +315,12 @@ function approveSalesDelivery($conn, $sales_delivery_id, $input, $username, $com
 }
 
 function rejectSalesDelivery($conn, $sales_delivery_id, $input, $username, $company_id) {
-    $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".sales_delivery WHERE id = '$sales_delivery_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $check = mysqli_query($conn, "SELECT do_display_number, created_by FROM " . APP_SCHEMA . ".sales_delivery WHERE id = '$sales_delivery_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Sales delivery not found');
         return;
     }
+    $sales_delivery = mysqli_fetch_assoc($check);
 
     $status_id = getSalesStatusIdByName($conn, 'Rejected');
     if (!$status_id) {
@@ -312,6 +335,21 @@ function rejectSalesDelivery($conn, $sales_delivery_id, $input, $username, $comp
             SET status_id = '$status_id', updated_by = '$username', updated_at = '$now'
             WHERE id = '$sales_delivery_id' AND company_id = '$company_id'")) {
         insertAuditLog($conn, $company_id, 'sales_delivery', $sales_delivery_id, 'rejected', $username, $notes);
+
+        $rejector_name = resolveDisplayName($conn, $username);
+        $reason_text   = $notes ? " Alasan: $notes" : '';
+
+        notify($conn, [
+            'company_id'         => $company_id,
+            'type'               => 'approval_rejected',
+            'source_module'      => 'sales_delivery',
+            'source_document_id' => $sales_delivery_id,
+            'title'              => 'Sales Delivery Ditolak',
+            'body'               => "{$sales_delivery['do_display_number']} ditolak oleh $rejector_name.$reason_text",
+            'created_by'         => $username,
+            'recipients'         => [$sales_delivery['created_by']],
+        ]);
+
         jsonResponse(200, 'Sales delivery rejected successfully');
     } else {
         jsonResponse(500, 'Failed to reject sales delivery', ['error' => mysqli_error($conn)]);

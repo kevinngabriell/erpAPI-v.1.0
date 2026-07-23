@@ -31,14 +31,13 @@ function getAllFinanceTransactions($conn, $company_id, $params) {
 
     $from = APP_SCHEMA . ".finance_transaction ft
             LEFT JOIN " . APP_SCHEMA . ".bank_account ba ON ba.id = ft.bank_account_id
-            LEFT JOIN " . APP_SCHEMA . ".account_code ac ON ac.id = ft.account_code_id
             LEFT JOIN " . APP_SCHEMA . ".finance_category fc ON fc.id = ft.finance_category_id
             LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = ft.created_by
             LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = ft.updated_by
             LEFT JOIN " . CORE_SCHEMA . ".app_user ow ON ow.user_id COLLATE utf8mb4_general_ci = ft.approved_by_owner_id
             LEFT JOIN " . CORE_SCHEMA . ".app_user tr ON tr.user_id COLLATE utf8mb4_general_ci = ft.approved_by_treasury_id";
 
-    $result       = mysqli_query($conn, "SELECT ft.*, ba.bank_name, ba.bank_number, ac.account_code, ac.account_code_name, fc.category_name,
+    $result       = mysqli_query($conn, "SELECT ft.*, ba.bank_name, ba.bank_number, fc.category_name,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by,
             CONCAT(ow.first_name, ' ', ow.last_name) AS approved_by_owner,
@@ -63,7 +62,7 @@ function getAllFinanceTransactions($conn, $company_id, $params) {
 }
 
 function createFinanceTransaction($conn, $input, $username, $company_id) {
-    $required = ['bank_account_id', 'transaction_date', 'amount', 'account_code_id', 'account_amount', 'finance_category_id'];
+    $required = ['bank_account_id', 'transaction_date', 'amount', 'details', 'finance_category_id'];
     foreach ($required as $field) {
         if (!isset($input[$field]) || (is_string($input[$field]) && trim($input[$field]) === '')) {
             jsonResponse(400, "$field is required");
@@ -71,12 +70,32 @@ function createFinanceTransaction($conn, $input, $username, $company_id) {
         }
     }
 
+    if (!is_array($input['details']) || count($input['details']) === 0) {
+        jsonResponse(400, 'details must be a non-empty array');
+        return;
+    }
+
+    $detail_sum = 0;
+    foreach ($input['details'] as $detail) {
+        $detail_required = ['account_code_id', 'amount'];
+        foreach ($detail_required as $field) {
+            if (!isset($detail[$field]) || (is_string($detail[$field]) && trim($detail[$field]) === '')) {
+                jsonResponse(400, "details.$field is required");
+                return;
+            }
+        }
+        $detail_sum += (float)$detail['amount'];
+    }
+
     $bank_account_id     = mysqli_real_escape_string($conn, $input['bank_account_id']);
     $transaction_date    = mysqli_real_escape_string($conn, $input['transaction_date']);
     $amount              = (float)$input['amount'];
-    $account_code_id     = mysqli_real_escape_string($conn, $input['account_code_id']);
-    $account_amount      = (float)$input['account_amount'];
     $finance_category_id = mysqli_real_escape_string($conn, $input['finance_category_id']);
+
+    if (round($detail_sum, 2) !== round($amount, 2)) {
+        jsonResponse(400, 'Sum of details.amount must equal amount');
+        return;
+    }
 
     $bank_check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".bank_account WHERE id = '$bank_account_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($bank_check) === 0) {
@@ -84,31 +103,52 @@ function createFinanceTransaction($conn, $input, $username, $company_id) {
         return;
     }
 
-    $account_check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".account_code WHERE id = '$account_code_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
-    if (mysqli_num_rows($account_check) === 0) {
-        jsonResponse(404, 'Account code not found');
-        return;
+    foreach ($input['details'] as $detail) {
+        $account_code_id = mysqli_real_escape_string($conn, $detail['account_code_id']);
+        $account_check   = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".account_code WHERE id = '$account_code_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+        if (mysqli_num_rows($account_check) === 0) {
+            jsonResponse(404, 'Account code not found');
+            return;
+        }
     }
 
     $voucher_number_sql = isset($input['voucher_number']) && trim($input['voucher_number']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['voucher_number']) . "'" : 'NULL';
     $memo_sql           = isset($input['memo']) && trim($input['memo']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['memo']) . "'" : 'NULL';
-    $account_memo_sql   = isset($input['account_memo']) && trim($input['account_memo']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['account_memo']) . "'" : 'NULL';
     $cheque_number_sql  = isset($input['cheque_number']) && trim($input['cheque_number']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['cheque_number']) . "'" : 'NULL';
     $payee_sql          = isset($input['payee']) && trim($input['payee']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['payee']) . "'" : 'NULL';
 
     $finance_transaction_id = generateUUID();
     $now                    = date('Y-m-d H:i:s');
 
-    $sql = "INSERT INTO " . APP_SCHEMA . ".finance_transaction
-            (id, company_id, voucher_number, bank_account_id, transaction_date, memo, amount,
-             account_code_id, account_amount, account_memo, cheque_number, payee, finance_category_id,
-             created_by, created_at)
-            VALUES ('$finance_transaction_id', '$company_id', $voucher_number_sql, '$bank_account_id', '$transaction_date', $memo_sql, $amount,
-                    '$account_code_id', $account_amount, $account_memo_sql, $cheque_number_sql, $payee_sql, '$finance_category_id',
-                    '$username', '$now')";
+    $conn->begin_transaction();
+    try {
+        $sql = "INSERT INTO " . APP_SCHEMA . ".finance_transaction
+                (id, company_id, voucher_number, bank_account_id, transaction_date, memo, amount, finance_category_id,
+                 created_by, created_at)
+                VALUES ('$finance_transaction_id', '$company_id', $voucher_number_sql, '$bank_account_id', '$transaction_date', $memo_sql, $amount, '$finance_category_id',
+                        '$username', '$now')";
 
-    if (mysqli_query($conn, $sql)) {
+        if (!mysqli_query($conn, $sql)) {
+            throw new Exception(mysqli_error($conn));
+        }
+
+        foreach ($input['details'] as $detail) {
+            $detail_id       = generateUUID();
+            $account_code_id = mysqli_real_escape_string($conn, $detail['account_code_id']);
+            $detail_amount   = (float)$detail['amount'];
+            $detail_memo_sql = isset($detail['memo']) && trim($detail['memo']) !== '' ? "'" . mysqli_real_escape_string($conn, $detail['memo']) . "'" : 'NULL';
+
+            $detail_sql = "INSERT INTO " . APP_SCHEMA . ".finance_transaction_detail
+                    (id, finance_transaction_id, account_code_id, amount, memo, created_by, created_at)
+                    VALUES ('$detail_id', '$finance_transaction_id', '$account_code_id', $detail_amount, $detail_memo_sql, '$username', '$now')";
+
+            if (!mysqli_query($conn, $detail_sql)) {
+                throw new Exception(mysqli_error($conn));
+            }
+        }
+
         insertAuditLog($conn, $company_id, 'finance_transaction', $finance_transaction_id, 'created', $username);
+        $conn->commit();
 
         $voucher_display = isset($input['voucher_number']) && trim($input['voucher_number']) !== '' ? trim($input['voucher_number']) : $finance_transaction_id;
         notify($conn, [
@@ -123,8 +163,9 @@ function createFinanceTransaction($conn, $input, $username, $company_id) {
         ]);
 
         jsonResponse(201, 'Finance transaction created successfully', ['finance_transaction_id' => $finance_transaction_id]);
-    } else {
-        jsonResponse(500, 'Failed to create finance transaction', ['error' => mysqli_error($conn)]);
+    } catch (Exception $e) {
+        $conn->rollback();
+        jsonResponse(500, 'Failed to create finance transaction', ['error' => $e->getMessage()]);
     }
 }
 
@@ -133,13 +174,12 @@ function getDetailFinanceTransaction($conn, $finance_transaction_id, $company_id
 
     $from   = APP_SCHEMA . ".finance_transaction ft
             LEFT JOIN " . APP_SCHEMA . ".bank_account ba ON ba.id = ft.bank_account_id
-            LEFT JOIN " . APP_SCHEMA . ".account_code ac ON ac.id = ft.account_code_id
             LEFT JOIN " . APP_SCHEMA . ".finance_category fc ON fc.id = ft.finance_category_id
             LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = ft.created_by
             LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = ft.updated_by
             LEFT JOIN " . CORE_SCHEMA . ".app_user ow ON ow.user_id COLLATE utf8mb4_general_ci = ft.approved_by_owner_id
             LEFT JOIN " . CORE_SCHEMA . ".app_user tr ON tr.user_id COLLATE utf8mb4_general_ci = ft.approved_by_treasury_id";
-    $result = mysqli_query($conn, "SELECT ft.*, ba.bank_name, ba.bank_number, ac.account_code, ac.account_code_name, fc.category_name,
+    $result = mysqli_query($conn, "SELECT ft.*, ba.bank_name, ba.bank_number, fc.category_name,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by,
             CONCAT(ow.first_name, ' ', ow.last_name) AS approved_by_owner,
@@ -150,7 +190,19 @@ function getDetailFinanceTransaction($conn, $finance_transaction_id, $company_id
         return;
     }
 
-    jsonResponse(200, 'Finance transaction found', mysqli_fetch_assoc($result));
+    $finance_transaction = mysqli_fetch_assoc($result);
+
+    $details_from   = APP_SCHEMA . ".finance_transaction_detail ftd
+            LEFT JOIN " . APP_SCHEMA . ".account_code ac ON ac.id = ftd.account_code_id
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = ftd.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = ftd.updated_by";
+    $details_result = mysqli_query($conn, "SELECT ftd.*, ac.account_code, ac.account_code_name,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            FROM $details_from WHERE ftd.finance_transaction_id = '$finance_transaction_id' AND ftd.deleted_at IS NULL ORDER BY ftd.created_at ASC");
+    $finance_transaction['details'] = $details_result ? mysqli_fetch_all($details_result, MYSQLI_ASSOC) : [];
+
+    jsonResponse(200, 'Finance transaction found', $finance_transaction);
 }
 
 function updateFinanceTransaction($conn, $finance_transaction_id, $input, $username, $company_id) {
@@ -164,7 +216,7 @@ function updateFinanceTransaction($conn, $finance_transaction_id, $input, $usern
 
     $updates = [];
 
-    $string_fields = ['voucher_number', 'memo', 'account_memo', 'cheque_number', 'payee'];
+    $string_fields = ['voucher_number', 'memo', 'cheque_number', 'payee'];
     foreach ($string_fields as $field) {
         if (isset($input[$field])) {
             $val = trim(mysqli_real_escape_string($conn, $input[$field]));
@@ -172,7 +224,7 @@ function updateFinanceTransaction($conn, $finance_transaction_id, $input, $usern
         }
     }
 
-    $fk_fields = ['bank_account_id', 'account_code_id', 'finance_category_id'];
+    $fk_fields = ['bank_account_id', 'finance_category_id'];
     foreach ($fk_fields as $field) {
         if (isset($input[$field])) {
             $val = trim(mysqli_real_escape_string($conn, $input[$field]));
@@ -186,9 +238,6 @@ function updateFinanceTransaction($conn, $finance_transaction_id, $input, $usern
     }
     if (isset($input['amount']) && $input['amount'] !== '') {
         $updates[] = "amount = " . (float)$input['amount'];
-    }
-    if (isset($input['account_amount']) && $input['account_amount'] !== '') {
-        $updates[] = "account_amount = " . (float)$input['account_amount'];
     }
 
     if (empty($updates)) {
@@ -343,7 +392,10 @@ $sub_action             = $parts[4] ?? '';
 try {
     $conn = getConn();
 
-    if ($finance_transaction_id && $sub_action !== '') {
+    if ($finance_transaction_id && $sub_action === 'details') {
+        require __DIR__ . '/details.php';
+
+    } elseif ($finance_transaction_id && $sub_action !== '') {
         $input = in_array($method, ['POST', 'PUT', 'PATCH'])
             ? (json_decode(file_get_contents('php://input'), true) ?? [])
             : [];

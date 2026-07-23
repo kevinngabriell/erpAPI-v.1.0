@@ -7,10 +7,13 @@ require_once __DIR__ . '/../../helpers/report_dates.php';
 function buildCashBookUnion($company_id) {
     return "
         SELECT ft.bank_account_id, ft.transaction_date, ft.created_at, ft.voucher_number AS reference_number,
-               ft.cheque_number, ft.payee AS party_name, ft.memo, ac.account_code_name AS description,
+               ft.cheque_number, ft.payee AS party_name, ft.memo,
+               (SELECT GROUP_CONCAT(ac2.account_code_name SEPARATOR ', ')
+                  FROM " . APP_SCHEMA . ".finance_transaction_detail ftd2
+                  JOIN " . APP_SCHEMA . ".account_code ac2 ON ac2.id = ftd2.account_code_id
+                  WHERE ftd2.finance_transaction_id = ft.id AND ftd2.deleted_at IS NULL) AS description,
                CASE WHEN fc.category_type = 'debit' THEN ft.amount ELSE -ft.amount END AS signed_amount
         FROM " . APP_SCHEMA . ".finance_transaction ft
-        LEFT JOIN " . APP_SCHEMA . ".account_code ac ON ac.id = ft.account_code_id
         LEFT JOIN " . APP_SCHEMA . ".finance_category fc ON fc.id = ft.finance_category_id
         WHERE ft.company_id = '$company_id' AND ft.deleted_at IS NULL
 

@@ -1,6 +1,6 @@
 # Dashboard API
 
-> **Last updated:** 2026-07-07 WIB
+> **Last updated:** 2026-07-23 22:30:00 WIB
 > **Base URL:** `/api/v2/dashboard`
 > **Auth:** Requires `Authorization: Bearer <access_token>`
 
@@ -78,8 +78,8 @@ Widget key (in `data.widgets`) ← `permission_key` ← what it returns.
 
 | Widget key | permission_key | Returns |
 |---|---|---|
-| `pnl_snapshot` | `dashboard.pnl_snapshot.view` | `{ revenue, expense, profit }` this month, from `finance_transaction.account_amount` grouped by `account_code.account_type` (`revenue`/`expense`). |
-| `neraca_snapshot` | `dashboard.neraca_snapshot.view` | `{ asset, liability, equity }` — all-time cumulative `account_amount` by `account_type`. |
+| `pnl_snapshot` | `dashboard.pnl_snapshot.view` | `{ revenue, expense, profit }` this month, from `finance_transaction_detail.amount` grouped by `account_code.account_type` (`revenue`/`expense`). |
+| `neraca_snapshot` | `dashboard.neraca_snapshot.view` | `{ asset, liability, equity }` — all-time cumulative `finance_transaction_detail.amount` by `account_type`. |
 | `buku_besar_summary` | `dashboard.buku_besar_summary.view` | Array of `{ account_code_id, account_code, account_code_name, total }` — ledger rollup per account code. |
 | `ar_aging` | `dashboard.ar_aging.view` | Drillable list — same fields as the old `outstanding?type=piutang`, plus a `bucket` field. |
 | `ap_aging` | `dashboard.ap_aging.view` | Drillable list — same as `outstanding?type=hutang`, plus `bucket`. |
