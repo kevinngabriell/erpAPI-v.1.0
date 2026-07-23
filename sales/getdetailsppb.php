@@ -110,7 +110,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             array(
                 "StatusCode" => 404,
                 'Status' => 'Error',
-                "message" => "No records found for SONumber: $SONumber."
+                "message" => "No records found for SPPBNumber: $SPPBNumber."
             )
         );
     }
