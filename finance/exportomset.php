@@ -19,7 +19,7 @@ if ($month > 0) $date_filter .= " AND MONTH(A1.invoiceDate) = $month";
 $cust_filter = $customer_id ? "AND A1.customerID = '$customer_id'" : '';
 
 $omsetQuery = "
-    SELECT YEAR(A1.invoiceDate) AS tahun, MONTH(A1.invoiceDate) AS bulan, MONTHNAME(A1.invoiceDate) AS nama_bulan,
+    SELECT YEAR(A1.invoiceDate) AS tahun, MONTH(A1.invoiceDate) AS bulan, ANY_VALUE(MONTHNAME(A1.invoiceDate)) AS nama_bulan,
            COUNT(DISTINCT A1.invoiceNumber) AS total_invoice,
            SUM(A2.productQuantity * A2.unitPrice) AS omset_sebelum_ppn,
            SUM(A2.productQuantity * A2.unitPrice + COALESCE(A2.tax, 0)) AS omset_termasuk_ppn
