@@ -22,7 +22,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
     $conditions = array();
 
-    if ($startdate && $enddate && $startdate !== $enddate) {
+    if ($startdate && $enddate) {
         $conditions[] = "A1.SODate BETWEEN '$startdate' AND '$enddate'";
     }
 

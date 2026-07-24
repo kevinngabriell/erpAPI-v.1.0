@@ -13,7 +13,7 @@ require_once('../connection/connection.php');
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $startdate = isset($_GET['startdate']) ? $_GET['startdate'] : '';
     $enddate = isset($_GET['enddate']) ? $_GET['enddate'] : '';
-    $SalesNumber = isset($_GET['SalesNumber']) ? $_GET['SalesNumber'] : '';
+    $SalesNumber = isset($_GET['SONumber']) ? $_GET['SONumber'] : '';
 
     $query = "SELECT A1.SalesNumber, A1.InsertDt, A2.company_name, A4.SO_Status_Name
               FROM salesProfit A1
@@ -23,7 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     
     $conditions = array();
 
-    if ($startdate && $enddate && $startdate !== $enddate) {
+    if ($startdate && $enddate) {
         $conditions[] = "A1.InsertDt BETWEEN '$startdate' AND '$enddate'";
     }
 
