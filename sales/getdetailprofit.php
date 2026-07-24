@@ -13,21 +13,20 @@ require_once('../connection/connection.php');
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $SONumber = $_GET['SONumber'];
 
-    // First, count the number of records with the same salesOrderNumber
-    $count_query = "SELECT COUNT(*) as total FROM salesProfitItem WHERE SalesOrderNumber = '$SONumber'";
-    $count_result = mysqli_query($connect, $count_query);
-    $count_row = mysqli_fetch_assoc($count_result);
-    $total_records = $count_row['total'];
+    // Gate on the profit header existing, not on its items - a header can
+    // legitimately have zero items if the item insert failed during creation,
+    // and the detail page still needs to load so it can be rejected/fixed.
+    $sales_query = "SELECT A1.SalesNumber, A1.ProfitCustomer, A2.company_name, A1.InsertBy, A1.InsertDt, A4.SO_Status_Name
+    FROM salesProfit A1
+    LEFT JOIN customer A2 ON A1.ProfitCustomer = A2.company_id
+    LEFT JOIN salesOrder A3 ON A1.SalesNumber = A3.SONumber
+    LEFT JOIN salesStatus A4 ON A3.SOStatus = A4.SO_Status_ID
+    WHERE A1.SalesNumber = '$SONumber'";
+
+    $sales_result = mysqli_query($connect, $sales_query);
+    $total_records = mysqli_num_rows($sales_result);
 
     if ($total_records > 0) {
-        $sales_query = "SELECT A1.SalesNumber, A1.ProfitCustomer, A2.company_name, A1.InsertBy, A1.InsertDt, A4.SO_Status_Name
-        FROM salesProfit A1
-        LEFT JOIN customer A2 ON A1.ProfitCustomer = A2.company_id
-        LEFT JOIN salesOrder A3 ON A1.SalesNumber = A3.SONumber
-        LEFT JOIN salesStatus A4 ON A3.SOStatus = A4.SO_Status_ID
-        WHERE A1.SalesNumber = '$SONumber'";
-
-        $sales_result = mysqli_query($connect, $sales_query);
         $sales_array = array();
         while($sales_row = mysqli_fetch_array($sales_result)){
             array_push(
@@ -84,8 +83,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             return $sales_array;
         }
 
-        // Fetch items
-        $sales_items = fetchItems($connect, $SONumber, $total_records, 0);
+        // Fetch items (count separately - a header can have a different
+        // number of items than header rows, e.g. zero if creation failed)
+        $item_count_query = "SELECT COUNT(*) as total FROM salesProfitItem WHERE SalesOrderNumber = '$SONumber'";
+        $item_count_result = mysqli_query($connect, $item_count_query);
+        $item_count_row = mysqli_fetch_assoc($item_count_result);
+        $item_limit = max(1, (int)$item_count_row['total']);
+        $sales_items = fetchItems($connect, $SONumber, $item_limit, 0);
 
         echo json_encode(
             array(

@@ -30,7 +30,8 @@ if($_SERVER['REQUEST_METHOD'] === 'POST'){
     $update_sales_status = "UPDATE salesOrder SET SOStatus = '7c44858e-1efc-11ef-a' WHERE SONumber = '$sales_number'";
     
     if(mysqli_query($connect, $insert_sppb_query) && mysqli_query($connect, $insert_sales_order_history_query) && mysqli_query($connect, $update_sales_status) ){
-        
+
+        $item_errors = array();
         for ($i = 1; $i <= $product_length; $i++) {
             $po_number = $_POST['PO_' . $i];
             $so_number = $_POST['SO_' . $i];
@@ -38,12 +39,29 @@ if($_SERVER['REQUEST_METHOD'] === 'POST'){
             $quantity = $_POST['quantity_' . $i];
             $price = $_POST['price_' . $i];
             $landed_cost = $_POST['landed_cost_' . $i];
-        
+
+            if (!is_numeric($landed_cost)) {
+                $item_errors[] = "Item $i: landed cost '$landed_cost' is not a valid number";
+                continue;
+            }
+
             // Inserting the item with the formatted date
             $insert_item_query = "INSERT INTO salesProfitItem (PONumber, SalesOrderNumber, ProductName, Quantity, Price, LandedCost) VALUES ('$po_number', '$so_number', '$product_name', '$quantity', '$price', '$landed_cost');";
-            mysqli_query($connect, $insert_item_query);
+            if (!mysqli_query($connect, $insert_item_query)) {
+                $item_errors[] = "Item $i: " . mysqli_error($connect);
+            }
         }
-        
+
+        if (!empty($item_errors)) {
+            http_response_code(500);
+            echo json_encode(
+                array(
+                    "StatusCode" => 500,
+                    'Status' => 'Error',
+                    "message" => "Profit header saved but some items failed: " . implode('; ', $item_errors)
+                )
+            );
+        }
 
     } else {
         http_response_code(500);
