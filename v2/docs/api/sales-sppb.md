@@ -1,6 +1,6 @@
 # Sales SPPB API
 
-> **Last updated:** 2026-07-20 18:58:14 WIB
+> **Last updated:** 2026-07-24 21:51:35 WIB
 > **Base URL:** `/api/v2/sales-sppb`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -64,6 +64,7 @@ List all sales SPPBs belonging to the authenticated company.
 | page           | int    | No       | 1       | Page number |
 | limit          | int    | No       | 10      | Items per page (max 100) |
 | search         | string | No       | —       | Search on `sppb_display_number` |
+| status_id      | string | No       | —       | Filter by `status_id`. Resolve this from `GET /api/v2/sales-status` (match on `status_name`) — do not hardcode it |
 | customer_id    | string | No       | —       | Filter by `customer_id` |
 | sales_order_id | string | No       | —       | Filter by `sales_order_id` |
 | date_from      | string (date) | No | —    | Filter `sppb_date >=` this date (`YYYY-MM-DD`) |

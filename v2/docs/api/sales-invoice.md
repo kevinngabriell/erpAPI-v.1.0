@@ -1,6 +1,6 @@
 # Sales Invoice API
 
-> **Last updated:** 2026-07-24 21:30:00 WIB
+> **Last updated:** 2026-07-24 21:51:35 WIB
 > **Base URL:** `/api/v2/sales-invoice`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -64,6 +64,7 @@ List all sales invoices belonging to the authenticated company.
 | page           | int    | No       | 1       | Page number |
 | limit          | int    | No       | 10      | Items per page (max 100) |
 | search         | string | No       | —       | Search on `invoice_display_number` |
+| status_id      | string | No       | —       | Filter by `status_id`. Resolve this from `GET /api/v2/sales-status` (match on `status_name`) — do not hardcode it |
 | customer_id    | string | No       | —       | Filter by `customer_id` |
 | sales_order_id | string | No       | —       | Filter by `sales_order_id` |
 | date_from      | string (date) | No | —    | Filter `invoice_date >=` this date (`YYYY-MM-DD`) |
@@ -568,7 +569,7 @@ The filename's `invoice_display_number` has any character outside `[A-Za-z0-9_-]
 - No enum constraints are enforced on any field other than `status_id`, which is server-resolved (see below) — never client-supplied.
 - **List and detail responses now include resolved names alongside their IDs** — `customer_name` (joined from `customer`), `so_display_number` (joined from `sales_order`), `do_display_number` (joined from `sales_delivery`), and `status_name` (joined from `sales_status`) are returned next to `customer_id`, `sales_order_id`, `sales_delivery_id`, and `status_id` respectively. The frontend no longer needs a separate lookup call just to display these values in a list or detail view; the IDs are still returned and still required for `PUT`/filter requests. `do_display_number` is `null` whenever `sales_delivery_id` is `null` (it's an optional link); the others may be `null` only if the referenced record was deleted.
 - **`created_by`, `updated_by`, and `approved_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on both the sales invoice itself and its items. Previously `created_by`/`updated_by` held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by`/`approved_by` are `null` until the record has actually been updated/approved; `created_by` can be `null` only if the creating user has since been deleted.
-- **`status_id` is a server-resolved field, not client-supplied**, matching the pattern already used by `sales-order`/`sales-sppb`/`sales-delivery`/`sales-profit`: `POST` sets it to `"Draft"`, `PATCH .../approve` sets it to `"Approved"`, `PATCH .../reject` sets it to `"Rejected"`, `PATCH .../revise` sets it back to `"Draft"`. `PUT` cannot change `status_id` at all. Resolved by matching `sales_status.status_name` — the frontend never needs to know or send a `sales_status.id` UUID.
+- **`status_id` is a server-resolved field, not client-supplied**, matching the pattern already used by `sales-order`/`sales-sppb`/`sales-delivery`/`sales-profit`: `POST` sets it to `"Draft"`, `PATCH .../approve` sets it to `"Approved"`, `PATCH .../reject` sets it to `"Rejected"`, `PATCH .../revise` sets it back to `"Draft"`. `PUT` cannot change `status_id` at all. Resolved by matching `sales_status.status_name` — the frontend never needs to know or send a `sales_status.id` UUID. `GET /api/v2/sales-invoice` accepts `status_id` as a read-only filter; resolve it from `GET /api/v2/sales-status` at request time.
 - `approve` sets `approved_by` and `approved_at`; `reject` and `revise` do not. If `sales_status` is ever missing a `Draft`/`Approved`/`Rejected` row (non-deleted), the corresponding endpoint returns `500` naming the missing status — a master-data configuration problem, not a client error.
 - `revise` only works when the current status is `Rejected` — there is no "un-approve" action; approved invoices cannot be reverted to `Draft` through the API.
 - **Every sales invoice that existed before `status_id` was added has been backfilled to `Draft`** (200 rows on dev, as of the migration that introduced this field) — this was a deliberate choice, not an inference: pre-existing invoices are treated as not-yet-approved rather than grandfathered in as already-approved. Expect them to appear in any "pending approval" view built around `status_name = 'Draft'`. See `v2/docs/migrations/v27_sales_invoice_approval_schema.md`.

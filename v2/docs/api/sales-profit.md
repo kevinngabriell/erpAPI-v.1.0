@@ -1,6 +1,6 @@
 # Sales Profit API
 
-> **Last updated:** 2026-07-23 23:15:00 WIB
+> **Last updated:** 2026-07-24 21:51:35 WIB
 > **Base URL:** `/api/v2/sales-profit`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -33,6 +33,7 @@ List all sales profit records belonging to the authenticated company.
 | page           | int    | No       | 1       | Page number |
 | limit          | int    | No       | 10      | Items per page (max 100) |
 | search         | string | No       | —       | Search on the linked sales order's `so_display_number` (left-joined) |
+| status_id      | string | No       | —       | Filter by `status_id`. Resolve this from `GET /api/v2/sales-status` (match on `status_name`) — do not hardcode it |
 | customer_id    | string | No       | —       | Filter by `customer_id` |
 | sales_order_id | string | No       | —       | Filter by `sales_order_id` |
 | date_from      | string (date) | No | —    | Filter `created_at >=` this date (`YYYY-MM-DD`, start of day) |
@@ -532,7 +533,7 @@ The filename's `so_display_number` has any character outside `[A-Za-z0-9_-]` rep
 - The list endpoint (`GET /api/v2/sales-profit`) does not include the nested `items` array; only the detail endpoint (`GET /api/v2/sales-profit/{id}`) does. The create response only returns `sales_profit_id`.
 - Unlike sales SPPB, this module has no unique display-number field and no duplicate (409) check on create.
 - `price` and `landed_cost` are stored exactly as submitted by the client — the API does not calculate a profit or margin field anywhere in the JSON response; any profit/margin figure must be derived by the consumer from `price` and `landed_cost`. The `.xlsx` export is the one place profit/margin is computed server-side, for display purposes only — it does not persist those computed values back to the database.
-- **`status_id` is a server-resolved field, not client-supplied**, matching the pattern already used by sales-order: `POST` sets it to `"Draft"`, `PATCH .../approve` sets it to `"Approve"`, `PATCH .../reject` sets it to `"Rejected"`, `PATCH .../revise` sets it back to `"Draft"`. `PUT` cannot change `status_id` at all. Resolved by matching `sales_status.status_name` — the frontend never needs to know or send a `sales_status.id` UUID. `GET /api/v2/sales-profit` does not currently expose `status_id` as a list filter (unlike sales-order/sales-sppb).
+- **`status_id` is a server-resolved field, not client-supplied**, matching the pattern already used by sales-order: `POST` sets it to `"Draft"`, `PATCH .../approve` sets it to `"Approve"`, `PATCH .../reject` sets it to `"Rejected"`, `PATCH .../revise` sets it back to `"Draft"`. `PUT` cannot change `status_id` at all. Resolved by matching `sales_status.status_name` — the frontend never needs to know or send a `sales_status.id` UUID. `GET /api/v2/sales-profit` accepts `status_id` as a read-only filter; resolve it from `GET /api/v2/sales-status` at request time.
 - `approve` sets `approved_by` and `approved_at`; `reject` and `revise` do not. If `sales_status` is ever missing a `Draft`/`Approve`/`Rejected` row (non-deleted), the corresponding endpoint returns `500` naming the missing status — a master-data configuration problem, not a client error.
 - `revise` only works when the current status is `Rejected` — there is no "un-approve" action; approved records cannot be reverted to `Draft` through the API.
 - **The `.xlsx` export's "Kurs" value is not stored on the sales profit record itself** — `sales_profit_item` has no `kurs` field. It is looked up from the earliest (by `created_at`) non-deleted item on the linked `sales_order_item`, mirroring how the v1 script joined `salesOrderItem.Kurs`. Shows `N/A` if no such item exists.

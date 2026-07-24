@@ -7,6 +7,20 @@ Intended audience: frontend developers.
 
 ---
 
+## [2026-07-24 21:51:35 WIB] — Status filter added to sales-invoice, sales-delivery, and sales-profit lists
+
+### Added
+- `GET /api/v2/sales-invoice` — new `status_id` query parameter, filters on `sales_invoice.status_id`.
+- `GET /api/v2/sales-delivery` — new `status_id` query parameter, filters on `sales_delivery.status_id`.
+- `GET /api/v2/sales-profit` — new `status_id` query parameter, filters on `sales_profit.status_id`.
+
+### Notes for frontend
+- Resolve the `id` for a given `status_name` via `GET /api/v2/sales-status` at request time — do not hardcode it (the same status name has a different `id` per environment).
+- This brings all five sales list endpoints (`sales-order`, `sales-delivery`, `sales-invoice`, `sales-sppb`, `sales-profit`) to parity on `status_id` filtering — `sales-order` and `sales-sppb` already supported it.
+- `status_name` was already present on all five list responses (joined from `sales_status`) — no change there, confirming what was already live.
+
+---
+
 ## [2026-07-24 21:30:00 WIB] — Auto-generated document numbers for sales delivery and sales invoice
 
 ### Added

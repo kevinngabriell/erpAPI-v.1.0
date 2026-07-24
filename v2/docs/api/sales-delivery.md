@@ -1,6 +1,6 @@
 # Sales Delivery API
 
-> **Last updated:** 2026-07-24 00:00:00 WIB
+> **Last updated:** 2026-07-24 21:51:35 WIB
 > **Base URL:** `/api/v2/sales-delivery`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -64,6 +64,7 @@ List all sales deliveries belonging to the authenticated company.
 | page           | int    | No       | 1       | Page number |
 | limit          | int    | No       | 10      | Items per page (max 100) |
 | search         | string | No       | —       | Search on `do_display_number` |
+| status_id      | string | No       | —       | Filter by `status_id`. Resolve this from `GET /api/v2/sales-status` (match on `status_name`) — do not hardcode it |
 | customer_id    | string | No       | —       | Filter by `customer_id` |
 | sales_order_id | string | No       | —       | Filter by `sales_order_id` |
 | date_from      | string (date) | No | —    | Filter `delivery_date >=` this date (`YYYY-MM-DD`) |
@@ -566,7 +567,7 @@ The filename's `do_display_number` has any character outside `[A-Za-z0-9_-]` rep
 - Header + items creation is wrapped in a single database transaction — either the sales delivery and all its items are created together, or nothing is saved.
 - Create/update/delete write `audit_log` rows with action `created`/`updated`/`deleted`; approve/reject/revise write `approved`/`rejected`/`revised`. Query this history via `GET /api/v2/audit-log?module=sales_delivery&reference_id={id}` — see the `audit-log` module doc.
 - The list endpoint (`GET /api/v2/sales-delivery`) does not include the nested `items` array; only the detail endpoint (`GET /api/v2/sales-delivery/{id}`) does. The create response only returns `sales_delivery_id`.
-- **`status_id` is a server-resolved field, not client-supplied**, matching the pattern already used by sales-order: `POST` sets it to `"Draft"`, `PATCH .../approve` sets it to `"Approve"`, `PATCH .../reject` sets it to `"Rejected"`, `PATCH .../revise` sets it back to `"Draft"`. `PUT` cannot change `status_id` at all. Resolved by matching `sales_status.status_name` — the frontend never needs to know or send a `sales_status.id` UUID. `GET /api/v2/sales-delivery` does not currently expose `status_id` as a list filter (unlike sales-order/sales-sppb).
+- **`status_id` is a server-resolved field, not client-supplied**, matching the pattern already used by sales-order: `POST` sets it to `"Draft"`, `PATCH .../approve` sets it to `"Approve"`, `PATCH .../reject` sets it to `"Rejected"`, `PATCH .../revise` sets it back to `"Draft"`. `PUT` cannot change `status_id` at all. Resolved by matching `sales_status.status_name` — the frontend never needs to know or send a `sales_status.id` UUID. `GET /api/v2/sales-delivery` accepts `status_id` as a read-only filter; resolve it from `GET /api/v2/sales-status` at request time.
 - `approve` sets `approved_by` and `approved_at`; `reject` and `revise` do not. If `sales_status` is ever missing a `Draft`/`Approve`/`Rejected` row (non-deleted), the corresponding endpoint returns `500` naming the missing status — a master-data configuration problem, not a client error.
 - `revise` only works when the current status is `Rejected` — there is no "un-approve" action; approved deliveries cannot be reverted to `Draft` through the API.
 - **`GET /api/v2/sales-delivery/{id}/export` downloads a formatted `.xlsx`**, replicating the legacy v1 letterhead-positioned layout. Two v1 quirks were fixed rather than copied verbatim: cell `G5` (previously duplicated the customer's billing address due to a copy-paste bug in the v1 script) now shows `ship_to_address`; and the fixed signer name hardcoded in v1 (`'Intan'`, cell `G24`) now shows the record's resolved `approved_by` name instead, falling back to `-` if not yet approved.

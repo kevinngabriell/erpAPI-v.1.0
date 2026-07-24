@@ -52,6 +52,10 @@ function getAllSalesDeliveries($conn, $company_id, $params) {
     if ($search) {
         $where .= " AND sd.do_display_number LIKE '%$search%'";
     }
+    if (isset($params['status_id']) && trim($params['status_id']) !== '') {
+        $status_id = mysqli_real_escape_string($conn, $params['status_id']);
+        $where .= " AND sd.status_id = '$status_id'";
+    }
     if (isset($params['customer_id']) && trim($params['customer_id']) !== '') {
         $customer_id = mysqli_real_escape_string($conn, $params['customer_id']);
         $where .= " AND sd.customer_id = '$customer_id'";
