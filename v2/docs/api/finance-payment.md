@@ -1,6 +1,6 @@
 # Finance Payment API
 
-> **Last updated:** 2026-07-21 22:47:55 WIB
+> **Last updated:** 2026-07-24 21:05:00 WIB
 > **Base URL:** `/api/v2/finance-payment`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -99,13 +99,13 @@ List all finance payments belonging to the authenticated company.
 
 ### POST `/api/v2/finance-payment`
 
-Create a new finance payment.
+Create a new finance payment. `invoice_number` must match an existing, non-deleted `sales_invoice.invoice_display_number` in the same company, and that sales invoice's `status_name` must be `Approved` — creation is rejected otherwise.
 
 #### Request body (`application/json`)
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| invoice_number | string | Yes | — |
+| invoice_number | string | Yes | Must match an existing sales invoice's `invoice_display_number` in the same company, and that invoice must currently be `Approved` |
 | paid_amount | number | Yes | — |
 | customer_id | string | No | If provided, must reference an existing, non-deleted customer in the company |
 | supplier_id | string | No | If provided, must reference an existing, non-deleted supplier in the company |
@@ -143,7 +143,27 @@ Create a new finance payment.
 }
 ```
 
+```json
+{
+  "status_code": 400,
+  "status_message": "Sales invoice must be approved before a payment can be recorded",
+  "data": []
+}
+```
+
+Returned when `invoice_number` matches a real sales invoice, but that invoice's current status is not `Approved` (e.g. still `Draft` or `Rejected`).
+
 #### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Sales invoice not found",
+  "data": []
+}
+```
+
+Returned when `invoice_number` does not match any non-deleted `sales_invoice.invoice_display_number` in the company.
 
 ```json
 {
@@ -462,6 +482,7 @@ Rejects the payment. Either signer (owner or treasury permission holder) can rej
 
 ## Notes
 
+- **`POST` (create) now requires `invoice_number` to resolve to an `Approved` sales invoice.** `invoice_number` is still a free-text field, not a foreign key — there is no `sales_invoice_id` column on `finance_payment` — but on create it is matched against `sales_invoice.invoice_display_number` (scoped to the company) purely for this validation. `404` if no such invoice exists, `400` if it exists but isn't `Approved`. This check runs on create only; `PUT` does not re-validate `invoice_number` against `sales_invoice` if it's changed (see the existing note below on update not re-validating FK-like fields).
 - No enum-constrained fields exist on this module. `customer_id` and `supplier_id` are optional and, only when provided, are validated for existence against non-deleted records in the company; neither is required to be mutually exclusive.
 - On update, `customer_id`, `supplier_id`, and `bank_account_id` are not re-validated for existence — only re-checked for emptiness (cleared to `null` if sent empty).
 - create/update/delete write `audit_log` rows with action `created`/`updated`/`deleted`; approve writes `approved_owner` or `approved_treasury` depending on which slot was filled; reject writes `rejected`. Query this history via `GET /api/v2/audit-log?module=finance_payment&reference_id={id}` — see the `audit-log` module doc.

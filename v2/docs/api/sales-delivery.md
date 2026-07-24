@@ -1,6 +1,6 @@
 # Sales Delivery API
 
-> **Last updated:** 2026-07-20 18:58:14 WIB
+> **Last updated:** 2026-07-24 00:00:00 WIB
 > **Base URL:** `/api/v2/sales-delivery`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -10,6 +10,7 @@
 
 | Method | Path | Description |
 |--------|------|-------------|
+| GET    | `/api/v2/sales-delivery/generate-number` | Generate the next `do_display_number` for the authenticated company |
 | GET    | `/api/v2/sales-delivery` | List all sales deliveries (paginated) |
 | POST   | `/api/v2/sales-delivery` | Create a new sales delivery (with items) |
 | GET    | `/api/v2/sales-delivery/{id}` | Get sales delivery detail (with items) |
@@ -19,6 +20,36 @@
 | PATCH  | `/api/v2/sales-delivery/{id}/reject` | Reject a sales delivery |
 | PATCH  | `/api/v2/sales-delivery/{id}/revise` | Move a rejected sales delivery back to Draft |
 | GET    | `/api/v2/sales-delivery/{id}/export` | Download the sales delivery (surat jalan) as an `.xlsx` file |
+
+---
+
+### GET `/api/v2/sales-delivery/generate-number`
+
+Generate the next `do_display_number` for the authenticated company. This is a read-only preview — it does not reserve or persist the number; it is not guaranteed to remain the next number if another sales delivery is created in the meantime. Call it right before submitting the `POST` request.
+
+Format: `{seq}/{company_code}-DO/{roman_month}/{year}` — e.g. `001/VIK-DO/VII/2026`. `seq` is a zero-padded 3-digit counter that resets to `001` at the start of each calendar month and is scoped per company; `company_code` is the authenticated company's code (`app_company.company_code`, uppercased); the month is a Roman numeral (`I`–`XII`).
+
+#### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Sales delivery number generated successfully",
+  "data": {
+    "do_display_number": "001/VIK-DO/VII/2026"
+  }
+}
+```
+
+#### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Company not found",
+  "data": []
+}
+```
 
 ---
 

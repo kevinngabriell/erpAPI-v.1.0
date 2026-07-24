@@ -15,6 +15,33 @@ function getSalesStatusIdByName($conn, $status_name) {
     return $row ? $row['id'] : null;
 }
 
+function getCompanyCode($conn, $company_id) {
+    $result = mysqli_query($conn, "SELECT company_code FROM " . CORE_SCHEMA . ".app_company WHERE company_id = '$company_id' LIMIT 1");
+    $row = $result ? mysqli_fetch_assoc($result) : null;
+    return $row ? strtoupper($row['company_code']) : null;
+}
+
+function generateSalesDeliveryNumber($conn, $company_id) {
+    $company_code = getCompanyCode($conn, $company_id);
+    if (!$company_code) {
+        jsonResponse(404, 'Company not found');
+        return;
+    }
+
+    $roman_months = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII'];
+    $roman_month  = $roman_months[(int)date('n') - 1];
+    $year         = date('Y');
+
+    $pattern      = mysqli_real_escape_string($conn, "%/$company_code-DO/$roman_month/$year");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".sales_delivery WHERE company_id = '$company_id' AND do_display_number LIKE '$pattern'");
+    $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
+
+    $sequence          = str_pad((string)($total + 1), 3, '0', STR_PAD_LEFT);
+    $do_display_number = "$sequence/$company_code-DO/$roman_month/$year";
+
+    jsonResponse(200, 'Sales delivery number generated successfully', ['do_display_number' => $do_display_number]);
+}
+
 function getAllSalesDeliveries($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
     $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
@@ -301,9 +328,9 @@ function approveSalesDelivery($conn, $sales_delivery_id, $input, $username, $com
             'source_module'      => 'sales_delivery',
             'source_document_id' => $sales_delivery_id,
             'title'              => 'Sales Delivery Disetujui',
-            'body'               => "{$sales_delivery['do_display_number']} telah disetujui oleh $approver_name pada " . formatIndonesianDate($now) . ', ' . date('H:i', strtotime($now)) . " WIB.\n\n" .
+            'body'               => "Dokumen Sales Delivery *{$sales_delivery['do_display_number']}* telah *disetujui* oleh $approver_name pada " . formatIndonesianDate($now) . ', ' . date('H:i', strtotime($now)) . " WIB.\n\n" .
                                      "Customer: {$sales_delivery['customer_name']}\n\n" .
-                                     "Lihat detail: $detail_link",
+                                     "Lihat detail dokumen pada link berikut:\n$detail_link",
             'created_by'         => $username,
             'recipients'         => [$sales_delivery['created_by']],
         ]);
@@ -345,7 +372,7 @@ function rejectSalesDelivery($conn, $sales_delivery_id, $input, $username, $comp
             'source_module'      => 'sales_delivery',
             'source_document_id' => $sales_delivery_id,
             'title'              => 'Sales Delivery Ditolak',
-            'body'               => "{$sales_delivery['do_display_number']} ditolak oleh $rejector_name.$reason_text",
+            'body'               => "Dokumen Sales Delivery *{$sales_delivery['do_display_number']}* *ditolak* oleh $rejector_name.$reason_text",
             'created_by'         => $username,
             'recipients'         => [$sales_delivery['created_by']],
         ]);
@@ -461,7 +488,11 @@ $sub_action         = $parts[4] ?? '';
 try {
     $conn = getConn();
 
-    if ($sales_delivery_id && $sub_action === 'export') {
+    if ($sales_delivery_id === 'generate-number' && $sub_action === '') {
+        if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
+        generateSalesDeliveryNumber($conn, $company_id);
+
+    } elseif ($sales_delivery_id && $sub_action === 'export') {
         if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
         exportSalesDelivery($conn, $sales_delivery_id, $company_id);
 

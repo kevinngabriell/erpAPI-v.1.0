@@ -32,6 +32,10 @@ function getAllPurchaseOrders($conn, $company_id, $params) {
         $supplier_id = mysqli_real_escape_string($conn, $params['supplier_id']);
         $where .= " AND po.supplier_id = '$supplier_id'";
     }
+    if (isset($params['type_id']) && trim($params['type_id']) !== '') {
+        $type_id = mysqli_real_escape_string($conn, $params['type_id']);
+        $where .= " AND po.type_id = '$type_id'";
+    }
     if (isset($params['date_from']) && trim($params['date_from']) !== '') {
         $date_from = mysqli_real_escape_string($conn, $params['date_from']);
         $where .= " AND po.po_date >= '$date_from'";
@@ -191,7 +195,7 @@ function createPurchaseOrder($conn, $input, $username, $company_id) {
             'source_module'      => 'purchase_order',
             'source_document_id' => $po_id,
             'title'              => 'Purchase Order Menunggu Approval',
-            'body'               => "$po_display_number butuh approval Anda. Silahkan klik link dibawah untuk menyetujui:",
+            'body'               => "Dokumen Purchase Order *$po_display_number* membutuhkan persetujuan Bapak/Ibu. Silakan klik link di bawah untuk meninjau dan menyetujui:",
             'created_by'         => $username,
             'recipients'         => resolveApprovalRecipients($conn, $company_id, 'purchase_order'),
         ]);
@@ -350,7 +354,7 @@ function approvePurchaseOrder($conn, $purchase_order_id, $input, $username, $com
             'source_module'      => 'purchase_order',
             'source_document_id' => $purchase_order_id,
             'title'              => 'Purchase Order Disetujui',
-            'body'               => "{$purchase_order['po_display_number']} sudah di-approve oleh $approver_name.",
+            'body'               => "Dokumen Purchase Order *{$purchase_order['po_display_number']}* telah *disetujui* oleh $approver_name.",
             'created_by'         => $username,
             'recipients'         => [$purchase_order['created_by']],
         ]);
@@ -392,7 +396,7 @@ function rejectPurchaseOrder($conn, $purchase_order_id, $input, $username, $comp
             'source_module'      => 'purchase_order',
             'source_document_id' => $purchase_order_id,
             'title'              => 'Purchase Order Ditolak',
-            'body'               => "{$purchase_order['po_display_number']} ditolak oleh $rejector_name.$reason_text",
+            'body'               => "Dokumen Purchase Order *{$purchase_order['po_display_number']}* *ditolak* oleh $rejector_name.$reason_text",
             'created_by'         => $username,
             'recipients'         => [$purchase_order['created_by']],
         ]);

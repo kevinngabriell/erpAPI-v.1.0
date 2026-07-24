@@ -353,10 +353,10 @@ function approveSalesProfit($conn, $sales_profit_id, $input, $username, $company
             'source_module'      => 'sales_profit',
             'source_document_id' => $sales_profit_id,
             'title'              => 'Sales Profit Disetujui',
-            'body'               => "Profit {$sales_profit['so_display_number']} telah disetujui oleh $approver_name pada " . formatIndonesianDate($now) . ', ' . date('H:i', strtotime($now)) . " WIB.\n\n" .
+            'body'               => "Dokumen Sales Profit *{$sales_profit['so_display_number']}* telah *disetujui* oleh $approver_name pada " . formatIndonesianDate($now) . ', ' . date('H:i', strtotime($now)) . " WIB.\n\n" .
                                      "Customer: {$sales_profit['customer_name']}\n" .
                                      'Total Profit: Rp ' . number_format($total_profit, 0, ',', '.') . "\n\n" .
-                                     "Lihat detail: $detail_link",
+                                     "Lihat detail dokumen pada link berikut:\n$detail_link",
             'created_by'         => $username,
             'recipients'         => [$sales_profit['created_by']],
         ]);
@@ -401,7 +401,7 @@ function rejectSalesProfit($conn, $sales_profit_id, $input, $username, $company_
             'source_module'      => 'sales_profit',
             'source_document_id' => $sales_profit_id,
             'title'              => 'Sales Profit Ditolak',
-            'body'               => "Profit {$sales_profit['so_display_number']} ditolak oleh $rejector_name.$reason_text",
+            'body'               => "Dokumen Sales Profit *{$sales_profit['so_display_number']}* *ditolak* oleh $rejector_name.$reason_text",
             'created_by'         => $username,
             'recipients'         => [$sales_profit['created_by']],
         ]);

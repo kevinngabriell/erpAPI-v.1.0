@@ -218,7 +218,9 @@ function notify($conn, array $event) {
                 continue;
             }
 
-            $wa_text = $body;
+            $recipient_name = resolveDisplayName($conn, $recipient_user_id);
+            $greeting       = 'Halo Bapak/Ibu' . ($recipient_name ? " $recipient_name" : '') . ",\n\n";
+            $wa_text        = $greeting . $body;
             if ($type === 'approval_pending') {
                 $token = generateApprovalToken($conn, $company_id, $notification_id, $source_module, $source_document_id, $recipient_user_id, $username);
                 $wa_text .= "\n\n" . rtrim(APPROVAL_BASE_URL, '/') . '/approve/' . $token;

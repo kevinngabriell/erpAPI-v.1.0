@@ -204,7 +204,7 @@ function createSalesOrder($conn, $input, $username, $company_id) {
             'source_module'      => 'sales_order',
             'source_document_id' => $sales_order_id,
             'title'              => 'Sales Order Menunggu Approval',
-            'body'               => "$so_display_number butuh approval Anda. Silahkan klik link dibawah untuk menyetujui:",
+            'body'               => "Dokumen Sales Order *$so_display_number* membutuhkan persetujuan Bapak/Ibu. Silakan klik link di bawah untuk meninjau dan menyetujui:",
             'created_by'         => $username,
             'recipients'         => resolveApprovalRecipients($conn, $company_id, 'sales_order'),
         ]);
@@ -352,10 +352,10 @@ function approveSalesOrder($conn, $sales_order_id, $input, $username, $company_i
             'source_module'      => 'sales_order',
             'source_document_id' => $sales_order_id,
             'title'              => 'Sales Order Disetujui',
-            'body'               => "{$sales_order['so_display_number']} telah disetujui oleh $approver_name pada " . formatIndonesianDate($now) . ', ' . date('H:i', strtotime($now)) . " WIB.\n\n" .
+            'body'               => "Dokumen Sales Order *{$sales_order['so_display_number']}* telah *disetujui* oleh $approver_name pada " . formatIndonesianDate($now) . ', ' . date('H:i', strtotime($now)) . " WIB.\n\n" .
                                      "Customer: {$sales_order['customer_name']}\n" .
                                      'Total: Rp ' . number_format($total, 0, ',', '.') . "\n\n" .
-                                     "Lihat detail: $detail_link",
+                                     "Lihat detail dokumen pada link berikut:\n$detail_link",
             'created_by'         => $username,
             'recipients'         => [$sales_order['created_by']],
         ]);
@@ -397,7 +397,7 @@ function rejectSalesOrder($conn, $sales_order_id, $input, $username, $company_id
             'source_module'      => 'sales_order',
             'source_document_id' => $sales_order_id,
             'title'              => 'Sales Order Ditolak',
-            'body'               => "{$sales_order['so_display_number']} ditolak oleh $rejector_name.$reason_text",
+            'body'               => "Dokumen Sales Order *{$sales_order['so_display_number']}* *ditolak* oleh $rejector_name.$reason_text",
             'created_by'         => $username,
             'recipients'         => [$sales_order['created_by']],
         ]);

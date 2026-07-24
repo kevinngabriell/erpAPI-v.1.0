@@ -157,7 +157,7 @@ function createFinanceTransaction($conn, $input, $username, $company_id) {
             'source_module'      => 'finance_transaction',
             'source_document_id' => $finance_transaction_id,
             'title'              => 'Finance Transaction Menunggu Approval',
-            'body'               => "$voucher_display butuh approval Anda (Finance — perlu 2 persetujuan). Silahkan klik link dibawah untuk menyetujui:",
+            'body'               => "Dokumen Finance Transaction *$voucher_display* membutuhkan persetujuan Bapak/Ibu (memerlukan 2 tahap persetujuan). Silakan klik link di bawah untuk meninjau dan menyetujui:",
             'created_by'         => $username,
             'recipients'         => resolveApprovalRecipients($conn, $company_id, 'finance_transaction'),
         ]);
@@ -301,7 +301,7 @@ function approveFinanceTransaction($conn, $finance_transaction_id, $input, $user
             'source_module'      => 'finance_transaction',
             'source_document_id' => $finance_transaction_id,
             'title'              => 'Finance Transaction Fully Approved',
-            'body'               => "$voucher_display sudah fully approved.",
+            'body'               => "Dokumen Finance Transaction *$voucher_display* telah *disetujui sepenuhnya* (fully approved).",
             'created_by'         => $username,
             'recipients'         => $doc ? [$doc['created_by']] : [],
         ]);
@@ -316,7 +316,7 @@ function approveFinanceTransaction($conn, $finance_transaction_id, $input, $user
             'source_module'      => 'finance_transaction',
             'source_document_id' => $finance_transaction_id,
             'title'              => 'Finance Transaction — Menunggu Approval Ke-2',
-            'body'               => "$voucher_display sudah disetujui $approver_name. Tinggal persetujuan Anda untuk menyelesaikan approval ini:",
+            'body'               => "Dokumen Finance Transaction *$voucher_display* telah disetujui oleh $approver_name. Diperlukan persetujuan Bapak/Ibu untuk menyelesaikan proses ini. Silakan klik link di bawah untuk meninjau dan menyetujui:",
             'created_by'         => $username,
             'recipients'         => $other_recipients,
         ]);
@@ -328,7 +328,7 @@ function approveFinanceTransaction($conn, $finance_transaction_id, $input, $user
                 'source_module'      => 'finance_transaction',
                 'source_document_id' => $finance_transaction_id,
                 'title'              => 'Finance Transaction — Progress Approval',
-                'body'               => "$voucher_display: $approver_name sudah approve. Menunggu approval ke-2.",
+                'body'               => "Dokumen Finance Transaction *$voucher_display* telah disetujui oleh $approver_name. Menunggu persetujuan tahap ke-2.",
                 'created_by'         => $username,
                 'recipients'         => [$doc['created_by']],
             ]);
@@ -365,7 +365,7 @@ function rejectFinanceTransaction($conn, $finance_transaction_id, $input, $usern
         'source_module'      => 'finance_transaction',
         'source_document_id' => $finance_transaction_id,
         'title'              => 'Finance Transaction Ditolak',
-        'body'               => "$voucher_display ditolak oleh $rejector_name.$reason_text",
+        'body'               => "Dokumen Finance Transaction *$voucher_display* *ditolak* oleh $rejector_name.$reason_text",
         'created_by'         => $username,
         'recipients'         => $doc ? [$doc['created_by']] : [],
     ]);

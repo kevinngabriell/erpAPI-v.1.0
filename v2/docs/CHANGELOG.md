@@ -7,6 +7,57 @@ Intended audience: frontend developers.
 
 ---
 
+## [2026-07-24 21:30:00 WIB] — Auto-generated document numbers for sales delivery and sales invoice
+
+### Added
+- `GET /api/v2/sales-delivery/generate-number` — returns the next `do_display_number` for the authenticated company, in the same format used by sales order/SPPB: `{seq}/{company_code}-DO/{roman_month}/{year}` (e.g. `001/VIK-DO/VII/2026`). Read-only preview, does not reserve the number.
+- `GET /api/v2/sales-invoice/generate-number` — returns the next `invoice_display_number` for the authenticated company, format `{seq}/{company_code}-INV/{roman_month}/{year}` (e.g. `001/VIK-INV/VII/2026`). Read-only preview, does not reserve the number.
+
+### Notes for frontend
+- Both endpoints work exactly like the existing `GET /api/v2/sales-order/generate-number` and `GET /api/v2/sales-sppb/generate-number` — call them right before showing the create form (or right before submit) and pre-fill `do_display_number` / `invoice_display_number`. The `POST` endpoints still require the field and still enforce uniqueness (`409` on duplicate), so treat the generated value as a suggestion, not a reservation.
+- No existing endpoint, field, or response shape changed — this only adds two new `GET` routes.
+
+---
+
+## [2026-07-24 21:06:53 WIB] — Finance payment creation now requires an approved sales invoice
+
+### Updated
+- `POST /api/v2/finance-payment` — `invoice_number` is now validated against `sales_invoice.invoice_display_number` (same company, not deleted). Returns `404 Sales invoice not found` if there's no match, or `400 Sales invoice must be approved before a payment can be recorded` if the matching invoice's status isn't `Approved` yet. Previously `invoice_number` was accepted as any free-text string with no existence or status check.
+
+### Notes for frontend
+- This closes a gap where a payment could be recorded against an invoice that was still `Draft` or had been `Rejected`. Make sure any "record payment" UI only offers invoices whose `status_name` is `Approved` (see the `sales-invoice` doc), so users don't hit the new `400` after filling out the whole form.
+- `invoice_number` is still a plain string field on `finance_payment` — there is no `sales_invoice_id` FK — this is a create-time check only, not a stored relationship.
+
+---
+
+## [2026-07-24 20:56:15 WIB] — Purchase order list can now be filtered by type (Local/Import)
+
+### Added
+- `GET /api/v2/purchase-order` — new `type_id` query parameter, filters on `purchase_order.type_id`. Use `GET /api/v2/purchase-type` to look up the `id` for `"Local"` vs `"Import"` (or any other configured type).
+
+### Notes for frontend
+- This replaces the need for any legacy Local/Import purchase order screen to query a separate endpoint — `GET /api/v2/purchase-order?type_id={local_or_import_type_id}` now returns the same live data as the unfiltered list, just scoped to one type.
+
+---
+
+## [2026-07-24 20:54:35 WIB] — Sales invoice gets an approval workflow (approve/reject/revise/export, `status_name`)
+
+### Added
+- `PATCH /api/v2/sales-invoice/{id}/approve` — approves a sales invoice. Sets `status_id` to `Approved`, plus `approved_by`/`approved_at`. Optional `notes` field recorded on the audit log entry.
+- `PATCH /api/v2/sales-invoice/{id}/reject` — rejects a sales invoice. Sets `status_id` to `Rejected`. Optional `notes` field.
+- `PATCH /api/v2/sales-invoice/{id}/revise` — moves a `Rejected` invoice back to `Draft` so it can be resubmitted. Returns `400` if the invoice's current status isn't `Rejected`.
+- `GET /api/v2/sales-invoice/{id}/export` — downloads the invoice as a formatted `.xlsx` file (header info, item table, totals, signature block).
+- `GET /api/v2/sales-invoice` (list) and `GET /api/v2/sales-invoice/{id}` (detail) — responses now include `status_id`, `status_name` (joined from `sales_status`), `approved_by` (resolved to the approver's full name, `null` until approved), and `approved_at`.
+- `POST /api/v2/sales-invoice` — now server-sets `status_id` to `Draft` on create; the client does not send `status_id`.
+
+### Notes for frontend
+- This is what your Approve/Reject buttons should gate on: show them only when `status_name === 'Draft'`; show a Revise action only when `status_name === 'Rejected'`.
+- Every sales invoice that existed before this change (200 rows on dev) has been backfilled to `status_name: 'Draft'` — expect them to appear in any "pending approval" view built around that status. This was a deliberate choice (existing invoices are treated as not-yet-approved, not grandfathered in), not a bug.
+- Same pattern as `sales-order`/`sales-sppb`/`sales-delivery`/`sales-profit` — if you've already wired up approve/reject/revise/export for those modules, `sales-invoice` behaves identically.
+- See `v2/docs/migrations/v27_sales_invoice_approval_schema.md` for the schema change. Applied to dev; **prod not yet applied** — same sign-off gate as every other schema change in this project.
+
+---
+
 ## [2026-07-23 23:15:00 WIB] — Sales profit `PUT` can now correct item data before resubmit
 
 ### Updated

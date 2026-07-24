@@ -1,6 +1,6 @@
 # Sales Invoice API
 
-> **Last updated:** 2026-07-11 18:49:02 WIB
+> **Last updated:** 2026-07-24 21:30:00 WIB
 > **Base URL:** `/api/v2/sales-invoice`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -10,11 +10,46 @@
 
 | Method | Path | Description |
 |--------|------|-------------|
+| GET    | `/api/v2/sales-invoice/generate-number` | Generate the next `invoice_display_number` for the authenticated company |
 | GET    | `/api/v2/sales-invoice` | List all sales invoices (paginated) |
 | POST   | `/api/v2/sales-invoice` | Create a new sales invoice (with items) |
 | GET    | `/api/v2/sales-invoice/{id}` | Get sales invoice detail (with items) |
 | PUT    | `/api/v2/sales-invoice/{id}` | Update a sales invoice |
 | DELETE | `/api/v2/sales-invoice/{id}` | Delete a sales invoice |
+| PATCH  | `/api/v2/sales-invoice/{id}/approve` | Approve a sales invoice |
+| PATCH  | `/api/v2/sales-invoice/{id}/reject` | Reject a sales invoice |
+| PATCH  | `/api/v2/sales-invoice/{id}/revise` | Move a rejected sales invoice back to Draft |
+| GET    | `/api/v2/sales-invoice/{id}/export` | Download the sales invoice as an `.xlsx` file |
+
+---
+
+### GET `/api/v2/sales-invoice/generate-number`
+
+Generate the next `invoice_display_number` for the authenticated company. This is a read-only preview — it does not reserve or persist the number; it is not guaranteed to remain the next number if another sales invoice is created in the meantime. Call it right before submitting the `POST` request.
+
+Format: `{seq}/{company_code}-INV/{roman_month}/{year}` — e.g. `001/VIK-INV/VII/2026`. `seq` is a zero-padded 3-digit counter that resets to `001` at the start of each calendar month and is scoped per company; `company_code` is the authenticated company's code (`app_company.company_code`, uppercased); the month is a Roman numeral (`I`–`XII`).
+
+#### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Sales invoice number generated successfully",
+  "data": {
+    "invoice_display_number": "001/VIK-INV/VII/2026"
+  }
+}
+```
+
+#### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Company not found",
+  "data": []
+}
+```
 
 ---
 
@@ -56,6 +91,10 @@ List all sales invoices belonging to the authenticated company.
         "tax_invoice_number": "010.000-26.00000001",
         "ship_to_address": "Jl. Gatot Subroto No. 2, Jakarta",
         "bill_to_address": "Jl. Sudirman No. 1, Jakarta",
+        "status_id": "f6a7b8c9-d0e1-4f5a-3b4c-5d6e7f8a9b0c",
+        "status_name": "Draft",
+        "approved_by": null,
+        "approved_at": null,
         "created_by": "Budi Santoso",
         "created_at": "2026-07-01 10:00:00",
         "updated_by": null,
@@ -87,7 +126,7 @@ List all sales invoices belonging to the authenticated company.
 
 ### POST `/api/v2/sales-invoice`
 
-Create a new sales invoice together with its items.
+Create a new sales invoice together with its items. Server-side sets `status_id` to the `Draft` sales status — the client does not send `status_id`.
 
 #### Request body (`application/json`)
 
@@ -178,6 +217,18 @@ Create a new sales invoice together with its items.
 }
 ```
 
+#### Response `500 Internal Server Error`
+
+```json
+{
+  "status_code": 500,
+  "status_message": "Default sales status \"Draft\" is not configured",
+  "data": []
+}
+```
+
+Returned if `sales_status` has no non-deleted row with `status_name = 'Draft'` — a master-data configuration problem, not a client error.
+
 ---
 
 ### GET `/api/v2/sales-invoice/{id}`
@@ -210,6 +261,10 @@ Get detail of a single sales invoice, including its nested `items` array.
     "tax_invoice_number": "010.000-26.00000001",
     "ship_to_address": "Jl. Gatot Subroto No. 2, Jakarta",
     "bill_to_address": "Jl. Sudirman No. 1, Jakarta",
+    "status_id": "f6a7b8c9-d0e1-4f5a-3b4c-5d6e7f8a9b0c",
+    "status_name": "Draft",
+    "approved_by": null,
+    "approved_at": null,
     "created_by": "Budi Santoso",
     "created_at": "2026-07-01 10:00:00",
     "updated_by": null,
@@ -248,7 +303,7 @@ Get detail of a single sales invoice, including its nested `items` array.
 
 ### PUT `/api/v2/sales-invoice/{id}`
 
-Update a sales invoice. Only send the fields you want to change. Does not update items.
+Update a sales invoice. Only send the fields you want to change. Does not update items. `status_id` is not updatable here — use `PATCH .../approve` or `PATCH .../reject` to change status.
 
 #### Path parameters
 
@@ -331,6 +386,167 @@ Soft-deletes the sales invoice (sets `deleted_at`) — it will no longer appear 
 
 ---
 
+### PATCH `/api/v2/sales-invoice/{id}/approve`
+
+Approve a sales invoice. Server-side sets `status_id` to the `Approved` sales status, plus `approved_by`, `approved_at`. The client does not send `status_id`.
+
+#### Path parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| id | string | The sales invoice ID |
+
+#### Request body (`application/json`)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| notes | string | No | Optional note recorded on the audit log entry |
+
+#### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Sales invoice approved successfully",
+  "data": []
+}
+```
+
+#### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Sales invoice not found",
+  "data": []
+}
+```
+
+---
+
+### PATCH `/api/v2/sales-invoice/{id}/reject`
+
+Reject a sales invoice. Server-side sets `status_id` to the `Rejected` sales status (does not set `approved_by`/`approved_at`). The client does not send `status_id`.
+
+#### Path parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| id | string | The sales invoice ID |
+
+#### Request body (`application/json`)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| notes | string | No | Optional note recorded on the audit log entry |
+
+#### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Sales invoice rejected successfully",
+  "data": []
+}
+```
+
+#### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Sales invoice not found",
+  "data": []
+}
+```
+
+---
+
+### PATCH `/api/v2/sales-invoice/{id}/revise`
+
+Move a rejected sales invoice back to `Draft` status so it can be edited and resubmitted for approval. Only allowed when the invoice's current status is `Rejected`.
+
+Use `PUT /api/v2/sales-invoice/{id}` to edit the invoice's fields before or after calling this endpoint. `revise` only changes status, it does not accept or update any other field.
+
+#### Path parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| id | string | The sales invoice ID |
+
+#### Request body (`application/json`)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| notes | string | No | Optional note recorded on the audit log entry |
+
+#### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Sales invoice revised successfully",
+  "data": []
+}
+```
+
+#### Response `400 Bad Request`
+
+```json
+{
+  "status_code": 400,
+  "status_message": "Only rejected sales invoices can be revised",
+  "data": []
+}
+```
+
+Returned when the invoice's current status is not `Rejected` (e.g. it's `Draft` or `Approved`).
+
+#### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Sales invoice not found",
+  "data": []
+}
+```
+
+---
+
+### GET `/api/v2/sales-invoice/{id}/export`
+
+Download the sales invoice as a formatted `.xlsx` file (via PhpSpreadsheet): title block, item table (`Qty`, `Harga Satuan`, `Pajak (%)`, `Subtotal` computed server-side from `quantity`/`unit_price`/`tax`), totals row, and signature block.
+
+#### Path parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| id | string | The sales invoice ID |
+
+#### Response `200 OK`
+
+Binary `.xlsx` file. Headers:
+
+```
+Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+Content-Disposition: attachment; filename="sales_invoice_{invoice_display_number}.xlsx"
+```
+
+The filename's `invoice_display_number` has any character outside `[A-Za-z0-9_-]` replaced with `-`.
+
+#### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Sales invoice not found",
+  "data": []
+}
+```
+
+---
+
 ## Error responses (all endpoints)
 
 | Code | When |
@@ -347,8 +563,13 @@ Soft-deletes the sales invoice (sets `deleted_at`) — it will no longer appear 
 ## Notes
 
 - Header + items creation is wrapped in a single database transaction — either the sales invoice and all its items are created together, or nothing is saved.
-- Create/update/delete write `audit_log` rows with action `created`/`updated`/`deleted`. Query this history via `GET /api/v2/audit-log?module=sales_invoice&reference_id={id}` — see the `audit-log` module doc.
+- Create/update/delete write `audit_log` rows with action `created`/`updated`/`deleted` and module string `sales_invoice`; approve/reject/revise write `approved`/`rejected`/`revised`. Query this history via `GET /api/v2/audit-log?module=sales_invoice&reference_id={id}` — see the `audit-log` module doc.
 - The list endpoint (`GET /api/v2/sales-invoice`) does not include the nested `items` array; only the detail endpoint (`GET /api/v2/sales-invoice/{id}`) does. The create response only returns `sales_invoice_id`.
-- No enum constraints are enforced in this module's source code.
-- **List and detail responses now include resolved names alongside their IDs** — `customer_name` (joined from `customer`), `so_display_number` (joined from `sales_order`), and `do_display_number` (joined from `sales_delivery`) are returned next to `customer_id`, `sales_order_id`, and `sales_delivery_id` respectively. The frontend no longer needs a separate lookup call just to display these values in a list or detail view; the IDs are still returned and still required for `PUT`/filter requests. `do_display_number` is `null` whenever `sales_delivery_id` is `null` (it's an optional link); the other two may be `null` only if the referenced record was deleted.
-- **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on both the sales invoice itself and its items. Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.
+- No enum constraints are enforced on any field other than `status_id`, which is server-resolved (see below) — never client-supplied.
+- **List and detail responses now include resolved names alongside their IDs** — `customer_name` (joined from `customer`), `so_display_number` (joined from `sales_order`), `do_display_number` (joined from `sales_delivery`), and `status_name` (joined from `sales_status`) are returned next to `customer_id`, `sales_order_id`, `sales_delivery_id`, and `status_id` respectively. The frontend no longer needs a separate lookup call just to display these values in a list or detail view; the IDs are still returned and still required for `PUT`/filter requests. `do_display_number` is `null` whenever `sales_delivery_id` is `null` (it's an optional link); the others may be `null` only if the referenced record was deleted.
+- **`created_by`, `updated_by`, and `approved_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on both the sales invoice itself and its items. Previously `created_by`/`updated_by` held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by`/`approved_by` are `null` until the record has actually been updated/approved; `created_by` can be `null` only if the creating user has since been deleted.
+- **`status_id` is a server-resolved field, not client-supplied**, matching the pattern already used by `sales-order`/`sales-sppb`/`sales-delivery`/`sales-profit`: `POST` sets it to `"Draft"`, `PATCH .../approve` sets it to `"Approved"`, `PATCH .../reject` sets it to `"Rejected"`, `PATCH .../revise` sets it back to `"Draft"`. `PUT` cannot change `status_id` at all. Resolved by matching `sales_status.status_name` — the frontend never needs to know or send a `sales_status.id` UUID.
+- `approve` sets `approved_by` and `approved_at`; `reject` and `revise` do not. If `sales_status` is ever missing a `Draft`/`Approved`/`Rejected` row (non-deleted), the corresponding endpoint returns `500` naming the missing status — a master-data configuration problem, not a client error.
+- `revise` only works when the current status is `Rejected` — there is no "un-approve" action; approved invoices cannot be reverted to `Draft` through the API.
+- **Every sales invoice that existed before `status_id` was added has been backfilled to `Draft`** (200 rows on dev, as of the migration that introduced this field) — this was a deliberate choice, not an inference: pre-existing invoices are treated as not-yet-approved rather than grandfathered in as already-approved. Expect them to appear in any "pending approval" view built around `status_name = 'Draft'`. See `v2/docs/migrations/v27_sales_invoice_approval_schema.md`.
+- Frontend should gate the Approve/Reject buttons on `status_name === 'Draft'`, and a Revise action on `status_name === 'Rejected'`.

@@ -376,9 +376,9 @@ function approveSalesSppb($conn, $sales_sppb_id, $input, $username, $company_id)
             'source_module'      => 'sales_sppb',
             'source_document_id' => $sales_sppb_id,
             'title'              => 'Sales SPPB Disetujui',
-            'body'               => "{$sales_sppb['sppb_display_number']} telah disetujui oleh $approver_name pada " . formatIndonesianDate($now) . ', ' . date('H:i', strtotime($now)) . " WIB.\n\n" .
+            'body'               => "Dokumen Sales SPPB *{$sales_sppb['sppb_display_number']}* telah *disetujui* oleh $approver_name pada " . formatIndonesianDate($now) . ', ' . date('H:i', strtotime($now)) . " WIB.\n\n" .
                                      "Customer: {$sales_sppb['customer_name']}\n\n" .
-                                     "Lihat detail: $detail_link",
+                                     "Lihat detail dokumen pada link berikut:\n$detail_link",
             'created_by'         => $username,
             'recipients'         => [$sales_sppb['created_by']],
         ]);
@@ -420,7 +420,7 @@ function rejectSalesSppb($conn, $sales_sppb_id, $input, $username, $company_id) 
             'source_module'      => 'sales_sppb',
             'source_document_id' => $sales_sppb_id,
             'title'              => 'Sales SPPB Ditolak',
-            'body'               => "{$sales_sppb['sppb_display_number']} ditolak oleh $rejector_name.$reason_text",
+            'body'               => "Dokumen Sales SPPB *{$sales_sppb['sppb_display_number']}* *ditolak* oleh $rejector_name.$reason_text",
             'created_by'         => $username,
             'recipients'         => [$sales_sppb['created_by']],
         ]);

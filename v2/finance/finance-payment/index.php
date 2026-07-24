@@ -71,6 +71,19 @@ function createFinancePayment($conn, $input, $username, $company_id) {
     $invoice_number = trim(mysqli_real_escape_string($conn, $input['invoice_number']));
     $paid_amount    = (float)$input['paid_amount'];
 
+    $invoice_check = mysqli_query($conn, "SELECT ss.status_name FROM " . APP_SCHEMA . ".sales_invoice si
+            LEFT JOIN " . APP_SCHEMA . ".sales_status ss ON ss.id = si.status_id
+            WHERE si.invoice_display_number = '$invoice_number' AND si.company_id = '$company_id' AND si.deleted_at IS NULL LIMIT 1");
+    if (!$invoice_check || mysqli_num_rows($invoice_check) === 0) {
+        jsonResponse(404, 'Sales invoice not found');
+        return;
+    }
+    $sales_invoice = mysqli_fetch_assoc($invoice_check);
+    if ($sales_invoice['status_name'] !== 'Approved') {
+        jsonResponse(400, 'Sales invoice must be approved before a payment can be recorded');
+        return;
+    }
+
     if (isset($input['customer_id']) && trim($input['customer_id']) !== '') {
         $customer_id = mysqli_real_escape_string($conn, $input['customer_id']);
         $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".customer WHERE id = '$customer_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
@@ -123,7 +136,7 @@ function createFinancePayment($conn, $input, $username, $company_id) {
             'source_module'      => 'finance_payment',
             'source_document_id' => $finance_payment_id,
             'title'              => 'Finance Payment Menunggu Approval',
-            'body'               => "$invoice_number butuh approval Anda (Finance — perlu 2 persetujuan). Silahkan klik link dibawah untuk menyetujui:",
+            'body'               => "Dokumen Finance Payment *$invoice_number* membutuhkan persetujuan Bapak/Ibu (memerlukan 2 tahap persetujuan). Silakan klik link di bawah untuk meninjau dan menyetujui:",
             'created_by'         => $username,
             'recipients'         => resolveApprovalRecipients($conn, $company_id, 'finance_payment'),
         ]);
@@ -259,7 +272,7 @@ function approveFinancePayment($conn, $finance_payment_id, $input, $username, $a
             'source_module'      => 'finance_payment',
             'source_document_id' => $finance_payment_id,
             'title'              => 'Finance Payment Fully Approved',
-            'body'               => "$invoice_display sudah fully approved.",
+            'body'               => "Dokumen Finance Payment *$invoice_display* telah *disetujui sepenuhnya* (fully approved).",
             'created_by'         => $username,
             'recipients'         => $doc ? [$doc['created_by']] : [],
         ]);
@@ -271,7 +284,7 @@ function approveFinancePayment($conn, $finance_payment_id, $input, $username, $a
             'source_module'      => 'finance_payment',
             'source_document_id' => $finance_payment_id,
             'title'              => 'Finance Payment — Menunggu Approval Ke-2',
-            'body'               => "$invoice_display sudah disetujui $approver_name. Tinggal persetujuan Anda untuk menyelesaikan approval ini:",
+            'body'               => "Dokumen Finance Payment *$invoice_display* telah disetujui oleh $approver_name. Diperlukan persetujuan Bapak/Ibu untuk menyelesaikan proses ini. Silakan klik link di bawah untuk meninjau dan menyetujui:",
             'created_by'         => $username,
             'recipients'         => $other_recipients,
         ]);
@@ -283,7 +296,7 @@ function approveFinancePayment($conn, $finance_payment_id, $input, $username, $a
                 'source_module'      => 'finance_payment',
                 'source_document_id' => $finance_payment_id,
                 'title'              => 'Finance Payment — Progress Approval',
-                'body'               => "$invoice_display: $approver_name sudah approve. Menunggu approval ke-2.",
+                'body'               => "Dokumen Finance Payment *$invoice_display* telah disetujui oleh $approver_name. Menunggu persetujuan tahap ke-2.",
                 'created_by'         => $username,
                 'recipients'         => [$doc['created_by']],
             ]);
@@ -320,7 +333,7 @@ function rejectFinancePayment($conn, $finance_payment_id, $input, $username, $ap
         'source_module'      => 'finance_payment',
         'source_document_id' => $finance_payment_id,
         'title'              => 'Finance Payment Ditolak',
-        'body'               => "$invoice_display ditolak oleh $rejector_name.$reason_text",
+        'body'               => "Dokumen Finance Payment *$invoice_display* *ditolak* oleh $rejector_name.$reason_text",
         'created_by'         => $username,
         'recipients'         => $doc ? [$doc['created_by']] : [],
     ]);
