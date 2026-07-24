@@ -1,6 +1,6 @@
 # Notification API
 
-> **Last updated:** 2026-07-21 22:47:55 WIB
+> **Last updated:** 2026-07-25 06:24:59 WIB
 > **Base URL:** `/api/v2/notification`, `/api/v2/approvals`, `/api/v2/notification-settings`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -72,7 +72,7 @@ List in-app notifications belonging to the authenticated user.
 }
 ```
 
-`type` is one of `approval_pending` \| `approval_approved` \| `approval_rejected` \| `digest_daily`. `source_module` is one of `sales_order` \| `purchase_order` \| `finance_transaction` \| `finance_payment` (or `notification` for `digest_daily` rows, which don't point at one specific document). Construct the click-through link from `source_module` + `source_document_id` using the same per-module URL pattern already used elsewhere in the app.
+`type` is one of `approval_pending` \| `approval_approved` \| `approval_rejected` \| `digest_daily`. `source_module` is one of `sales_order` \| `purchase_order` \| `purchase_invoice` \| `purchase_receive` \| `finance_transaction` \| `finance_payment` (or `notification` for `digest_daily` rows, which don't point at one specific document). Construct the click-through link from `source_module` + `source_document_id` using the same per-module URL pattern already used elsewhere in the app.
 
 ---
 
@@ -181,7 +181,7 @@ Validate a one-click approval token (from a WhatsApp message or digest) and retu
 }
 ```
 
-`document` only includes `dual_approval_progress` for `finance_transaction`/`finance_payment`. For `sales_order`/`purchase_order`, `status_name` is `Draft` \| `Approved` \| `Rejected` instead of the Finance `draft` \| `partially_approved` \| `posted` \| `rejected` enum.
+`document` only includes `dual_approval_progress` for `finance_transaction`/`finance_payment`. For `sales_order`/`purchase_order`/`purchase_invoice`/`purchase_receive`, `status_name` is `Draft` \| `Approved` \| `Rejected` instead of the Finance `draft` \| `partially_approved` \| `posted` \| `rejected` enum.
 
 #### Response `403 Forbidden`
 
@@ -257,7 +257,7 @@ Approve the document a token points to. Internally calls the exact same endpoint
 
 #### Response
 
-Bubbled through from the underlying `PATCH /api/v2/{module}/{id}/approve` call — see that module's own doc (`sales-order.md`, `purchase-order.md`, `finance-transaction.md`, `finance-payment.md`) for the exact response shape. Same status codes as validating the token (`403`/`404`/`409`/`410`) also apply here if the token itself is invalid.
+Bubbled through from the underlying `PATCH /api/v2/{module}/{id}/approve` call — see that module's own doc (`sales-order.md`, `purchase-order.md`, `purchase-invoice.md`, `purchase-receive.md`, `finance-transaction.md`, `finance-payment.md`) for the exact response shape. Same status codes as validating the token (`403`/`404`/`409`/`410`) also apply here if the token itself is invalid.
 
 ---
 
@@ -439,9 +439,9 @@ Update the working-days config.
 
 ## Notes
 
-- **This is Phase 1 scope**: Sales Order, Purchase Order, Finance Transaction, and Finance Payment. Warehouse Adjustment has no approval workflow in this codebase yet, so it has no notification hook either — see `v2/docs/migrations/v23_notification_schema.md`.
+- **Scope**: Sales Order, Purchase Order, Purchase Invoice, Purchase Receive, Finance Transaction, and Finance Payment (Purchase Invoice/Purchase Receive added after the original Phase 1 rollout — see `v2/docs/migrations/v29_purchase_invoice_receive_notification_permissions.md`). Warehouse Adjustment has no approval workflow in this codebase yet, so it has no notification hook either — see `v2/docs/migrations/v23_notification_schema.md`.
 - **WhatsApp sends are synchronous**, not queued — same precedent as `auth/send-otp.php`/`auth/forgot-password.php`. A WhatsApp delivery failure never fails the triggering request (create/approve/reject); check `notification_delivery.status` for the actual outcome per channel.
 - **Real-time push is via WebSocket**, not polling: connect to `ws(s)://.../notification/stream` (served by the standalone daemon `v2/notification/ws-server.php`, not through this HTTP router), send `{"type":"auth","token":"<the same bearer JWT>"}` as the first message, then listen for `notification:new` and `notification:unread_count` events. Call `GET /api/v2/notification/unread-count` once on initial load and again immediately after any reconnect, to cover events that happened while disconnected.
-- **Recipient resolution is permission-key driven, not role-name driven** (same convention as the rest of v2, see `dashboard.md`). Sales Order/Purchase Order approvers are whoever holds `notification.sales_order.approver`/`notification.purchase_order.approver`; Finance approvers are whoever holds the existing `keuangan.approve_owner`/`keuangan.approve_treasury` keys — there is no separate Finance-approver configuration endpoint. **No role currently holds either new `notification.*.approver` key** — until one is granted, Sales/Purchase Order notifications have zero recipients (the in-app row still gets created for record-keeping purposes but nobody receives it).
+- **Recipient resolution is permission-key driven, not role-name driven** (same convention as the rest of v2, see `dashboard.md`). Sales Order/Purchase Order/Purchase Invoice/Purchase Receive approvers are whoever holds `notification.sales_order.approver`/`notification.purchase_order.approver`/`notification.purchase_invoice.approver`/`notification.purchase_receive.approver` respectively; Finance approvers are whoever holds the existing `keuangan.approve_owner`/`keuangan.approve_treasury` keys — there is no separate Finance-approver configuration endpoint. **No role currently holds any of the four `notification.*.approver` keys** — until one is granted, that module's `approval_pending` notifications have zero recipients (the in-app row still gets created for record-keeping purposes but nobody receives it).
 - **The daily digest** (`v2/notification/digest.php`) is a CLI/cron script, not an HTTP endpoint under this router — it inserts its own `digest_daily` notification rows (visible via `GET /api/v2/notification`) and is documented in `v2/docs/migrations/v23_notification_schema.md`, not here.
-- Approval tokens are single-use, scoped to one user + one document, and expire 72 hours after creation. A fresh token is minted for every `approval_pending` recipient at submit time (Sales/Purchase Order) or at each new pending state (Finance's "menunggu approval ke-2" reminder); the daily digest always mints its own fresh tokens too, never reusing a real-time one.
+- Approval tokens are single-use, scoped to one user + one document, and expire 72 hours after creation. A fresh token is minted for every `approval_pending` recipient at submit time (Sales/Purchase Order, Purchase Invoice, Purchase Receive) or at each new pending state (Finance's "menunggu approval ke-2" reminder); the daily digest always mints its own fresh tokens too, never reusing a real-time one.

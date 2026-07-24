@@ -14,6 +14,61 @@ function getPurchaseStatusIdByName($conn, $status_name) {
     return $row ? $row['id'] : null;
 }
 
+function getCompanyCode($conn, $company_id) {
+    $result = mysqli_query($conn, "SELECT company_code FROM " . CORE_SCHEMA . ".app_company WHERE company_id = '$company_id' LIMIT 1");
+    $row = $result ? mysqli_fetch_assoc($result) : null;
+    return $row ? strtoupper($row['company_code']) : null;
+}
+
+function generatePurchaseOrderNumber($conn, $company_id, $params) {
+    $type_id = trim($params['type_id'] ?? '');
+    if ($type_id === '') {
+        jsonResponse(400, 'type_id is required');
+        return;
+    }
+
+    $type_id_escaped = mysqli_real_escape_string($conn, $type_id);
+    $result = mysqli_query($conn, "SELECT type_name, number_format, sequence_digits FROM " . APP_SCHEMA . ".purchase_type WHERE id = '$type_id_escaped' AND deleted_at IS NULL LIMIT 1");
+    if (!$result || mysqli_num_rows($result) === 0) {
+        jsonResponse(404, 'Purchase type not found');
+        return;
+    }
+    $purchase_type = mysqli_fetch_assoc($result);
+
+    $number_format = $purchase_type['number_format'];
+    if (!$number_format || !str_contains($number_format, '{seq}')) {
+        jsonResponse(500, "Purchase type \"{$purchase_type['type_name']}\" has no number_format configured");
+        return;
+    }
+
+    $company_code = getCompanyCode($conn, $company_id);
+    if (!$company_code) {
+        jsonResponse(404, 'Company not found');
+        return;
+    }
+
+    $roman_months = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII'];
+    $roman_month  = $roman_months[(int)date('n') - 1];
+
+    $tokens = [
+        '{company_code}' => $company_code,
+        '{month}'        => $roman_month,
+        '{yyyy}'         => date('Y'),
+        '{yy}'           => date('y'),
+    ];
+
+    $sequence_digits = (int)($purchase_type['sequence_digits'] ?? 4);
+    $pattern          = mysqli_real_escape_string($conn, strtr($number_format, $tokens + ['{seq}' => '%']));
+
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".purchase_order WHERE company_id = '$company_id' AND type_id = '$type_id_escaped' AND po_display_number LIKE '$pattern'");
+    $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
+
+    $sequence           = str_pad((string)($total + 1), $sequence_digits, '0', STR_PAD_LEFT);
+    $po_display_number = strtr($number_format, $tokens + ['{seq}' => $sequence]);
+
+    jsonResponse(200, 'Purchase order number generated successfully', ['po_display_number' => $po_display_number]);
+}
+
 function getAllPurchaseOrders($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
     $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
@@ -54,12 +109,13 @@ function getAllPurchaseOrders($conn, $company_id, $params) {
             LEFT JOIN " . APP_SCHEMA . ".purchase_type pty ON pty.id = po.type_id
             LEFT JOIN " . APP_SCHEMA . ".currency cur ON cur.id = po.currency_id
             LEFT JOIN " . APP_SCHEMA . ".ppn_type ppn ON ppn.id = po.ppn_type_id
+            LEFT JOIN " . APP_SCHEMA . ".shipment_period sp ON sp.id = po.shipment_period_id
             LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = po.created_by
             LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = po.updated_by
             LEFT JOIN " . CORE_SCHEMA . ".app_user au ON au.user_id COLLATE utf8mb4_general_ci = po.approved_by";
 
     $result       = mysqli_query($conn, "SELECT po.*, s.supplier_name, ps.status_name, pt.term_name, pm.method_name,
-            o.origin_name, pty.type_name, cur.currency_code, cur.currency_name, ppn.ppn_name,
+            o.origin_name, pty.type_name, cur.currency_code, cur.currency_name, ppn.ppn_name, sp.period_name,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by,
             CONCAT(au.first_name, ' ', au.last_name) AS approved_by
@@ -131,8 +187,8 @@ function createPurchaseOrder($conn, $input, $username, $company_id) {
         return;
     }
 
-    $shipment_method_sql  = $shipment_method !== null ? "'$shipment_method'" : 'NULL';
-    $shipment_date_sql    = isset($input['shipment_date']) && trim($input['shipment_date']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['shipment_date']) . "'" : 'NULL';
+    $shipment_method_sql     = $shipment_method !== null ? "'$shipment_method'" : 'NULL';
+    $shipment_period_id_sql  = isset($input['shipment_period_id']) && trim($input['shipment_period_id']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['shipment_period_id']) . "'" : 'NULL';
     $term_id_sql          = isset($input['term_id']) && trim($input['term_id']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['term_id']) . "'" : 'NULL';
     $payment_method_id_sql = isset($input['payment_method_id']) && trim($input['payment_method_id']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['payment_method_id']) . "'" : 'NULL';
     $origin_id_sql        = isset($input['origin_id']) && trim($input['origin_id']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['origin_id']) . "'" : 'NULL';
@@ -153,12 +209,12 @@ function createPurchaseOrder($conn, $input, $username, $company_id) {
     $conn->begin_transaction();
     try {
         $sql = "INSERT INTO " . APP_SCHEMA . ".purchase_order
-                (id, company_id, po_display_number, po_date, supplier_id, shipment_method, shipment_date,
+                (id, company_id, po_display_number, po_date, supplier_id, shipment_method, shipment_period_id,
                  term_id, payment_method_id, origin_id, shipping_marks, remarks, status_id, type_id,
                  currency_id, ppn_type_id, container_number, bl_number, vessel_name, etd_date, eta_date,
                  created_by, created_at)
                 VALUES
-                ('$po_id', '$company_id', '$po_display_number', '$po_date', '$supplier_id', $shipment_method_sql, $shipment_date_sql,
+                ('$po_id', '$company_id', '$po_display_number', '$po_date', '$supplier_id', $shipment_method_sql, $shipment_period_id_sql,
                  $term_id_sql, $payment_method_id_sql, $origin_id_sql, $shipping_marks_sql, $remarks_sql, '$status_id', $type_id_sql,
                  $currency_id_sql, $ppn_type_id_sql, $container_number_sql, $bl_number_sql, $vessel_name_sql, $etd_date_sql, $eta_date_sql,
                  '$username', '$now')";
@@ -219,11 +275,12 @@ function getDetailPurchaseOrder($conn, $purchase_order_id, $company_id) {
             LEFT JOIN " . APP_SCHEMA . ".purchase_type pty ON pty.id = po.type_id
             LEFT JOIN " . APP_SCHEMA . ".currency cur ON cur.id = po.currency_id
             LEFT JOIN " . APP_SCHEMA . ".ppn_type ppn ON ppn.id = po.ppn_type_id
+            LEFT JOIN " . APP_SCHEMA . ".shipment_period sp ON sp.id = po.shipment_period_id
             LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = po.created_by
             LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = po.updated_by
             LEFT JOIN " . CORE_SCHEMA . ".app_user au ON au.user_id COLLATE utf8mb4_general_ci = po.approved_by";
     $result = mysqli_query($conn, "SELECT po.*, s.supplier_name, ps.status_name, pt.term_name, pm.method_name,
-            o.origin_name, pty.type_name, cur.currency_code, cur.currency_name, ppn.ppn_name,
+            o.origin_name, pty.type_name, cur.currency_code, cur.currency_name, ppn.ppn_name, sp.period_name,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by,
             CONCAT(au.first_name, ' ', au.last_name) AS approved_by
@@ -261,7 +318,7 @@ function updatePurchaseOrder($conn, $purchase_order_id, $input, $username, $comp
     $string_fields = [
         'po_display_number', 'supplier_id', 'term_id', 'payment_method_id', 'origin_id',
         'shipping_marks', 'remarks', 'type_id', 'currency_id', 'ppn_type_id',
-        'container_number', 'bl_number', 'vessel_name',
+        'container_number', 'bl_number', 'vessel_name', 'shipment_period_id',
     ];
     foreach ($string_fields as $field) {
         if (isset($input[$field])) {
@@ -271,7 +328,7 @@ function updatePurchaseOrder($conn, $purchase_order_id, $input, $username, $comp
         }
     }
 
-    $date_fields = ['po_date', 'shipment_date', 'etd_date', 'eta_date'];
+    $date_fields = ['po_date', 'etd_date', 'eta_date'];
     foreach ($date_fields as $field) {
         if (isset($input[$field])) {
             $val = mysqli_real_escape_string($conn, $input[$field]);
@@ -459,7 +516,11 @@ $sub_action         = $parts[4] ?? '';
 try {
     $conn = getConn();
 
-    if ($purchase_order_id && $sub_action === 'items') {
+    if ($purchase_order_id === 'generate-number' && $sub_action === '') {
+        if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
+        generatePurchaseOrderNumber($conn, $company_id, $_GET);
+
+    } elseif ($purchase_order_id && $sub_action === 'items') {
         require __DIR__ . '/items.php';
 
     } elseif ($purchase_order_id && $sub_action !== '') {

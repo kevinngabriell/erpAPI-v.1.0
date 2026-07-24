@@ -3,6 +3,7 @@
 require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
 require_once __DIR__ . '/../../helpers/audit_log.php';
+require_once __DIR__ . '/../../helpers/notification.php';
 
 function getPurchaseStatusIdByName($conn, $status_name) {
     $status_name = mysqli_real_escape_string($conn, $status_name);
@@ -103,11 +104,12 @@ function createPurchaseReceive($conn, $input, $username, $company_id) {
     $ship_date          = mysqli_real_escape_string($conn, $input['ship_date']);
     $ship_via_id        = mysqli_real_escape_string($conn, $input['ship_via_id']);
 
-    $po_check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".purchase_order WHERE id = '$purchase_order_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $po_check = mysqli_query($conn, "SELECT po_display_number FROM " . APP_SCHEMA . ".purchase_order WHERE id = '$purchase_order_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($po_check) === 0) {
         jsonResponse(404, 'Purchase order not found');
         return;
     }
+    $po_display_number = mysqli_fetch_assoc($po_check)['po_display_number'];
 
     $status_id = getPurchaseStatusIdByName($conn, 'Draft');
     if (!$status_id) {
@@ -149,6 +151,18 @@ function createPurchaseReceive($conn, $input, $username, $company_id) {
         insertAuditLog($conn, $company_id, 'purchase_receive', $purchase_receive_id, 'created', $username);
 
         $conn->commit();
+
+        notify($conn, [
+            'company_id'         => $company_id,
+            'type'               => 'approval_pending',
+            'source_module'      => 'purchase_receive',
+            'source_document_id' => $purchase_receive_id,
+            'title'              => 'Purchase Receive Menunggu Approval',
+            'body'               => "Dokumen Purchase Receive untuk PO *$po_display_number* tanggal $receiving_date membutuhkan persetujuan Bapak/Ibu. Silakan klik link di bawah untuk meninjau dan menyetujui:",
+            'created_by'         => $username,
+            'recipients'         => resolveApprovalRecipients($conn, $company_id, 'purchase_receive'),
+        ]);
+
         jsonResponse(201, 'Purchase receive created successfully', ['purchase_receive_id' => $purchase_receive_id]);
     } catch (Exception $e) {
         $conn->rollback();
@@ -254,11 +268,14 @@ function deletePurchaseReceive($conn, $purchase_receive_id, $username, $company_
 }
 
 function approvePurchaseReceive($conn, $purchase_receive_id, $input, $username, $company_id) {
-    $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".purchase_receive WHERE id = '$purchase_receive_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $check = mysqli_query($conn, "SELECT pr.created_by, po.po_display_number FROM " . APP_SCHEMA . ".purchase_receive pr
+            LEFT JOIN " . APP_SCHEMA . ".purchase_order po ON po.id = pr.purchase_order_id
+            WHERE pr.id = '$purchase_receive_id' AND pr.company_id = '$company_id' AND pr.deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Purchase receive not found');
         return;
     }
+    $purchase_receive = mysqli_fetch_assoc($check);
 
     $status_id = getPurchaseStatusIdByName($conn, 'Approved');
     if (!$status_id) {
@@ -273,6 +290,20 @@ function approvePurchaseReceive($conn, $purchase_receive_id, $input, $username, 
             SET status_id = '$status_id', approved_by = '$username', approved_at = '$now', updated_by = '$username', updated_at = '$now'
             WHERE id = '$purchase_receive_id' AND company_id = '$company_id'")) {
         insertAuditLog($conn, $company_id, 'purchase_receive', $purchase_receive_id, 'approved', $username, $notes);
+        invalidateApprovalTokens($conn, 'purchase_receive', $purchase_receive_id);
+
+        $approver_name = resolveDisplayName($conn, $username);
+        notify($conn, [
+            'company_id'         => $company_id,
+            'type'               => 'approval_approved',
+            'source_module'      => 'purchase_receive',
+            'source_document_id' => $purchase_receive_id,
+            'title'              => 'Purchase Receive Disetujui',
+            'body'               => "Dokumen Purchase Receive untuk PO *{$purchase_receive['po_display_number']}* telah *disetujui* oleh $approver_name.",
+            'created_by'         => $username,
+            'recipients'         => [$purchase_receive['created_by']],
+        ]);
+
         jsonResponse(200, 'Purchase receive approved successfully');
     } else {
         jsonResponse(500, 'Failed to approve purchase receive', ['error' => mysqli_error($conn)]);
@@ -280,11 +311,14 @@ function approvePurchaseReceive($conn, $purchase_receive_id, $input, $username, 
 }
 
 function rejectPurchaseReceive($conn, $purchase_receive_id, $input, $username, $company_id) {
-    $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".purchase_receive WHERE id = '$purchase_receive_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $check = mysqli_query($conn, "SELECT pr.created_by, po.po_display_number FROM " . APP_SCHEMA . ".purchase_receive pr
+            LEFT JOIN " . APP_SCHEMA . ".purchase_order po ON po.id = pr.purchase_order_id
+            WHERE pr.id = '$purchase_receive_id' AND pr.company_id = '$company_id' AND pr.deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Purchase receive not found');
         return;
     }
+    $purchase_receive = mysqli_fetch_assoc($check);
 
     $status_id = getPurchaseStatusIdByName($conn, 'Rejected');
     if (!$status_id) {
@@ -299,6 +333,21 @@ function rejectPurchaseReceive($conn, $purchase_receive_id, $input, $username, $
             SET status_id = '$status_id', updated_by = '$username', updated_at = '$now'
             WHERE id = '$purchase_receive_id' AND company_id = '$company_id'")) {
         insertAuditLog($conn, $company_id, 'purchase_receive', $purchase_receive_id, 'rejected', $username, $notes);
+        invalidateApprovalTokens($conn, 'purchase_receive', $purchase_receive_id);
+
+        $rejector_name = resolveDisplayName($conn, $username);
+        $reason_text   = $notes ? " Alasan: $notes." : '';
+        notify($conn, [
+            'company_id'         => $company_id,
+            'type'               => 'approval_rejected',
+            'source_module'      => 'purchase_receive',
+            'source_document_id' => $purchase_receive_id,
+            'title'              => 'Purchase Receive Ditolak',
+            'body'               => "Dokumen Purchase Receive untuk PO *{$purchase_receive['po_display_number']}* *ditolak* oleh $rejector_name.$reason_text",
+            'created_by'         => $username,
+            'recipients'         => [$purchase_receive['created_by']],
+        ]);
+
         jsonResponse(200, 'Purchase receive rejected successfully');
     } else {
         jsonResponse(500, 'Failed to reject purchase receive', ['error' => mysqli_error($conn)]);

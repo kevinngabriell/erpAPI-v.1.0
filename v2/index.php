@@ -70,6 +70,9 @@ switch ($module) {
     case 'ship-via':
         require __DIR__ . '/master/ship-via/index.php';
         break;
+    case 'shipment-period':
+        require __DIR__ . '/master/shipment-period/index.php';
+        break;
     case 'payment-method':
         require __DIR__ . '/master/payment-method/index.php';
         break;

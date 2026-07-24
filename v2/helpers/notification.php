@@ -27,8 +27,10 @@ function getUserPhone($conn, $user_id) {
 // keys instead of a separate config table.
 function resolveApprovalRecipients($conn, $company_id, $source_module) {
     $permission_keys = match ($source_module) {
-        'sales_order'    => ['notification.sales_order.approver'],
-        'purchase_order' => ['notification.purchase_order.approver'],
+        'sales_order'      => ['notification.sales_order.approver'],
+        'purchase_order'   => ['notification.purchase_order.approver'],
+        'purchase_invoice' => ['notification.purchase_invoice.approver'],
+        'purchase_receive' => ['notification.purchase_receive.approver'],
         'finance_transaction', 'finance_payment' => ['keuangan.approve_owner', 'keuangan.approve_treasury'],
         default => [],
     };

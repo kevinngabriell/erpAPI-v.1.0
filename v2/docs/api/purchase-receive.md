@@ -1,6 +1,6 @@
 # Purchase Receive API
 
-> **Last updated:** 2026-07-20 00:00:00 WIB
+> **Last updated:** 2026-07-25 06:24:59 WIB
 > **Base URL:** `/api/v2/purchase-receive`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -474,3 +474,4 @@ Move a rejected purchase receive back to `Draft` so it can be edited and resubmi
 - `search` is matched against the linked purchase order's `po_display_number` via a `LEFT JOIN`, not against any field on the purchase receive record itself — purchase receive rows have no display number of their own. Records whose `purchase_order_id` no longer resolves to a purchase order are excluded from `search` results (but still returned when `search` is omitted).
 - **`created_by`, `updated_by`, and `approved_by` are resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a purchase receive (list, detail, and any nested items). There is no separate `*_id` field for them, the resolved name **is** the value. `updated_by`/`approved_by` are `null` until the record has actually been updated/approved; `created_by` can be `null` only if the creating user has since been deleted.
 - **List and detail responses also resolve reference IDs to their display names**, alongside the existing `*_id` field (both are returned): `purchase_order_id` → `po_display_number`, `supplier_id` → `supplier_name`, `ship_via_id` → `ship_name`, `status_id` → `status_name`. All are `LEFT JOIN`ed, so the resolved field is `null` if the referenced record is missing or was deleted; the `*_id` field is unaffected either way.
+- **`POST` (create) and `PATCH .../approve`/`.../reject` now trigger notifications** — in-app + WhatsApp to the users holding `notification.purchase_receive.approver` on create, and to the receive's creator on approve/reject. This is a side effect only; it does not change this endpoint's own request/response shape. See `notification.md`.

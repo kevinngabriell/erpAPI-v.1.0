@@ -1,6 +1,6 @@
 # Purchase Invoice API
 
-> **Last updated:** 2026-07-20 00:00:00 WIB
+> **Last updated:** 2026-07-25 06:24:59 WIB
 > **Base URL:** `/api/v2/purchase-invoice`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -495,3 +495,4 @@ Move a rejected purchase invoice back to `Draft` so it can be edited and resubmi
 - The create response only returns `purchase_invoice_id`. Only the detail endpoint (`GET /api/v2/purchase-invoice/{id}`) returns the nested `items` array.
 - **`created_by`, `updated_by`, and `approved_by` are resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a purchase invoice (list, detail, and any nested items). There is no separate `*_id` field for them, the resolved name **is** the value. `updated_by`/`approved_by` are `null` until the record has actually been updated/approved; `created_by` can be `null` only if the creating user has since been deleted.
 - **List and detail responses also resolve reference IDs to their display names**, alongside the existing `*_id` field (both are returned): `purchase_order_id` → `po_display_number`, `supplier_id` → `supplier_name`, `term_id` → `term_name`, `status_id` → `status_name`. All are `LEFT JOIN`ed, so the resolved field is `null` if the referenced record is missing, was deleted, or the `*_id` was never set; the `*_id` field is unaffected either way.
+- **`POST` (create) and `PATCH .../approve`/`.../reject` now trigger notifications** — in-app + WhatsApp to the users holding `notification.purchase_invoice.approver` on create, and to the invoice's creator on approve/reject. This is a side effect only; it does not change this endpoint's own request/response shape. See `notification.md`.

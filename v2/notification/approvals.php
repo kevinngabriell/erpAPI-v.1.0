@@ -8,6 +8,8 @@ require_once __DIR__ . '/../helpers/notification.php';
 const APPROVAL_MODULE_ENDPOINTS = [
     'sales_order'         => 'sales-order',
     'purchase_order'      => 'purchase-order',
+    'purchase_invoice'    => 'purchase-invoice',
+    'purchase_receive'    => 'purchase-receive',
     'finance_transaction' => 'finance-transaction',
     'finance_payment'     => 'finance-payment',
 ];
@@ -57,6 +59,21 @@ function getApprovalDocumentSummary($conn, $source_module, $source_document_id, 
                     FROM " . APP_SCHEMA . ".purchase_order po
                     LEFT JOIN " . APP_SCHEMA . ".purchase_status ps ON ps.id = po.status_id
                     WHERE po.id = '$source_document_id' AND po.company_id = '$company_id' AND po.deleted_at IS NULL LIMIT 1");
+            break;
+        case 'purchase_invoice':
+            $result = mysqli_query($conn, "SELECT pi.id, pi.invoice_display_number AS document_number, pi.invoice_date AS document_date,
+                    ps.status_name, pi.created_by, pi.created_at
+                    FROM " . APP_SCHEMA . ".purchase_invoice pi
+                    LEFT JOIN " . APP_SCHEMA . ".purchase_status ps ON ps.id = pi.status_id
+                    WHERE pi.id = '$source_document_id' AND pi.company_id = '$company_id' AND pi.deleted_at IS NULL LIMIT 1");
+            break;
+        case 'purchase_receive':
+            $result = mysqli_query($conn, "SELECT pr.id, po.po_display_number AS document_number, pr.receiving_date AS document_date,
+                    ps.status_name, pr.created_by, pr.created_at
+                    FROM " . APP_SCHEMA . ".purchase_receive pr
+                    LEFT JOIN " . APP_SCHEMA . ".purchase_order po ON po.id = pr.purchase_order_id
+                    LEFT JOIN " . APP_SCHEMA . ".purchase_status ps ON ps.id = pr.status_id
+                    WHERE pr.id = '$source_document_id' AND pr.company_id = '$company_id' AND pr.deleted_at IS NULL LIMIT 1");
             break;
         case 'finance_transaction':
             $result = mysqli_query($conn, "SELECT ft.id, ft.voucher_number AS document_number, ft.transaction_date AS document_date,

@@ -7,6 +7,59 @@ Intended audience: frontend developers.
 
 ---
 
+## [2026-07-25 07:15:00 WIB] — Purchase order shipment field now an ETA period, not a raw date
+
+### Added
+- `GET /api/v2/shipment-period` — new global master endpoint listing the 36 fixed ETA shipment periods (`Early`/`Mid`/`End` × each month, e.g. "Early July"), ordered by `sort_order`.
+- `POST /api/v2/shipment-period`, `GET /api/v2/shipment-period/{id}`, `PUT /api/v2/shipment-period/{id}`, `DELETE /api/v2/shipment-period/{id}` — standard CRUD for the above, same shape as `ship-via`/`payment-term`.
+- `purchase_order` gains `shipment_period_id`, returned alongside its resolved `period_name` on list/detail responses (`GET /api/v2/purchase-order`, `GET /api/v2/purchase-order/{id}`), and accepted on `POST`/`PUT`.
+
+### Removed
+- `purchase_order.shipment_date` (a free date) no longer exists — dropped from the database and from every request/response shape.
+
+### Breaking changes
+- `shipment_date` is gone from `POST /api/v2/purchase-order` and `PUT /api/v2/purchase-order/{id}` request bodies, and from every response that used to include it (list, detail). Sending `shipment_date` no longer does anything — the field is silently ignored, not rejected.
+- Use `shipment_period_id` instead, referencing `GET /api/v2/shipment-period` for valid values. This is a coarser ETA estimate (e.g. "Early July") rather than an exact date — matches how the pre-Aluria legacy system's PO form already represents this field. Exact dates are still available separately via `etd_date`/`eta_date`.
+
+### Notes for frontend
+- Existing purchase orders that had a `shipment_date` were migrated automatically: mapped to the enclosing period by day-of-month (1–10 → Early, 11–20 → Mid, 21–31 → End, same month). No data was silently dropped — see `v2/docs/migrations/v30_purchase_order_shipment_period_schema.md` for the exact mapping and per-environment status (**dev applied, prod not yet applied**).
+- `shipment_method` (the Incoterm enum — `FOB`/`CIF`/etc.) is unrelated and unaffected by this change.
+- Fetch the dropdown options from `GET /api/v2/shipment-period` rather than hardcoding the 36 period names — `sort_order` gives the correct chronological display order.
+- The permission keys `settings.shipment_period.view|create|update|delete` already existed (seeded ahead of time in a prior migration) but no role currently holds any of them; that's a separate admin action, not something this release changes.
+
+---
+
+## [2026-07-25 06:24:59 WIB] — Purchase invoice and purchase receive gain the same notification wiring as purchase order
+
+### Added
+- `POST /api/v2/purchase-invoice` — now triggers an `approval_pending` notification (in-app + WebSocket push + WhatsApp with a one-click approve/reject link) to users holding the new `notification.purchase_invoice.approver` permission key.
+- `PATCH /api/v2/purchase-invoice/{id}/approve`/`.../reject` — now notify the invoice's creator (`approval_approved`/`approval_rejected`) and invalidate any outstanding approval links for that document.
+- `POST /api/v2/purchase-receive` — now triggers an `approval_pending` notification to users holding the new `notification.purchase_receive.approver` permission key.
+- `PATCH /api/v2/purchase-receive/{id}/approve`/`.../reject` — now notify the receive's creator and invalidate any outstanding approval links.
+- One-click WhatsApp approval links (`GET/POST /api/v2/approvals/{token}...`) now support `purchase_invoice` and `purchase_receive` as `source_module` values, same as `purchase_order`.
+- Two new permission keys: `notification.purchase_invoice.approver`, `notification.purchase_receive.approver`. No request/response shape changed on any of these endpoints — this is a side effect only, same pattern as `purchase-order` got in the original notification module rollout.
+
+### Notes for frontend
+- **No role currently holds either new permission key** — until an admin grants one via the roles/permissions UI, Purchase Invoice/Purchase Receive `approval_pending` notifications have zero recipients (the in-app row is still created, just with nobody to deliver it to). Approve/reject notifications to the creator work immediately regardless, since those don't depend on the new keys.
+- Purchase receive has no document number of its own — its notification text and the `approvals` one-click summary reference the linked purchase order's `po_display_number` instead.
+- See `v2/docs/migrations/v29_purchase_invoice_receive_notification_permissions.md` for the permission-key migration — applied to dev, **prod not yet applied** (pending sign-off, same gate as every other schema change in this project).
+
+---
+
+## [2026-07-25 00:40:00 WIB] — Auto-generated document numbers for purchase order
+
+### Added
+- `GET /api/v2/purchase-order/generate-number?type_id={purchase_type_id}` — returns the next `po_display_number` for the authenticated company and the given purchase type. Read-only preview, does not reserve the number. Unlike `sales-order`'s single fixed format, the format is per purchase type: `type_id` is required, and the pattern is read from the type's `number_format`/`sequence_digits` (see below).
+- `POST /api/v2/purchase-type` and `PUT /api/v2/purchase-type/{id}` — new optional `number_format` and `sequence_digits` fields. `number_format` is a template string (tokens: `{company_code}`, `{month}`, `{yyyy}`, `{yy}`, `{seq}`) used by the new `generate-number` endpoint above; must contain `{seq}` or the request is rejected with `400`. `sequence_digits` controls zero-padding width (1–10, default 4).
+- `GET /api/v2/purchase-type` and `GET /api/v2/purchase-type/{id}` — responses now include `number_format` and `sequence_digits` for every purchase type.
+
+### Notes for frontend
+- Call `generate-number` with the `type_id` the user has selected for the purchase order (from `GET /api/v2/purchase-type`), right before submitting `POST /api/v2/purchase-order` — same pattern as `sales-order`'s `generate-number`.
+- The two purchase types that already existed (`Local`, `Import`) are pre-configured to match the numbering already in production use: `Import` → e.g. `VKN/26/VII/0030`, `Local` → e.g. `VKN/L/VI/2026/015`. Any purchase type created going forward needs its `number_format` set via `PUT /api/v2/purchase-type/{id}` before `generate-number` will work for it — it responds `500` with a clear message otherwise (no guessed default).
+- `sequence_digits` is returned as a numeric string, not cast to an int, like other non-boolean numeric columns in this API.
+
+---
+
 ## [2026-07-24 21:51:35 WIB] — Status filter added to sales-invoice, sales-delivery, and sales-profit lists
 
 ### Added

@@ -1,6 +1,6 @@
 # Purchase Order API
 
-> **Last updated:** 2026-07-24 20:56:15 WIB
+> **Last updated:** 2026-07-25 07:00:00 WIB
 > **Base URL:** `/api/v2/purchase-order`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -10,6 +10,7 @@
 
 | Method | Path | Description |
 |--------|------|-------------|
+| GET    | `/api/v2/purchase-order/generate-number` | Generate the next `po_display_number` for the given purchase type |
 | GET    | `/api/v2/purchase-order` | List all purchase orders (paginated) |
 | POST   | `/api/v2/purchase-order` | Create a new purchase order (with items) |
 | GET    | `/api/v2/purchase-order/{id}` | Get purchase order detail (with items) |
@@ -23,6 +24,71 @@
 | GET    | `/api/v2/purchase-order/{id}/items/{item_id}` | Get a single purchase order item |
 | PUT    | `/api/v2/purchase-order/{id}/items/{item_id}` | Update a purchase order item |
 | DELETE | `/api/v2/purchase-order/{id}/items/{item_id}` | Delete a purchase order item |
+
+---
+
+### GET `/api/v2/purchase-order/generate-number`
+
+Generate the next `po_display_number` for the authenticated company **and** the given `type_id`. This is a read-only preview — it does not reserve or persist the number; it is not guaranteed to remain the next number if another purchase order of the same type is created in the meantime. Call it right before submitting the `POST` request.
+
+The number format is **not hardcoded** — it is read from `purchase_type.number_format` (a template string) and `purchase_type.sequence_digits` for the given `type_id` (see `GET /api/v2/purchase-type`). Supported tokens in the template: `{company_code}` (the authenticated company's `app_company.company_code`, uppercased), `{month}` (Roman numeral, `I`–`XII`), `{yyyy}` (4-digit year), `{yy}` (2-digit year), `{seq}` (zero-padded counter, width = `sequence_digits`). The counter resets whenever any token other than `{seq}` changes value (e.g. a new month or year) because it counts existing `po_display_number` rows matching the rendered pattern for that `company_id` + `type_id`.
+
+Current configured formats (seeded to match the pre-existing purchase order numbers on this system):
+
+| Purchase type | `number_format` | `sequence_digits` | Example |
+|----------------|------------------|--------------------|---------|
+| Import | `{company_code}/{yy}/{month}/{seq}` | 4 | `VKN/26/VII/0030` |
+| Local | `{company_code}/L/{month}/{yyyy}/{seq}` | 3 | `VKN/L/VI/2026/015` |
+
+A purchase type with no `number_format` configured (e.g. a newly created type) cannot generate numbers until an admin sets one via `PUT /api/v2/purchase-type/{id}` — see the `purchase-type` module doc.
+
+#### Query parameters
+
+| Parameter | Type   | Required | Description |
+|-----------|--------|----------|-------------|
+| type_id   | string | Yes      | The `purchase_type` ID to generate the number for |
+
+#### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Purchase order number generated successfully",
+  "data": {
+    "po_display_number": "VKN/26/VII/0030"
+  }
+}
+```
+
+#### Response `400 Bad Request`
+
+```json
+{
+  "status_code": 400,
+  "status_message": "type_id is required",
+  "data": []
+}
+```
+
+#### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Purchase type not found",
+  "data": []
+}
+```
+
+#### Response `500 Internal Server Error`
+
+```json
+{
+  "status_code": 500,
+  "status_message": "Purchase type \"New Type\" has no number_format configured",
+  "data": []
+}
+```
 
 ---
 
@@ -59,7 +125,8 @@ List all purchase orders belonging to the authenticated company.
         "supplier_id": "c3d4e5f6-a7b8-4c5d-0e1f-2a3b4c5d6e7f",
         "supplier_name": "PT Sumber Baja",
         "shipment_method": "FOB",
-        "shipment_date": "2026-07-05",
+        "shipment_period_id": "shp_early_jul",
+        "period_name": "Early July",
         "term_id": "d4e5f6a7-b8c9-4d5e-1f2a-3b4c5d6e7f8a",
         "term_name": "Net 30",
         "payment_method_id": "e5f6a7b8-c9d0-4e5f-2a3b-4c5d6e7f8a9b",
@@ -126,7 +193,7 @@ Create a new purchase order together with its items. Server-side sets `status_id
 | supplier_id | string | Yes | Supplier ID |
 | items | array | Yes | Non-empty array of order items — see below |
 | shipment_method | string | No | One of `FOB`, `CIF`, `EXW`, `CFR`, `CIP`, `DAP`, `DDP`, `FCA` |
-| shipment_date | string (date) | No | — |
+| shipment_period_id | string | No | FK to `shipment_period.id` — the ETA shipment period (e.g. "Early July"), see `GET /api/v2/shipment-period` |
 | term_id | string | No | — |
 | payment_method_id | string | No | — |
 | origin_id | string | No | — |
@@ -234,7 +301,8 @@ Get detail of a single purchase order, including its nested `items` array.
     "supplier_id": "c3d4e5f6-a7b8-4c5d-0e1f-2a3b4c5d6e7f",
     "supplier_name": "PT Sumber Baja",
     "shipment_method": "FOB",
-    "shipment_date": "2026-07-05",
+    "shipment_period_id": "shp_early_jul",
+    "period_name": "Early July",
     "term_id": "d4e5f6a7-b8c9-4d5e-1f2a-3b4c5d6e7f8a",
     "term_name": "Net 30",
     "payment_method_id": "e5f6a7b8-c9d0-4e5f-2a3b-4c5d6e7f8a9b",
@@ -324,8 +392,8 @@ Update a purchase order. Only send the fields you want to change. Does not updat
 | container_number | string | No | Cannot be empty if provided |
 | bl_number | string | No | Cannot be empty if provided |
 | vessel_name | string | No | Cannot be empty if provided |
+| shipment_period_id | string | No | Cannot be empty if provided. FK to `shipment_period.id` |
 | po_date | string (date) | No | — |
-| shipment_date | string (date) | No | — |
 | etd_date | string (date) | No | — |
 | eta_date | string (date) | No | — |
 | shipment_method | string | No | One of `FOB`, `CIF`, `EXW`, `CFR`, `CIP`, `DAP`, `DDP`, `FCA` |
@@ -743,5 +811,7 @@ Soft-deletes the purchase order item (sets `deleted_at`) — it will no longer a
 - **`status_id` is no longer a client-supplied field on any endpoint.** It is resolved server-side by matching `purchase_status.status_name`: `POST` sets it to `"Draft"`, `PATCH .../approve` sets it to `"Approved"`, `PATCH .../reject` sets it to `"Rejected"`, `PATCH .../revise` sets it back to `"Draft"`. `PUT` (general update) cannot change `status_id` at all — status transitions only happen via `approve`/`reject`/`revise`. This removes the previous requirement for the frontend to know/send a `status_id` UUID, and the correctness risk that came with it (`purchase_status.id` is a UUID generated independently per environment — the same status name has a different `id` in dev vs. production).
 - `revise` only succeeds when the purchase order's current status is `Rejected`; any other status returns `400`.
 - **`created_by`, `updated_by`, and `approved_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a purchase order or a purchase order item — list, detail, and items. Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by`/`approved_by` are `null` until the record has actually been updated/approved; `created_by` can be `null` only if the creating user has since been deleted.
-- **List and detail responses now also resolve reference IDs to their display names**, alongside the existing `*_id` field (both are returned): `supplier_id` → `supplier_name`, `status_id` → `status_name`, `term_id` → `term_name`, `payment_method_id` → `method_name`, `origin_id` → `origin_name`, `type_id` → `type_name`, `currency_id` → `currency_code` + `currency_name`, `ppn_type_id` → `ppn_name`. All are `LEFT JOIN`ed, so the resolved field is `null` if the referenced master record is missing or was deleted; the `*_id` field is unaffected either way.
+- **List and detail responses now also resolve reference IDs to their display names**, alongside the existing `*_id` field (both are returned): `supplier_id` → `supplier_name`, `status_id` → `status_name`, `term_id` → `term_name`, `payment_method_id` → `method_name`, `origin_id` → `origin_name`, `type_id` → `type_name`, `currency_id` → `currency_code` + `currency_name`, `ppn_type_id` → `ppn_name`, `shipment_period_id` → `period_name`. All are `LEFT JOIN`ed, so the resolved field is `null` if the referenced master record is missing or was deleted; the `*_id` field is unaffected either way.
+- **`shipment_period_id` is a coarse ETA estimate** (e.g. "Early July"), not an exact date — it references `GET /api/v2/shipment-period`, a fixed global list of 36 values (`Early`/`Mid`/`End` × each month). This is distinct from `etd_date`/`eta_date` (exact dates, filled in later as the shipment actually progresses) and from `shipment_method` (the Incoterm, e.g. `CIF`).
+- **`GET .../generate-number` requires `type_id`** because the number format is per purchase type, not global (unlike `sales-order`'s single-format `generate-number`). It reads `purchase_type.number_format`/`sequence_digits`, not a hardcoded pattern — see the endpoint doc above and `purchase-type.md` for how to configure a type's format.
 - **`POST` (create) and `PATCH .../approve`/`.../reject` now trigger notifications** — in-app + WhatsApp to the users holding `notification.purchase_order.approver` on create, and to the order's creator on approve/reject. This is a side effect only; it does not change this endpoint's own request/response shape. See `notification.md`.

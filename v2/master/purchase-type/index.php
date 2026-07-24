@@ -56,6 +56,22 @@ function createPurchaseType($conn, $input, $username) {
     $type_name       = trim(mysqli_real_escape_string($conn, $input['type_name']));
     $vat_applicable  = isset($input['vat_applicable']) ? (!empty($input['vat_applicable']) ? 1 : 0) : 1;
 
+    $number_format_sql = 'NULL';
+    if (isset($input['number_format']) && trim($input['number_format']) !== '') {
+        $number_format = trim($input['number_format']);
+        if (!str_contains($number_format, '{seq}')) {
+            jsonResponse(400, 'number_format must include a {seq} placeholder');
+            return;
+        }
+        $number_format_sql = "'" . mysqli_real_escape_string($conn, $number_format) . "'";
+    }
+
+    $sequence_digits = isset($input['sequence_digits']) && trim($input['sequence_digits']) !== '' ? (int)$input['sequence_digits'] : 4;
+    if ($sequence_digits < 1 || $sequence_digits > 10) {
+        jsonResponse(400, 'sequence_digits must be between 1 and 10');
+        return;
+    }
+
     $dup = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".purchase_type WHERE type_name = '$type_name' AND deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($dup) > 0) {
         jsonResponse(409, 'Purchase type already exists');
@@ -65,8 +81,8 @@ function createPurchaseType($conn, $input, $username) {
     $purchase_type_id = generateUUID();
     $now               = date('Y-m-d H:i:s');
 
-    $sql = "INSERT INTO " . APP_SCHEMA . ".purchase_type (id, type_name, vat_applicable, created_by, created_at)
-            VALUES ('$purchase_type_id', '$type_name', $vat_applicable, '$username', '$now')";
+    $sql = "INSERT INTO " . APP_SCHEMA . ".purchase_type (id, type_name, vat_applicable, number_format, sequence_digits, created_by, created_at)
+            VALUES ('$purchase_type_id', '$type_name', $vat_applicable, $number_format_sql, $sequence_digits, '$username', '$now')";
 
     if (mysqli_query($conn, $sql)) {
         jsonResponse(201, 'Purchase type created successfully', ['purchase_type_id' => $purchase_type_id]);
@@ -116,6 +132,25 @@ function updatePurchaseType($conn, $purchase_type_id, $input, $username) {
     if (isset($input['vat_applicable'])) {
         $vat_applicable = !empty($input['vat_applicable']) ? 1 : 0;
         $updates[] = "vat_applicable = $vat_applicable";
+    }
+
+    if (isset($input['number_format'])) {
+        $val = trim($input['number_format']);
+        if ($val === '') { jsonResponse(400, 'number_format cannot be empty'); return; }
+        if (!str_contains($val, '{seq}')) {
+            jsonResponse(400, 'number_format must include a {seq} placeholder');
+            return;
+        }
+        $updates[] = "number_format = '" . mysqli_real_escape_string($conn, $val) . "'";
+    }
+
+    if (isset($input['sequence_digits'])) {
+        $sequence_digits = (int)$input['sequence_digits'];
+        if ($sequence_digits < 1 || $sequence_digits > 10) {
+            jsonResponse(400, 'sequence_digits must be between 1 and 10');
+            return;
+        }
+        $updates[] = "sequence_digits = $sequence_digits";
     }
 
     if (empty($updates)) {
