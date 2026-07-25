@@ -1,6 +1,6 @@
 # Purchase Order API
 
-> **Last updated:** 2026-07-25 14:17:12 WIB
+> **Last updated:** 2026-07-25 17:58:51 WIB
 > **Base URL:** `/api/v2/purchase-order`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -21,6 +21,7 @@
 | PATCH  | `/api/v2/purchase-order/{id}/approve` | Approve a purchase order |
 | PATCH  | `/api/v2/purchase-order/{id}/reject` | Reject a purchase order |
 | PATCH  | `/api/v2/purchase-order/{id}/revise` | Revise a rejected purchase order back to Draft |
+| GET    | `/api/v2/purchase-order/{id}/export` | Download the purchase order as a `.docx` file |
 | GET    | `/api/v2/purchase-order/{id}/items` | List items of a purchase order |
 | POST   | `/api/v2/purchase-order/{id}/items` | Add an item to a purchase order |
 | GET    | `/api/v2/purchase-order/{id}/items/{item_id}` | Get a single purchase order item |
@@ -642,6 +643,51 @@ Move a rejected purchase order back to `Draft` so it can be edited and resubmitt
 
 ---
 
+### GET `/api/v2/purchase-order/{id}/export`
+
+Download the purchase order as a `.docx` file, matching the layout of the legacy v1 export (`purchase/exportPDF.php`). The template used is chosen by the purchase order's `type_name` (case-insensitive substring match): a `type_name` containing `"import"` uses the Import layout (supplier, term, origin, shipment, PPN-exclusive grand total), a `type_name` containing `"local"` uses the Local layout (supplier, payment, delivery date, PPN-inclusive total). Both layouts have a fixed 5-row item table (matching the original Word templates) — orders with fewer than 5 items leave the remaining rows blank; only the first 5 items are included if there are more.
+
+#### Path parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| id | string | The purchase order ID |
+
+#### Response `200 OK`
+
+Binary `.docx` file. Headers:
+
+```
+Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document
+Content-Disposition: attachment; filename="POImport-{po_display_number}.docx"
+```
+
+(`POLocal-{po_display_number}.docx` for the Local layout.) The filename's `po_display_number` has any character outside `[A-Za-z0-9_-]` replaced with `-`.
+
+#### Response `400 Bad Request`
+
+```json
+{
+  "status_code": 400,
+  "status_message": "Export template is not configured for purchase type \"New Type\"",
+  "data": []
+}
+```
+
+Returned when the purchase order's `type_name` does not contain `"import"` or `"local"` — there is no generic/fallback template.
+
+#### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Purchase order not found",
+  "data": []
+}
+```
+
+---
+
 ### Purchase order items (`/api/v2/purchase-order/{id}/items`)
 
 Items are also a sub-resource in their own right, separate from the nested `items` array returned on the purchase order itself. `{id}` below is the parent purchase order ID; the item's own ID is `{item_id}`.
@@ -871,4 +917,5 @@ Soft-deletes the purchase order item (sets `deleted_at`) — it will no longer a
 - **`shipment_period_id` is a coarse ETA estimate** (e.g. "Early July"), not an exact date — it references `GET /api/v2/shipment-period`, a fixed global list of 36 values (`Early`/`Mid`/`End` × each month). This is distinct from `etd_date`/`eta_date` (exact dates, filled in later as the shipment actually progresses) and from `shipment_method` (the Incoterm, e.g. `CIF`).
 - **`GET .../generate-number` requires `type_id`** because the number format is per purchase type, not global (unlike `sales-order`'s single-format `generate-number`). It reads `purchase_type.number_format`/`sequence_digits`, not a hardcoded pattern — see the endpoint doc above and `purchase-type.md` for how to configure a type's format.
 - **`POST` (create) and `PATCH .../approve`/`.../reject` now trigger notifications** — in-app + WhatsApp to the users holding `notification.purchase_order.approver` on create, and to the order's creator on approve/reject. This is a side effect only; it does not change this endpoint's own request/response shape. See `notification.md`.
+- **`GET .../export` reuses the legacy v1 Word templates** (`v2/purchase/purchase-order/templates/template.docx` for Import, `local_template.docx` for Local), rendered via `PhpOffice\PhpWord\TemplateProcessor` with its macro delimiters reconfigured to the templates' original `{placeholder}` syntax (PhpWord's own default is `${placeholder}`). Since `purchase_type` is now a free-form, per-company table rather than two fixed system types, template selection matches on `type_name` containing `"import"`/`"local"` (case-insensitive) rather than a hardcoded type ID; a type that matches neither returns `400`.
 - **`settings/shipping-marks-default` is not a purchase order record** — it is stored in the generic per-company `company_setting` key/value table (same mechanism `notification-settings`'s `working-days` endpoint uses), under the key `purchase_order.shipping_marks_default`. It has no `id` of its own and does not appear in `GET /api/v2/purchase-order` or any purchase order's detail response. `PUT` updates write an `audit_log` row (`module: company_setting`, `reference_id: purchase_order.shipping_marks_default`, action `updated`).

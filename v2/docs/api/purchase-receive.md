@@ -1,6 +1,6 @@
 # Purchase Receive API
 
-> **Last updated:** 2026-07-25 15:16:54 WIB
+> **Last updated:** 2026-07-25 17:58:51 WIB
 > **Base URL:** `/api/v2/purchase-receive`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -18,6 +18,7 @@
 | PATCH  | `/api/v2/purchase-receive/{id}/approve` | Approve a purchase receive |
 | PATCH  | `/api/v2/purchase-receive/{id}/reject` | Reject a purchase receive |
 | PATCH  | `/api/v2/purchase-receive/{id}/revise` | Revise a rejected purchase receive back to Draft |
+| GET    | `/api/v2/purchase-receive/{id}/export` | Download the purchase receive as a `.docx` file |
 | GET    | `/api/v2/purchase-receive/{id}/items` | List items of a purchase receive |
 | GET    | `/api/v2/purchase-receive/{id}/items/{item_id}` | Get a single purchase receive item |
 | PUT    | `/api/v2/purchase-receive/{id}/items/{item_id}` | Update a purchase receive item |
@@ -453,6 +454,39 @@ Move a rejected purchase receive back to `Draft` so it can be edited and resubmi
 
 ---
 
+### GET `/api/v2/purchase-receive/{id}/export`
+
+Download the purchase receive as a formatted `.docx` file (built with `PhpOffice\PhpWord`, no legacy template — v1 had no equivalent export for this module). Header info (linked PO number, supplier, receiving/ship dates, ship-via), an item table (`QTY`/`PACKING`/`HARGA @`/`VAT`/`TOTAL`), grand total, and a signature block (`created_by`/`approved_by`).
+
+#### Path parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| id | string | The purchase receive ID |
+
+#### Response `200 OK`
+
+Binary `.docx` file. Headers:
+
+```
+Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document
+Content-Disposition: attachment; filename="PurchaseReceive-{po_display_number}-{receiving_date}.docx"
+```
+
+The filename's `po_display_number` has any character outside `[A-Za-z0-9_-]` replaced with `-`; `{receiving_date}` is formatted `YYYYMMDD`.
+
+#### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Purchase receive not found",
+  "data": []
+}
+```
+
+---
+
 ### Purchase receive items (`/api/v2/purchase-receive/{id}/items`)
 
 Items are also a sub-resource in their own right, separate from the nested `items` array returned on the purchase receive itself. `{id}` below is the parent purchase receive ID; the item's own ID is `{item_id}`. Unlike purchase-order items, receive items cannot be added or deleted through this sub-resource — only updated — since receive items are created together with the parent record (`POST /api/v2/purchase-receive`).
@@ -619,4 +653,5 @@ Update a purchase receive item — this is how `quantity` and `unit_price` get c
 - **`created_by`, `updated_by`, and `approved_by` are resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a purchase receive (list, detail, and any nested items). There is no separate `*_id` field for them, the resolved name **is** the value. `updated_by`/`approved_by` are `null` until the record has actually been updated/approved; `created_by` can be `null` only if the creating user has since been deleted.
 - **List and detail responses also resolve reference IDs to their display names**, alongside the existing `*_id` field (both are returned): `purchase_order_id` → `po_display_number`, `supplier_id` → `supplier_name`, `ship_via_id` → `ship_name`, `status_id` → `status_name`. All are `LEFT JOIN`ed, so the resolved field is `null` if the referenced record is missing or was deleted; the `*_id` field is unaffected either way.
 - **`POST` (create) and `PATCH .../approve`/`.../reject` now trigger notifications** — in-app + WhatsApp to the users holding `notification.purchase_receive.approver` on create, and to the receive's creator on approve/reject. This is a side effect only; it does not change this endpoint's own request/response shape. See `notification.md`.
+- **`GET .../export` has no v1 precedent** — v1 never had a purchase receive export. It is built fresh with `PhpOffice\PhpWord` (no Word template file), styled to match the purchase-order export's header/table/signature layout.
 - **The items sub-resource (`/api/v2/purchase-receive/{id}/items`) is new** — added specifically so `quantity`/`unit_price`/`packaging_size` can be corrected on a rejected receive before resubmitting, which was previously impossible (`PUT /api/v2/purchase-receive/{id}` never touched items). Unlike the equivalent purchase-order sub-resource, there is no `POST`/`DELETE` here — receive items can only be updated in place, not added or removed, since they're always created together with the parent record.

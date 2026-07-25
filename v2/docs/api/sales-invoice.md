@@ -1,6 +1,6 @@
 # Sales Invoice API
 
-> **Last updated:** 2026-07-24 21:51:35 WIB
+> **Last updated:** 2026-07-25 20:27:34 WIB
 > **Base URL:** `/api/v2/sales-invoice`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -389,7 +389,7 @@ Soft-deletes the sales invoice (sets `deleted_at`) — it will no longer appear 
 
 ### PATCH `/api/v2/sales-invoice/{id}/approve`
 
-Approve a sales invoice. Server-side sets `status_id` to the `Approved` sales status, plus `approved_by`, `approved_at`. The client does not send `status_id`.
+Approve a sales invoice. Server-side sets `status_id` to the `Approved` sales status, plus `approved_by`, `approved_at`. The client does not send `status_id`. Also seeds a baseline `finance_payment` row for this invoice (`due_amount` = sum of item totals, `paid_amount: 0`) if one doesn't already exist — see `finance-payment.md`'s note on baseline rows.
 
 #### Path parameters
 

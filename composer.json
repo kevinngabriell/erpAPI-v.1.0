@@ -3,6 +3,7 @@
         "tecnickcom/tcpdf": "^6.4",
         "phpoffice/phpspreadsheet": "^3.4",
         "firebase/php-jwt": "^7.0",
-        "workerman/workerman": "^5.1"
+        "workerman/workerman": "^5.1",
+        "phpoffice/phpword": "^1.4"
     }
 }

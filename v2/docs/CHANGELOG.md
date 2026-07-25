@@ -7,6 +7,62 @@ Intended audience: frontend developers.
 
 ---
 
+## [2026-07-25 20:27:34 WIB] — Per-partner outstanding invoice list (A/P and A/R payment entry)
+
+### Added
+- `GET /api/v2/finance-payment/outstanding-invoices?supplier_id=` or `?customer_id=` — lists a single supplier's or customer's unpaid invoices (`invoice_number`, `invoice_date`, `invoice_value`, `paid_amount`, `outstanding`). This is the v2 replacement for the legacy `showspurchaseinvoice.php`/`showssalesinvoice.php` endpoints that the A/P ("Penerimaan Pembelian") and A/R ("Penerimaan Penjualan") payment-entry screens' invoice-selection table used to call — those were still pointed at the old endpoint and 404ing on v2 UUID supplier/customer ids.
+
+### Updated
+- `PATCH /api/v2/purchase-invoice/{id}/approve` and `PATCH /api/v2/sales-invoice/{id}/approve` now seed a baseline `finance_payment` row (`paid_amount: 0`, `due_amount: <invoice total>`) for the invoice if one doesn't already exist.
+
+### Notes for frontend
+- **Why this matters:** without the baseline row, an approved invoice that had never received a manual payment was invisible to every outstanding-balance view in v2 — not just the new endpoint above, but also `ar-ap-report`, the `dashboard` AR/AP widgets, and the `has_outstanding`/`outstanding_amount` fields just added to `GET /api/v2/supplier`/`GET /api/v2/customer`. A one-time backfill was run against dev for the small number of already-approved invoices that predate this change (5 invoices) — see `v2/docs/migrations/v31_finance_payment_invoice_baseline_seed.md`. Prod backfill is written but not yet applied, pending sign-off.
+- Point the A/P/A/R payment-entry invoice table at `GET /api/v2/finance-payment/outstanding-invoices` instead of the legacy endpoint. Only invoices with `outstanding > 0` are returned — no client-side LUNAS/BELUM LUNAS filtering needed.
+- Not paginated — returns every outstanding invoice for that one partner in a single call.
+
+---
+
+## [2026-07-25 20:02:24 WIB] — Supplier/Customer lists now flag outstanding balances
+
+### Updated
+- `GET /api/v2/supplier` — each row now includes `outstanding_amount` (number) and `has_outstanding` (boolean).
+- `GET /api/v2/customer` — each row now includes `outstanding_amount` (number) and `has_outstanding` (boolean).
+
+### Notes for frontend
+- Lets the A/P and A/R payment-entry vendor/customer dropdowns badge partners with an open balance without a per-row follow-up request — matches the same "outstanding" definition already used by the AR/AP report (`MAX(due_amount) - SUM(paid_amount)` per invoice, summed across all of that partner's invoices where the difference is greater than `0`).
+- Only added to the list endpoints (`GET /api/v2/supplier`, `GET /api/v2/customer`) — the detail endpoints (`GET .../{id}`) are unchanged and do not return these fields.
+- `has_outstanding` is `true` exactly when `outstanding_amount > 0`; a partner with no unpaid invoices gets `outstanding_amount: 0, has_outstanding: false`.
+
+---
+
+## [2026-07-25 19:21:42 WIB] — Purchase Invoice items are now editable
+
+### Added
+- `GET /api/v2/purchase-invoice/{id}/items` — list items of a purchase invoice.
+- `GET /api/v2/purchase-invoice/{id}/items/{item_id}` — get a single purchase invoice item.
+- `PUT /api/v2/purchase-invoice/{id}/items/{item_id}` — update `product_name`/`quantity`/`packaging_size`/`unit_price`/`vat`/`total` on a purchase invoice item.
+
+### Notes for frontend
+- This unblocks correcting quantity/unit price on the rejected-invoice detail page's resubmit (revise) flow — previously `PUT /api/v2/purchase-invoice/{id}` never touched items, so there was no way to fix a wrong qty/price before resubmitting.
+- No add/remove: only `PUT` on an existing item is supported, mirroring the restriction that invoice items are always created together with the parent record via `POST /api/v2/purchase-invoice`. There is no `POST`/`DELETE` on this sub-resource (unlike purchase-order items).
+- Same 404 shape as purchase-order items: if `{id}` doesn't resolve to a purchase invoice owned by the caller's company, every item endpoint under it returns `404 Purchase invoice not found` rather than an item-specific message.
+
+---
+
+## [2026-07-25 17:58:51 WIB] — Purchase document export (Order, Invoice, Receive)
+
+### Added
+- `GET /api/v2/purchase-order/{id}/export` — download the purchase order as a `.docx` file. Reuses the legacy v1 Word templates (Import/Local), selected by matching `type_name` against `"import"`/`"local"` (case-insensitive) since purchase types are now a free-form per-company table rather than two fixed system types. Returns `400` if the type matches neither.
+- `GET /api/v2/purchase-invoice/{id}/export` — download the purchase invoice as a `.docx` file. No v1 equivalent existed; built fresh with `PhpOffice\PhpWord` in a layout consistent with the purchase order export.
+- `GET /api/v2/purchase-receive/{id}/export` — download the purchase receive as a `.docx` file. No v1 equivalent existed; built fresh with `PhpOffice\PhpWord`.
+
+### Notes for frontend
+- All three return a binary `.docx` (`application/vnd.openxmlformats-officedocument.wordprocessingml.document`) via `Content-Disposition: attachment`, not a JSON envelope — handle these like the existing `sales-order`/`sales-invoice`/etc. `.xlsx` export endpoints (blob download), not like other endpoints on these modules.
+- `purchase-order` export's item table is fixed at 5 rows (inherited from the original Word templates) — orders with more than 5 items only show the first 5 in this document; `purchase-invoice`/`purchase-receive` exports have no such limit.
+- Requires the new `phpoffice/phpword` composer dependency (added alongside `phpoffice/phpspreadsheet`, which the `.xlsx` exports already used).
+
+---
+
 ## [2026-07-25 15:16:54 WIB] — Purchase Receive items are now editable
 
 ### Added

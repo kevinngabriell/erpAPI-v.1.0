@@ -1,6 +1,6 @@
 # Customer API
 
-> **Last updated:** 2026-07-11 18:49:02 WIB
+> **Last updated:** 2026-07-25 20:02:24 WIB
 > **Base URL:** `/api/v2/customer`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -55,7 +55,9 @@ List all customers belonging to the authenticated company.
         "created_at": "2026-06-27 10:00:00",
         "updated_by": null,
         "updated_at": null,
-        "deleted_at": null
+        "deleted_at": null,
+        "outstanding_amount": 2500000,
+        "has_outstanding": true
       }
     ],
     "pagination": {
@@ -302,3 +304,4 @@ Soft-deletes the customer (sets `deleted_at`) — it will no longer appear in li
 - Resource is scoped to the authenticated company (`company_id` from the JWT) — records from other companies are never returned or modifiable.
 - No fields other than `customer_name` reference other tables — none of the optional fields are validated against other master data.
 - **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a customer (list, detail, and any nested items). Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.
+- **`outstanding_amount` and `has_outstanding` are only present on `GET /api/v2/customer` (list), not on `GET /api/v2/customer/{id}` (detail).** `outstanding_amount` is the sum, across every invoice tied to this customer, of `MAX(due_amount) - SUM(paid_amount)` per invoice (only invoices where that difference is greater than `0` count) — the same "outstanding" definition already used by the AR/AP report and dashboard widgets. `has_outstanding` is `true` when `outstanding_amount > 0`.

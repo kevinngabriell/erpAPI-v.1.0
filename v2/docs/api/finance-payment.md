@@ -1,6 +1,6 @@
 # Finance Payment API
 
-> **Last updated:** 2026-07-24 21:05:00 WIB
+> **Last updated:** 2026-07-25 20:27:34 WIB
 > **Base URL:** `/api/v2/finance-payment`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -11,6 +11,7 @@
 | Method | Path | Description |
 |--------|------|-------------|
 | GET    | `/api/v2/finance-payment` | List all finance payments (paginated) |
+| GET    | `/api/v2/finance-payment/outstanding-invoices` | List a single supplier's or customer's unpaid invoices |
 | POST   | `/api/v2/finance-payment` | Create a new finance payment |
 | GET    | `/api/v2/finance-payment/{id}` | Get finance payment detail |
 | PUT    | `/api/v2/finance-payment/{id}` | Update a finance payment |
@@ -94,6 +95,69 @@ List all finance payments belonging to the authenticated company.
   "data": []
 }
 ```
+
+---
+
+### GET `/api/v2/finance-payment/outstanding-invoices`
+
+List the unpaid invoices for a single supplier (A/P) or customer (A/R) — the v2 replacement for the legacy `showspurchaseinvoice.php`/`showssalesinvoice.php` endpoints. Used to populate the invoice-selection table on the A/P and A/R payment-entry screens after a vendor/customer is chosen.
+
+Not paginated — a partner's open invoice count is small enough to return in full.
+
+#### Query parameters
+
+Exactly one of `supplier_id` or `customer_id` must be provided.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| supplier_id | string | One of `supplier_id`/`customer_id` | Look up A/P invoices for this supplier |
+| customer_id | string | One of `supplier_id`/`customer_id` | Look up A/R invoices for this customer |
+
+#### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Outstanding invoices found",
+  "data": {
+    "data": [
+      {
+        "invoice_number": "001/ABC-INV/VII/2026",
+        "invoice_date": "2026-07-10",
+        "invoice_value": 5000000,
+        "paid_amount": 3500000,
+        "outstanding": 1500000
+      }
+    ]
+  }
+}
+```
+
+`invoice_value` is the invoice's total amount; `paid_amount` is the sum of everything paid against it so far; `outstanding` = `invoice_value - paid_amount`. Only invoices where `outstanding > 0` are returned — a fully paid invoice never appears here. `invoice_date` is joined from `purchase_invoice`/`sales_invoice` and can be `null` if that invoice record was hard-deleted independently of its `finance_payment` rows.
+
+#### Response `400 Bad Request`
+
+```json
+{
+  "status_code": 400,
+  "status_message": "supplier_id or customer_id is required",
+  "data": []
+}
+```
+
+Also returned as `Provide only one of supplier_id or customer_id` if both are sent.
+
+#### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Supplier not found",
+  "data": []
+}
+```
+
+Also returned as `Customer not found` (when `customer_id` doesn't resolve), or `No outstanding invoices found` (when the partner exists but has nothing outstanding).
 
 ---
 
@@ -491,3 +555,4 @@ Rejects the payment. Either signer (owner or treasury permission holder) can rej
 - **Permission model:** shared with `finance-transaction` — `keuangan.approve_owner` and `keuangan.approve_treasury` gate both modules' approve/reject endpoints identically; this is one 2-signer workflow reused across Pembayaran, Penerimaan, A/P, and A/R, not four separate ones. The existing `keuangan.ap.approve`/`keuangan.ar.approve` permission keys are unaffected by this change and continue to mean whatever they meant before (this endpoint does not check them). **As of this writing, no role has `keuangan.approve_owner`/`keuangan.approve_treasury` assigned** — see the `finance-transaction` doc's note on assigning these via the roles/permissions admin UI before go-live.
 - Update/delete are **not** blocked by `transaction_status`, matching this codebase's existing precedent elsewhere (see `finance-transaction` doc).
 - **`POST` (create) and `PATCH .../approve`/`.../reject` now trigger notifications**, identical mechanics to `finance-transaction` (see that doc's note) — create notifies `keuangan.approve_owner`/`keuangan.approve_treasury` holders, partial approval reminds the other slot and updates the creator, full approval and rejection notify the creator. This is a side effect only; it does not change this endpoint's own request/response shape. See `notification.md`.
+- **New: baseline rows are seeded automatically.** `PATCH /api/v2/purchase-invoice/{id}/approve` and `PATCH /api/v2/sales-invoice/{id}/approve` now insert a `finance_payment` row for that invoice (`paid_amount: 0`, `due_amount: <invoice total>`, `transaction_status: "posted"`) if one doesn't already exist — this is what makes `outstanding-invoices` (and `has_outstanding` on `GET /api/v2/supplier`/`GET /api/v2/customer`) able to see an invoice that has never had a manual payment recorded. These rows are indistinguishable from a real payment in `GET /api/v2/finance-payment` history other than having `payment_date: null` and no bank/cheque info — this is expected, not a bug.

@@ -4,6 +4,10 @@ require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
 require_once __DIR__ . '/../../helpers/audit_log.php';
 require_once __DIR__ . '/../../helpers/notification.php';
+require_once __DIR__ . '/../../helpers/excel_export.php';
+require_once __DIR__ . '/../../helpers/word_export.php';
+
+use PhpOffice\PhpWord\TemplateProcessor;
 
 const PURCHASE_ORDER_SHIPMENT_METHODS = ['FOB', 'CIF', 'EXW', 'CFR', 'CIP', 'DAP', 'DDP', 'FCA'];
 const PURCHASE_ORDER_SHIPPING_MARKS_KEY = 'purchase_order.shipping_marks_default';
@@ -525,6 +529,106 @@ function revisePurchaseOrder($conn, $purchase_order_id, $input, $username, $comp
     }
 }
 
+function exportPurchaseOrder($conn, $purchase_order_id, $company_id) {
+    $purchase_order_id = mysqli_real_escape_string($conn, $purchase_order_id);
+
+    $from   = APP_SCHEMA . ".purchase_order po
+            LEFT JOIN " . APP_SCHEMA . ".supplier s ON s.id = po.supplier_id
+            LEFT JOIN " . APP_SCHEMA . ".payment_term pt ON pt.id = po.term_id
+            LEFT JOIN " . APP_SCHEMA . ".payment_method pm ON pm.id = po.payment_method_id
+            LEFT JOIN " . APP_SCHEMA . ".origin o ON o.id = po.origin_id
+            LEFT JOIN " . APP_SCHEMA . ".purchase_type pty ON pty.id = po.type_id
+            LEFT JOIN " . APP_SCHEMA . ".ppn_type ppn ON ppn.id = po.ppn_type_id";
+    $result = mysqli_query($conn, "SELECT po.*, s.supplier_name, s.supplier_address, s.supplier_pic_name,
+            pt.term_name, pm.method_name, o.origin_name, pty.type_name, ppn.ppn_percentage
+            FROM $from WHERE po.id = '$purchase_order_id' AND po.company_id = '$company_id' AND po.deleted_at IS NULL LIMIT 1");
+    if (!$result || mysqli_num_rows($result) === 0) {
+        jsonResponse(404, 'Purchase order not found');
+        return;
+    }
+    $purchase_order = mysqli_fetch_assoc($result);
+
+    $items_result = mysqli_query($conn, "SELECT product_name, quantity, packaging_size, unit_price
+            FROM " . APP_SCHEMA . ".purchase_order_item
+            WHERE purchase_order_id = '$purchase_order_id' AND deleted_at IS NULL ORDER BY created_at ASC LIMIT 5");
+    $items = $items_result ? mysqli_fetch_all($items_result, MYSQLI_ASSOC) : [];
+
+    $type_name = strtolower($purchase_order['type_name'] ?? '');
+    if (str_contains($type_name, 'import')) {
+        exportPurchaseOrderImport($purchase_order, $items);
+    } elseif (str_contains($type_name, 'local')) {
+        exportPurchaseOrderLocal($purchase_order, $items);
+    } else {
+        jsonResponse(400, 'Export template is not configured for purchase type "' . ($purchase_order['type_name'] ?? '-') . '"');
+    }
+}
+
+function fillPurchaseOrderItemPlaceholders(TemplateProcessor $template, array $items): float {
+    $grand_total = 0;
+
+    for ($i = 0; $i < 5; $i++) {
+        $item       = $items[$i] ?? null;
+        $item_total = $item ? (float)$item['quantity'] * (float)$item['unit_price'] : 0;
+        $grand_total += $item_total;
+
+        $n = $i + 1;
+        $template->setValue("no$n", $item ? (string)$n : '');
+        $template->setValue("productname$n", $item['product_name'] ?? '');
+        $template->setValue("quantity$n", $item ? number_format((float)$item['quantity'], 0) : '');
+        $template->setValue("packing$n", $item ? (string)$item['packaging_size'] : '');
+        $template->setValue("unitprice$n", $item ? number_format((float)$item['unit_price'], 2) : '');
+        $template->setValue("total$n", $item ? number_format($item_total, 2) : '');
+    }
+
+    return $grand_total;
+}
+
+function exportPurchaseOrderImport($purchase_order, $items) {
+    $template = new TemplateProcessor(__DIR__ . '/templates/template.docx');
+    $template->setMacroChars('{', '}');
+
+    $template->setValue('customername', $purchase_order['supplier_name'] ?? '');
+    $template->setValue('customeraddress', $purchase_order['supplier_address'] ?? '');
+    $template->setValue('picname', $purchase_order['supplier_pic_name'] ?? '');
+    $template->setValue('ponumber', $purchase_order['po_display_number'] ?? '');
+    $template->setValue('podate', formatIndonesianDate($purchase_order['po_date'] ?? null));
+    $template->setValue('term', $purchase_order['term_name'] ?? '-');
+    $template->setValue('origin', $purchase_order['origin_name'] ?? '-');
+    $template->setValue('shipment', $purchase_order['shipment_method'] ?? '-');
+    $template->setValue('payment', $purchase_order['method_name'] ?? '-');
+    $template->setValue('shippingremarks', $purchase_order['shipping_marks'] ?? '-');
+    $template->setValue('remarks', $purchase_order['remarks'] ?? '-');
+    $template->setValue('documents', 'Documents');
+
+    $grand_total = fillPurchaseOrderItemPlaceholders($template, $items);
+    $template->setValue('grandtotal', number_format($grand_total, 2));
+
+    streamTemplateDocx($template, 'POImport-' . sanitizeFilename($purchase_order['po_display_number']) . '.docx');
+}
+
+function exportPurchaseOrderLocal($purchase_order, $items) {
+    $template = new TemplateProcessor(__DIR__ . '/templates/local_template.docx');
+    $template->setMacroChars('{', '}');
+
+    $template->setValue('suppliername', $purchase_order['supplier_name'] ?? '');
+    $template->setValue('supplieraddress', $purchase_order['supplier_address'] ?? '');
+    $template->setValue('ponumber', $purchase_order['po_display_number'] ?? '');
+    $template->setValue('podate', formatIndonesianDate($purchase_order['po_date'] ?? null));
+    $template->setValue('picname', $purchase_order['supplier_pic_name'] ?? '');
+    $template->setValue('payment', $purchase_order['method_name'] ?? '-');
+    $template->setValue('delivery', formatIndonesianDate($purchase_order['eta_date'] ?? $purchase_order['po_date'] ?? null));
+
+    $grand_total = fillPurchaseOrderItemPlaceholders($template, $items);
+
+    $ppn_percentage = (float)($purchase_order['ppn_percentage'] ?? 0);
+    $tax            = $ppn_percentage != 0 ? $grand_total * ($ppn_percentage / 100) : 0;
+
+    $template->setValue('vat', number_format($tax, 2));
+    $template->setValue('total', number_format($grand_total + $tax, 2));
+
+    streamTemplateDocx($template, 'POLocal-' . sanitizeFilename($purchase_order['po_display_number']) . '.docx');
+}
+
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
 $authUser   = requireAuth();
@@ -562,6 +666,10 @@ try {
 
     } elseif ($purchase_order_id && $sub_action === 'items') {
         require __DIR__ . '/items.php';
+
+    } elseif ($purchase_order_id && $sub_action === 'export') {
+        if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
+        exportPurchaseOrder($conn, $purchase_order_id, $company_id);
 
     } elseif ($purchase_order_id && $sub_action !== '') {
         $input = in_array($method, ['POST', 'PUT', 'PATCH'])

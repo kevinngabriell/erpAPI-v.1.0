@@ -1,6 +1,6 @@
 # Purchase Invoice API
 
-> **Last updated:** 2026-07-25 06:24:59 WIB
+> **Last updated:** 2026-07-25 20:27:34 WIB
 > **Base URL:** `/api/v2/purchase-invoice`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -18,6 +18,10 @@
 | PATCH  | `/api/v2/purchase-invoice/{id}/approve` | Approve a purchase invoice |
 | PATCH  | `/api/v2/purchase-invoice/{id}/reject` | Reject a purchase invoice |
 | PATCH  | `/api/v2/purchase-invoice/{id}/revise` | Revise a rejected purchase invoice back to Draft |
+| GET    | `/api/v2/purchase-invoice/{id}/export` | Download the purchase invoice as a `.docx` file |
+| GET    | `/api/v2/purchase-invoice/{id}/items` | List items of a purchase invoice |
+| GET    | `/api/v2/purchase-invoice/{id}/items/{item_id}` | Get a single purchase invoice item |
+| PUT    | `/api/v2/purchase-invoice/{id}/items/{item_id}` | Update a purchase invoice item |
 
 ---
 
@@ -255,7 +259,7 @@ Get detail of a single purchase invoice, including its nested `items` array.
 
 ### PUT `/api/v2/purchase-invoice/{id}`
 
-Update a purchase invoice. Only send the fields you want to change. Does not update `purchase_order_id`, items, or `status_id` — status transitions only happen via `approve`/`reject`/`revise`.
+Update a purchase invoice. Only send the fields you want to change. Does not update `purchase_order_id`, items, or `status_id` — use the items sub-resource for item changes; status transitions only happen via `approve`/`reject`/`revise`.
 
 #### Path parameters
 
@@ -349,7 +353,7 @@ Soft-deletes the purchase invoice (sets `deleted_at`) — it will no longer appe
 
 ### PATCH `/api/v2/purchase-invoice/{id}/approve`
 
-Approve a purchase invoice. Server-side sets `status_id` to the `Approved` purchase status, plus `approved_by`, `approved_at`. The client does not send `status_id`.
+Approve a purchase invoice. Server-side sets `status_id` to the `Approved` purchase status, plus `approved_by`, `approved_at`. The client does not send `status_id`. Also seeds a baseline `finance_payment` row for this invoice (`due_amount` = sum of item totals, `paid_amount: 0`) if one doesn't already exist — see `finance-payment.md`'s note on baseline rows.
 
 #### Path parameters
 
@@ -471,6 +475,180 @@ Move a rejected purchase invoice back to `Draft` so it can be edited and resubmi
 
 ---
 
+### GET `/api/v2/purchase-invoice/{id}/export`
+
+Download the purchase invoice as a formatted `.docx` file (built with `PhpOffice\PhpWord`, no legacy template — v1 had no equivalent export for this module). Header info (invoice/PO number, supplier, dates, tax invoice number, term), an item table (`QTY`/`PACKING`/`HARGA @`/`VAT`/`TOTAL`), grand total, and a signature block (`created_by`/`approved_by`).
+
+#### Path parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| id | string | The purchase invoice ID |
+
+#### Response `200 OK`
+
+Binary `.docx` file. Headers:
+
+```
+Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document
+Content-Disposition: attachment; filename="PurchaseInvoice-{invoice_display_number}.docx"
+```
+
+The filename's `invoice_display_number` has any character outside `[A-Za-z0-9_-]` replaced with `-`.
+
+#### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Purchase invoice not found",
+  "data": []
+}
+```
+
+---
+
+### Purchase invoice items (`/api/v2/purchase-invoice/{id}/items`)
+
+Items are also a sub-resource in their own right, separate from the nested `items` array returned on the purchase invoice itself. `{id}` below is the parent purchase invoice ID; the item's own ID is `{item_id}`. Unlike purchase-order items, invoice items cannot be added or deleted through this sub-resource — only updated — since invoice items are created together with the parent record (`POST /api/v2/purchase-invoice`).
+
+#### GET `/api/v2/purchase-invoice/{id}/items`
+
+List all items belonging to the purchase invoice.
+
+##### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Purchase invoice items found",
+  "data": {
+    "data": [
+      {
+        "id": "f6a7b8c9-d0e1-4f5a-3b4c-5d6e7f8a9b0c",
+        "purchase_invoice_id": "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",
+        "product_name": "Steel Rod 12mm",
+        "quantity": 100,
+        "packaging_size": 10,
+        "unit_price": 50000,
+        "vat": 5000,
+        "total": 5005000,
+        "created_by": "Budi Santoso",
+        "created_at": "2026-07-05 09:00:00",
+        "updated_by": null,
+        "updated_at": null,
+        "deleted_at": null
+      }
+    ]
+  }
+}
+```
+
+##### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "No purchase invoice items found",
+  "data": []
+}
+```
+
+If the parent purchase invoice does not belong to the company or does not exist, all item endpoints respond:
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Purchase invoice not found",
+  "data": []
+}
+```
+
+#### GET `/api/v2/purchase-invoice/{id}/items/{item_id}`
+
+Get a single purchase invoice item.
+
+##### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Purchase invoice item found",
+  "data": {
+    "id": "f6a7b8c9-d0e1-4f5a-3b4c-5d6e7f8a9b0c",
+    "purchase_invoice_id": "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",
+    "product_name": "Steel Rod 12mm",
+    "quantity": 100,
+    "packaging_size": 10,
+    "unit_price": 50000,
+    "vat": 5000,
+    "total": 5005000,
+    "created_by": "Budi Santoso",
+    "created_at": "2026-07-05 09:00:00",
+    "updated_by": null,
+    "updated_at": null,
+    "deleted_at": null
+  }
+}
+```
+
+##### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Purchase invoice item not found",
+  "data": []
+}
+```
+
+#### PUT `/api/v2/purchase-invoice/{id}/items/{item_id}`
+
+Update a purchase invoice item — this is how `quantity` and `unit_price` get corrected on a rejected invoice before resubmitting via `PATCH .../revise`. Only send the fields you want to change.
+
+##### Request body (`application/json`)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| product_name | string | No | Cannot be empty if provided |
+| quantity | number | No | — |
+| packaging_size | number | No | — |
+| unit_price | number | No | — |
+| vat | number | No | — |
+| total | number | No | — |
+
+##### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Purchase invoice item updated successfully",
+  "data": []
+}
+```
+
+##### Response `400 Bad Request`
+
+```json
+{
+  "status_code": 400,
+  "status_message": "No fields provided for update",
+  "data": []
+}
+```
+
+##### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Purchase invoice item not found",
+  "data": []
+}
+```
+
+---
+
 ## Error responses (all endpoints)
 
 | Code | When |
@@ -495,4 +673,6 @@ Move a rejected purchase invoice back to `Draft` so it can be edited and resubmi
 - The create response only returns `purchase_invoice_id`. Only the detail endpoint (`GET /api/v2/purchase-invoice/{id}`) returns the nested `items` array.
 - **`created_by`, `updated_by`, and `approved_by` are resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a purchase invoice (list, detail, and any nested items). There is no separate `*_id` field for them, the resolved name **is** the value. `updated_by`/`approved_by` are `null` until the record has actually been updated/approved; `created_by` can be `null` only if the creating user has since been deleted.
 - **List and detail responses also resolve reference IDs to their display names**, alongside the existing `*_id` field (both are returned): `purchase_order_id` → `po_display_number`, `supplier_id` → `supplier_name`, `term_id` → `term_name`, `status_id` → `status_name`. All are `LEFT JOIN`ed, so the resolved field is `null` if the referenced record is missing, was deleted, or the `*_id` was never set; the `*_id` field is unaffected either way.
+- **`GET .../export` has no v1 precedent** — v1 never had a purchase invoice export. It is built fresh with `PhpOffice\PhpWord` (no Word template file), styled to match the purchase-order export's header/table/signature layout.
 - **`POST` (create) and `PATCH .../approve`/`.../reject` now trigger notifications** — in-app + WhatsApp to the users holding `notification.purchase_invoice.approver` on create, and to the invoice's creator on approve/reject. This is a side effect only; it does not change this endpoint's own request/response shape. See `notification.md`.
+- **The items sub-resource (`/api/v2/purchase-invoice/{id}/items`) is new** — added specifically so `quantity`/`unit_price`/`packaging_size` can be corrected on a rejected invoice before resubmitting, which was previously impossible (`PUT /api/v2/purchase-invoice/{id}` never touched items). Unlike the equivalent purchase-order sub-resource, there is no `POST`/`DELETE` here — invoice items can only be updated in place, not added or removed, since they're always created together with the parent record.

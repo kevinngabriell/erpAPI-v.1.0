@@ -59,6 +59,70 @@ function getAllFinancePayments($conn, $company_id, $params) {
     }
 }
 
+function getOutstandingInvoices($conn, $company_id, $params) {
+    $supplier_id = isset($params['supplier_id']) ? trim($params['supplier_id']) : '';
+    $customer_id = isset($params['customer_id']) ? trim($params['customer_id']) : '';
+
+    if ($supplier_id === '' && $customer_id === '') {
+        jsonResponse(400, 'supplier_id or customer_id is required');
+        return;
+    }
+    if ($supplier_id !== '' && $customer_id !== '') {
+        jsonResponse(400, 'Provide only one of supplier_id or customer_id');
+        return;
+    }
+
+    if ($supplier_id !== '') {
+        $supplier_id = mysqli_real_escape_string($conn, $supplier_id);
+        $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".supplier WHERE id = '$supplier_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+        if (mysqli_num_rows($check) === 0) {
+            jsonResponse(404, 'Supplier not found');
+            return;
+        }
+
+        $result = mysqli_query($conn, "SELECT fp.invoice_number, pi.invoice_date,
+                MAX(fp.due_amount) AS invoice_value,
+                SUM(COALESCE(fp.paid_amount, 0)) AS paid_amount,
+                MAX(fp.due_amount) - SUM(COALESCE(fp.paid_amount, 0)) AS outstanding
+            FROM " . APP_SCHEMA . ".finance_payment fp
+            LEFT JOIN " . APP_SCHEMA . ".purchase_invoice pi ON pi.invoice_display_number = fp.invoice_number AND pi.company_id = fp.company_id
+            WHERE fp.company_id = '$company_id' AND fp.supplier_id = '$supplier_id' AND fp.deleted_at IS NULL
+            GROUP BY fp.invoice_number, pi.invoice_date
+            HAVING outstanding > 0
+            ORDER BY pi.invoice_date ASC");
+    } else {
+        $customer_id = mysqli_real_escape_string($conn, $customer_id);
+        $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".customer WHERE id = '$customer_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+        if (mysqli_num_rows($check) === 0) {
+            jsonResponse(404, 'Customer not found');
+            return;
+        }
+
+        $result = mysqli_query($conn, "SELECT fp.invoice_number, si.invoice_date,
+                MAX(fp.due_amount) AS invoice_value,
+                SUM(COALESCE(fp.paid_amount, 0)) AS paid_amount,
+                MAX(fp.due_amount) - SUM(COALESCE(fp.paid_amount, 0)) AS outstanding
+            FROM " . APP_SCHEMA . ".finance_payment fp
+            LEFT JOIN " . APP_SCHEMA . ".sales_invoice si ON si.invoice_display_number = fp.invoice_number AND si.company_id = fp.company_id
+            WHERE fp.company_id = '$company_id' AND fp.customer_id = '$customer_id' AND fp.deleted_at IS NULL
+            GROUP BY fp.invoice_number, si.invoice_date
+            HAVING outstanding > 0
+            ORDER BY si.invoice_date ASC");
+    }
+
+    if ($result && mysqli_num_rows($result) > 0) {
+        $invoices = mysqli_fetch_all($result, MYSQLI_ASSOC);
+        foreach ($invoices as &$invoice) {
+            $invoice['invoice_value'] = (float)$invoice['invoice_value'];
+            $invoice['paid_amount']   = (float)$invoice['paid_amount'];
+            $invoice['outstanding']   = (float)$invoice['outstanding'];
+        }
+        jsonResponse(200, 'Outstanding invoices found', ['data' => $invoices]);
+    } else {
+        jsonResponse(404, 'No outstanding invoices found');
+    }
+}
+
 function createFinancePayment($conn, $input, $username, $company_id) {
     $required = ['invoice_number', 'paid_amount'];
     foreach ($required as $field) {
@@ -360,7 +424,11 @@ $sub_action          = $parts[4] ?? '';
 try {
     $conn = getConn();
 
-    if ($finance_payment_id && $sub_action !== '') {
+    if ($finance_payment_id === 'outstanding-invoices') {
+        if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
+        getOutstandingInvoices($conn, $company_id, $_GET);
+
+    } elseif ($finance_payment_id && $sub_action !== '') {
         $input = in_array($method, ['POST', 'PUT', 'PATCH'])
             ? (json_decode(file_get_contents('php://input'), true) ?? [])
             : [];

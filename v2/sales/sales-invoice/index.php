@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../connection/db.php';
 require_once __DIR__ . '/../../helpers/audit_log.php';
 require_once __DIR__ . '/../../helpers/excel_export.php';
 require_once __DIR__ . '/../../helpers/notification.php';
+require_once __DIR__ . '/../../helpers/finance_payment.php';
 
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
@@ -317,7 +318,7 @@ function deleteSalesInvoice($conn, $sales_invoice_id, $username, $company_id) {
 }
 
 function approveSalesInvoice($conn, $sales_invoice_id, $input, $username, $company_id) {
-    $check = mysqli_query($conn, "SELECT si.created_by, si.invoice_display_number, c.customer_name
+    $check = mysqli_query($conn, "SELECT si.created_by, si.invoice_display_number, si.customer_id, c.customer_name
             FROM " . APP_SCHEMA . ".sales_invoice si
             LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = si.customer_id
             WHERE si.id = '$sales_invoice_id' AND si.company_id = '$company_id' AND si.deleted_at IS NULL LIMIT 1");
@@ -343,6 +344,7 @@ function approveSalesInvoice($conn, $sales_invoice_id, $input, $username, $compa
 
         $approver_name = resolveDisplayName($conn, $username);
         $total_invoice = calculateSalesInvoiceTotal($conn, $sales_invoice_id);
+        seedFinancePaymentBaseline($conn, $company_id, $sales_invoice['invoice_display_number'], $total_invoice, $sales_invoice['customer_id'], null, $username);
         $detail_link   = rtrim(APPROVAL_BASE_URL, '/') . '/sales/sales-invoice/' . $sales_invoice_id;
 
         notify($conn, [

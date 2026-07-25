@@ -14,20 +14,40 @@ function getAllCustomers($conn, $company_id, $params) {
         $where .= " AND (c.customer_name LIKE '%$search%' OR c.customer_pic_name LIKE '%$search%')";
     }
 
+    $outstanding_join = "LEFT JOIN (
+            SELECT customer_id, SUM(outstanding) AS outstanding_amount
+            FROM (
+                SELECT customer_id, invoice_number, MAX(due_amount) - SUM(COALESCE(paid_amount, 0)) AS outstanding
+                FROM " . APP_SCHEMA . ".finance_payment
+                WHERE company_id = '$company_id' AND customer_id IS NOT NULL AND deleted_at IS NULL
+                GROUP BY customer_id, invoice_number
+                HAVING outstanding > 0
+            ) inv
+            GROUP BY customer_id
+        ) fpo ON fpo.customer_id = c.id";
+
     $from = APP_SCHEMA . ".customer c
             LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = c.created_by
-            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = c.updated_by";
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = c.updated_by
+            $outstanding_join";
 
     $result       = mysqli_query($conn, "SELECT c.*,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
-            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by,
+            COALESCE(fpo.outstanding_amount, 0) AS outstanding_amount
             FROM $from WHERE $where ORDER BY c.created_at DESC LIMIT $limit OFFSET $offset");
     $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".customer c WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
+        $customers = mysqli_fetch_all($result, MYSQLI_ASSOC);
+        foreach ($customers as &$customer) {
+            $customer['outstanding_amount'] = (float)$customer['outstanding_amount'];
+            $customer['has_outstanding']    = $customer['outstanding_amount'] > 0;
+        }
+
         jsonResponse(200, 'Customers found', [
-            'data'       => mysqli_fetch_all($result, MYSQLI_ASSOC),
+            'data'       => $customers,
             'pagination' => [
                 'total'       => $total,
                 'page'        => $page,

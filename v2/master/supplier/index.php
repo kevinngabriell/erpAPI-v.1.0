@@ -18,20 +18,40 @@ function getAllSuppliers($conn, $company_id, $params) {
         $where .= " AND s.supplier_origin_id = '$supplier_origin_id'";
     }
 
+    $outstanding_join = "LEFT JOIN (
+            SELECT supplier_id, SUM(outstanding) AS outstanding_amount
+            FROM (
+                SELECT supplier_id, invoice_number, MAX(due_amount) - SUM(COALESCE(paid_amount, 0)) AS outstanding
+                FROM " . APP_SCHEMA . ".finance_payment
+                WHERE company_id = '$company_id' AND supplier_id IS NOT NULL AND deleted_at IS NULL
+                GROUP BY supplier_id, invoice_number
+                HAVING outstanding > 0
+            ) inv
+            GROUP BY supplier_id
+        ) fpo ON fpo.supplier_id = s.id";
+
     $from = APP_SCHEMA . ".supplier s
             LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = s.created_by
-            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = s.updated_by";
+            LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = s.updated_by
+            $outstanding_join";
 
     $result       = mysqli_query($conn, "SELECT s.*,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
-            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
+            CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by,
+            COALESCE(fpo.outstanding_amount, 0) AS outstanding_amount
             FROM $from WHERE $where ORDER BY s.created_at DESC LIMIT $limit OFFSET $offset");
     $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".supplier s WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
+        $suppliers = mysqli_fetch_all($result, MYSQLI_ASSOC);
+        foreach ($suppliers as &$supplier) {
+            $supplier['outstanding_amount'] = (float)$supplier['outstanding_amount'];
+            $supplier['has_outstanding']    = $supplier['outstanding_amount'] > 0;
+        }
+
         jsonResponse(200, 'Suppliers found', [
-            'data'       => mysqli_fetch_all($result, MYSQLI_ASSOC),
+            'data'       => $suppliers,
             'pagination' => [
                 'total'       => $total,
                 'page'        => $page,

@@ -1,6 +1,6 @@
 # Supplier API
 
-> **Last updated:** 2026-07-11 18:49:02 WIB
+> **Last updated:** 2026-07-25 20:02:24 WIB
 > **Base URL:** `/api/v2/supplier`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -58,7 +58,9 @@ List all suppliers belonging to the authenticated company.
         "created_at": "2026-06-27 10:00:00",
         "updated_by": null,
         "updated_at": null,
-        "deleted_at": null
+        "deleted_at": null,
+        "outstanding_amount": 1500000,
+        "has_outstanding": true
       }
     ],
     "pagination": {
@@ -327,3 +329,4 @@ Soft-deletes the supplier (sets `deleted_at`) — it will no longer appear in li
 - `supplier_currency_id` must reference an existing, non-deleted row in the `currency` table (global, not company-scoped).
 - `supplier_term_id` must reference an existing, non-deleted row in the `payment_term` table (global, not company-scoped).
 - **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a supplier (list, detail, and any nested items). Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.
+- **`outstanding_amount` and `has_outstanding` are only present on `GET /api/v2/supplier` (list), not on `GET /api/v2/supplier/{id}` (detail).** `outstanding_amount` is the sum, across every invoice tied to this supplier, of `MAX(due_amount) - SUM(paid_amount)` per invoice (only invoices where that difference is greater than `0` count) — the same "outstanding" definition already used by the AR/AP report and dashboard widgets. `has_outstanding` is `true` when `outstanding_amount > 0`.

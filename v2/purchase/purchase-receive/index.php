@@ -4,6 +4,10 @@ require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
 require_once __DIR__ . '/../../helpers/audit_log.php';
 require_once __DIR__ . '/../../helpers/notification.php';
+require_once __DIR__ . '/../../helpers/excel_export.php';
+require_once __DIR__ . '/../../helpers/word_export.php';
+
+use PhpOffice\PhpWord\PhpWord;
 
 function getPurchaseStatusIdByName($conn, $status_name) {
     $status_name = mysqli_real_escape_string($conn, $status_name);
@@ -388,6 +392,94 @@ function revisePurchaseReceive($conn, $purchase_receive_id, $input, $username, $
     }
 }
 
+function exportPurchaseReceive($conn, $purchase_receive_id, $company_id) {
+    $purchase_receive_id = mysqli_real_escape_string($conn, $purchase_receive_id);
+
+    $from   = APP_SCHEMA . ".purchase_receive pr
+            LEFT JOIN " . APP_SCHEMA . ".purchase_order po ON po.id = pr.purchase_order_id
+            LEFT JOIN " . APP_SCHEMA . ".supplier s ON s.id = pr.supplier_id
+            LEFT JOIN " . APP_SCHEMA . ".ship_via sv ON sv.id = pr.ship_via_id
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = pr.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user au ON au.user_id COLLATE utf8mb4_general_ci = pr.approved_by";
+    $result = mysqli_query($conn, "SELECT pr.*, po.po_display_number, s.supplier_name, s.supplier_address, sv.ship_name,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by_name,
+            CONCAT(au.first_name, ' ', au.last_name) AS approved_by_name
+            FROM $from WHERE pr.id = '$purchase_receive_id' AND pr.company_id = '$company_id' AND pr.deleted_at IS NULL LIMIT 1");
+    if (!$result || mysqli_num_rows($result) === 0) {
+        jsonResponse(404, 'Purchase receive not found');
+        return;
+    }
+    $purchase_receive = mysqli_fetch_assoc($result);
+
+    $items_result = mysqli_query($conn, "SELECT product_name, quantity, packaging_size, unit_price, vat, total
+            FROM " . APP_SCHEMA . ".purchase_receive_item
+            WHERE purchase_receive_id = '$purchase_receive_id' AND deleted_at IS NULL ORDER BY created_at ASC");
+    $items = $items_result ? mysqli_fetch_all($items_result, MYSQLI_ASSOC) : [];
+
+    $document = new PhpWord();
+    $section  = $document->addSection();
+
+    $section->addText('PURCHASE RECEIVE', ['bold' => true, 'size' => 14], ['alignment' => 'center']);
+    $section->addTextBreak();
+
+    $info_table = $section->addTable(['cellMargin' => 80]);
+    $info_rows = [
+        ['PO No :', $purchase_receive['po_display_number'] ?? '-', 'Supplier :', $purchase_receive['supplier_name'] ?? '-'],
+        ['Tgl Terima :', formatIndonesianDate($purchase_receive['receiving_date'] ?? null), 'Alamat :', $purchase_receive['supplier_address'] ?? '-'],
+        ['Tgl Kirim :', formatIndonesianDate($purchase_receive['ship_date'] ?? null), 'Via :', $purchase_receive['ship_name'] ?? '-'],
+    ];
+    foreach ($info_rows as $row) {
+        $info_table->addRow();
+        $info_table->addCell(2200)->addText($row[0]);
+        $info_table->addCell(3300)->addText($row[1]);
+        $info_table->addCell(1800)->addText($row[2]);
+        $info_table->addCell(3300)->addText($row[3]);
+    }
+
+    $section->addTextBreak();
+
+    $border_style = ['borderSize' => 6, 'borderColor' => '000000'];
+    $item_table   = $section->addTable($border_style);
+
+    $item_table->addRow();
+    foreach (['NO', 'PRODUK', 'QTY', 'PACKING', 'HARGA @', 'VAT', 'TOTAL'] as $header) {
+        $item_table->addCell(1300, $border_style)->addText($header, ['bold' => true], ['alignment' => 'center']);
+    }
+
+    $grand_total = 0;
+    $no          = 1;
+    foreach ($items as $item) {
+        $item_table->addRow();
+        $item_table->addCell(1300, $border_style)->addText((string)$no++, [], ['alignment' => 'center']);
+        $item_table->addCell(1300, $border_style)->addText($item['product_name']);
+        $item_table->addCell(1300, $border_style)->addText(number_format((float)$item['quantity'], 0), [], ['alignment' => 'center']);
+        $item_table->addCell(1300, $border_style)->addText((string)$item['packaging_size'], [], ['alignment' => 'center']);
+        $item_table->addCell(1300, $border_style)->addText(number_format((float)$item['unit_price'], 2), [], ['alignment' => 'right']);
+        $item_table->addCell(1300, $border_style)->addText(number_format((float)$item['vat'], 2), [], ['alignment' => 'right']);
+        $item_table->addCell(1300, $border_style)->addText(number_format((float)$item['total'], 2), [], ['alignment' => 'right']);
+        $grand_total += (float)$item['total'];
+    }
+
+    $item_table->addRow();
+    $item_table->addCell(6500, $border_style + ['gridSpan' => 6])->addText('TOTAL', ['bold' => true], ['alignment' => 'right']);
+    $item_table->addCell(1300, $border_style)->addText(number_format($grand_total, 2), ['bold' => true], ['alignment' => 'right']);
+
+    $section->addTextBreak(3);
+
+    $footer_table = $section->addTable(['cellMargin' => 80]);
+    $footer_table->addRow();
+    $footer_table->addCell(4500)->addText('DIBUAT OLEH,');
+    $footer_table->addCell(4500)->addText('DISETUJUI OLEH,');
+    $footer_table->addRow();
+    $footer_table->addCell(4500)->addTextBreak(2);
+    $footer_table->addCell(4500)->addTextBreak(2);
+    $footer_table->addRow();
+    $footer_table->addCell(4500)->addText('(' . ($purchase_receive['created_by_name'] ?? '-') . ')');
+    $footer_table->addCell(4500)->addText('(' . ($purchase_receive['approved_by_name'] ?? '-') . ')');
+
+    streamDocx($document, 'PurchaseReceive-' . sanitizeFilename($purchase_receive['po_display_number']) . '-' . date('Ymd', strtotime($purchase_receive['receiving_date'])) . '.docx');
+}
+
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
 $authUser   = requireAuth();
@@ -408,6 +500,10 @@ try {
 
     if ($purchase_receive_id && $sub_action === 'items') {
         require __DIR__ . '/items.php';
+
+    } elseif ($purchase_receive_id && $sub_action === 'export') {
+        if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
+        exportPurchaseReceive($conn, $purchase_receive_id, $company_id);
 
     } elseif ($purchase_receive_id && $sub_action !== '') {
         $input = in_array($method, ['POST', 'PUT', 'PATCH'])

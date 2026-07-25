@@ -4,12 +4,24 @@ require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
 require_once __DIR__ . '/../../helpers/audit_log.php';
 require_once __DIR__ . '/../../helpers/notification.php';
+require_once __DIR__ . '/../../helpers/excel_export.php';
+require_once __DIR__ . '/../../helpers/word_export.php';
+require_once __DIR__ . '/../../helpers/finance_payment.php';
+
+use PhpOffice\PhpWord\PhpWord;
 
 function getPurchaseStatusIdByName($conn, $status_name) {
     $status_name = mysqli_real_escape_string($conn, $status_name);
     $result = mysqli_query($conn, "SELECT id FROM " . APP_SCHEMA . ".purchase_status WHERE status_name = '$status_name' AND deleted_at IS NULL LIMIT 1");
     $row = $result ? mysqli_fetch_assoc($result) : null;
     return $row ? $row['id'] : null;
+}
+
+function calculatePurchaseInvoiceTotal($conn, $purchase_invoice_id) {
+    $purchase_invoice_id = mysqli_real_escape_string($conn, $purchase_invoice_id);
+    $result = mysqli_query($conn, "SELECT SUM(total) AS total_invoice
+            FROM " . APP_SCHEMA . ".purchase_invoice_item WHERE purchase_invoice_id = '$purchase_invoice_id' AND deleted_at IS NULL");
+    return $result ? (float)(mysqli_fetch_assoc($result)['total_invoice'] ?? 0) : 0;
 }
 
 function getAllPurchaseInvoices($conn, $company_id, $params) {
@@ -281,7 +293,7 @@ function deletePurchaseInvoice($conn, $purchase_invoice_id, $username, $company_
 }
 
 function approvePurchaseInvoice($conn, $purchase_invoice_id, $input, $username, $company_id) {
-    $check = mysqli_query($conn, "SELECT invoice_display_number, created_by FROM " . APP_SCHEMA . ".purchase_invoice WHERE id = '$purchase_invoice_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $check = mysqli_query($conn, "SELECT invoice_display_number, supplier_id, created_by FROM " . APP_SCHEMA . ".purchase_invoice WHERE id = '$purchase_invoice_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Purchase invoice not found');
         return;
@@ -302,6 +314,9 @@ function approvePurchaseInvoice($conn, $purchase_invoice_id, $input, $username, 
             WHERE id = '$purchase_invoice_id' AND company_id = '$company_id'")) {
         insertAuditLog($conn, $company_id, 'purchase_invoice', $purchase_invoice_id, 'approved', $username, $notes);
         invalidateApprovalTokens($conn, 'purchase_invoice', $purchase_invoice_id);
+
+        $total_invoice = calculatePurchaseInvoiceTotal($conn, $purchase_invoice_id);
+        seedFinancePaymentBaseline($conn, $company_id, $purchase_invoice['invoice_display_number'], $total_invoice, null, $purchase_invoice['supplier_id'], $username);
 
         $approver_name = resolveDisplayName($conn, $username);
         notify($conn, [
@@ -397,6 +412,95 @@ function revisePurchaseInvoice($conn, $purchase_invoice_id, $input, $username, $
     }
 }
 
+function exportPurchaseInvoice($conn, $purchase_invoice_id, $company_id) {
+    $purchase_invoice_id = mysqli_real_escape_string($conn, $purchase_invoice_id);
+
+    $from   = APP_SCHEMA . ".purchase_invoice pi
+            LEFT JOIN " . APP_SCHEMA . ".purchase_order po ON po.id = pi.purchase_order_id
+            LEFT JOIN " . APP_SCHEMA . ".supplier s ON s.id = pi.supplier_id
+            LEFT JOIN " . APP_SCHEMA . ".payment_term pt ON pt.id = pi.term_id
+            LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = pi.created_by
+            LEFT JOIN " . CORE_SCHEMA . ".app_user au ON au.user_id COLLATE utf8mb4_general_ci = pi.approved_by";
+    $result = mysqli_query($conn, "SELECT pi.*, po.po_display_number, s.supplier_name, s.supplier_address, pt.term_name,
+            CONCAT(cu.first_name, ' ', cu.last_name) AS created_by_name,
+            CONCAT(au.first_name, ' ', au.last_name) AS approved_by_name
+            FROM $from WHERE pi.id = '$purchase_invoice_id' AND pi.company_id = '$company_id' AND pi.deleted_at IS NULL LIMIT 1");
+    if (!$result || mysqli_num_rows($result) === 0) {
+        jsonResponse(404, 'Purchase invoice not found');
+        return;
+    }
+    $purchase_invoice = mysqli_fetch_assoc($result);
+
+    $items_result = mysqli_query($conn, "SELECT product_name, quantity, packaging_size, unit_price, vat, total
+            FROM " . APP_SCHEMA . ".purchase_invoice_item
+            WHERE purchase_invoice_id = '$purchase_invoice_id' AND deleted_at IS NULL ORDER BY created_at ASC");
+    $items = $items_result ? mysqli_fetch_all($items_result, MYSQLI_ASSOC) : [];
+
+    $document = new PhpWord();
+    $section  = $document->addSection();
+
+    $section->addText('PURCHASE INVOICE', ['bold' => true, 'size' => 14], ['alignment' => 'center']);
+    $section->addTextBreak();
+
+    $info_table = $section->addTable(['cellMargin' => 80]);
+    $info_rows = [
+        ['No Invoice :', $purchase_invoice['invoice_display_number'] ?? '-', 'PO No :', $purchase_invoice['po_display_number'] ?? '-'],
+        ['Tanggal :', formatIndonesianDate($purchase_invoice['invoice_date'] ?? null), 'Supplier :', $purchase_invoice['supplier_name'] ?? '-'],
+        ['Tgl Kirim :', formatIndonesianDate($purchase_invoice['ship_date'] ?? null), 'Alamat :', $purchase_invoice['supplier_address'] ?? '-'],
+        ['No Faktur Pajak :', $purchase_invoice['tax_invoice_number'] ?? '-', 'Termin :', $purchase_invoice['term_name'] ?? '-'],
+    ];
+    foreach ($info_rows as $row) {
+        $info_table->addRow();
+        $info_table->addCell(2200)->addText($row[0]);
+        $info_table->addCell(3300)->addText($row[1]);
+        $info_table->addCell(1800)->addText($row[2]);
+        $info_table->addCell(3300)->addText($row[3]);
+    }
+
+    $section->addTextBreak();
+
+    $border_style = ['borderSize' => 6, 'borderColor' => '000000'];
+    $item_table   = $section->addTable($border_style);
+
+    $item_table->addRow();
+    foreach (['NO', 'PRODUK', 'QTY', 'PACKING', 'HARGA @', 'VAT', 'TOTAL'] as $header) {
+        $item_table->addCell(1300, $border_style)->addText($header, ['bold' => true], ['alignment' => 'center']);
+    }
+
+    $grand_total = 0;
+    $no          = 1;
+    foreach ($items as $item) {
+        $item_table->addRow();
+        $item_table->addCell(1300, $border_style)->addText((string)$no++, [], ['alignment' => 'center']);
+        $item_table->addCell(1300, $border_style)->addText($item['product_name']);
+        $item_table->addCell(1300, $border_style)->addText(number_format((float)$item['quantity'], 0), [], ['alignment' => 'center']);
+        $item_table->addCell(1300, $border_style)->addText((string)$item['packaging_size'], [], ['alignment' => 'center']);
+        $item_table->addCell(1300, $border_style)->addText(number_format((float)$item['unit_price'], 2), [], ['alignment' => 'right']);
+        $item_table->addCell(1300, $border_style)->addText(number_format((float)$item['vat'], 2), [], ['alignment' => 'right']);
+        $item_table->addCell(1300, $border_style)->addText(number_format((float)$item['total'], 2), [], ['alignment' => 'right']);
+        $grand_total += (float)$item['total'];
+    }
+
+    $item_table->addRow();
+    $item_table->addCell(6500, $border_style + ['gridSpan' => 6])->addText('TOTAL', ['bold' => true], ['alignment' => 'right']);
+    $item_table->addCell(1300, $border_style)->addText(number_format($grand_total, 2), ['bold' => true], ['alignment' => 'right']);
+
+    $section->addTextBreak(3);
+
+    $footer_table = $section->addTable(['cellMargin' => 80]);
+    $footer_table->addRow();
+    $footer_table->addCell(4500)->addText('DIBUAT OLEH,');
+    $footer_table->addCell(4500)->addText('DISETUJUI OLEH,');
+    $footer_table->addRow();
+    $footer_table->addCell(4500)->addTextBreak(2);
+    $footer_table->addCell(4500)->addTextBreak(2);
+    $footer_table->addRow();
+    $footer_table->addCell(4500)->addText('(' . ($purchase_invoice['created_by_name'] ?? '-') . ')');
+    $footer_table->addCell(4500)->addText('(' . ($purchase_invoice['approved_by_name'] ?? '-') . ')');
+
+    streamDocx($document, 'PurchaseInvoice-' . sanitizeFilename($purchase_invoice['invoice_display_number']) . '.docx');
+}
+
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
 $authUser   = requireAuth();
@@ -415,7 +519,14 @@ $sub_action           = $parts[4] ?? '';
 try {
     $conn = getConn();
 
-    if ($purchase_invoice_id && $sub_action !== '') {
+    if ($purchase_invoice_id && $sub_action === 'items') {
+        require __DIR__ . '/items.php';
+
+    } elseif ($purchase_invoice_id && $sub_action === 'export') {
+        if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
+        exportPurchaseInvoice($conn, $purchase_invoice_id, $company_id);
+
+    } elseif ($purchase_invoice_id && $sub_action !== '') {
         $input = in_array($method, ['POST', 'PUT', 'PATCH'])
             ? (json_decode(file_get_contents('php://input'), true) ?? [])
             : [];
