@@ -1,6 +1,6 @@
 # Purchase Order API
 
-> **Last updated:** 2026-07-25 07:00:00 WIB
+> **Last updated:** 2026-07-25 09:00:00 WIB
 > **Base URL:** `/api/v2/purchase-order`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -11,6 +11,8 @@
 | Method | Path | Description |
 |--------|------|-------------|
 | GET    | `/api/v2/purchase-order/generate-number` | Generate the next `po_display_number` for the given purchase type |
+| GET    | `/api/v2/purchase-order/settings/shipping-marks-default` | Get the authenticated company's default "Shipping Marks" template text |
+| PUT    | `/api/v2/purchase-order/settings/shipping-marks-default` | Set the authenticated company's default "Shipping Marks" template text |
 | GET    | `/api/v2/purchase-order` | List all purchase orders (paginated) |
 | POST   | `/api/v2/purchase-order` | Create a new purchase order (with items) |
 | GET    | `/api/v2/purchase-order/{id}` | Get purchase order detail (with items) |
@@ -86,6 +88,60 @@ A purchase type with no `number_format` configured (e.g. a newly created type) c
 {
   "status_code": 500,
   "status_message": "Purchase type \"New Type\" has no number_format configured",
+  "data": []
+}
+```
+
+---
+
+### GET `/api/v2/purchase-order/settings/shipping-marks-default`
+
+Get the authenticated company's default "Shipping Marks" template text — the prefill text a client should use to seed the free-text `shipping_marks` field on `POST /api/v2/purchase-order` (e.g. on the New Purchase Order (Import) form). This is a per-company setting, not a purchase-order field.
+
+#### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Shipping marks default retrieved",
+  "data": {
+    "shipping_marks_default": "VIK - PO - No....\nInv. No....DD......\nJakarta"
+  }
+}
+```
+
+`shipping_marks_default` is `""` (empty string) if the company has never set one — there is no separate 404 case.
+
+---
+
+### PUT `/api/v2/purchase-order/settings/shipping-marks-default`
+
+Set the authenticated company's default "Shipping Marks" template text.
+
+#### Request body (`application/json`)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| shipping_marks_default | string | Yes | The new default template text. May be an empty string to clear it — this is an upsert, not a partial update, so the field must always be present. |
+
+#### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Shipping marks default updated successfully",
+  "data": {
+    "shipping_marks_default": "VIK - PO - No....\nInv. No....DD......\nJakarta"
+  }
+}
+```
+
+#### Response `400 Bad Request`
+
+```json
+{
+  "status_code": 400,
+  "status_message": "shipping_marks_default is required",
   "data": []
 }
 ```
@@ -815,3 +871,4 @@ Soft-deletes the purchase order item (sets `deleted_at`) — it will no longer a
 - **`shipment_period_id` is a coarse ETA estimate** (e.g. "Early July"), not an exact date — it references `GET /api/v2/shipment-period`, a fixed global list of 36 values (`Early`/`Mid`/`End` × each month). This is distinct from `etd_date`/`eta_date` (exact dates, filled in later as the shipment actually progresses) and from `shipment_method` (the Incoterm, e.g. `CIF`).
 - **`GET .../generate-number` requires `type_id`** because the number format is per purchase type, not global (unlike `sales-order`'s single-format `generate-number`). It reads `purchase_type.number_format`/`sequence_digits`, not a hardcoded pattern — see the endpoint doc above and `purchase-type.md` for how to configure a type's format.
 - **`POST` (create) and `PATCH .../approve`/`.../reject` now trigger notifications** — in-app + WhatsApp to the users holding `notification.purchase_order.approver` on create, and to the order's creator on approve/reject. This is a side effect only; it does not change this endpoint's own request/response shape. See `notification.md`.
+- **`settings/shipping-marks-default` is not a purchase order record** — it is stored in the generic per-company `company_setting` key/value table (same mechanism `notification-settings`'s `working-days` endpoint uses), under the key `purchase_order.shipping_marks_default`. It has no `id` of its own and does not appear in `GET /api/v2/purchase-order` or any purchase order's detail response. `PUT` updates write an `audit_log` row (`module: company_setting`, `reference_id: purchase_order.shipping_marks_default`, action `updated`).

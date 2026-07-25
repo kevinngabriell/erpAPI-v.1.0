@@ -37,7 +37,10 @@ function getAllFinanceTransactions($conn, $company_id, $params) {
             LEFT JOIN " . CORE_SCHEMA . ".app_user ow ON ow.user_id COLLATE utf8mb4_general_ci = ft.approved_by_owner_id
             LEFT JOIN " . CORE_SCHEMA . ".app_user tr ON tr.user_id COLLATE utf8mb4_general_ci = ft.approved_by_treasury_id";
 
-    $result       = mysqli_query($conn, "SELECT ft.*, ba.bank_name, ba.bank_number, fc.category_name,
+    $result       = mysqli_query($conn, "SELECT ft.id, ft.voucher_number, ft.transaction_date, ft.memo, ft.amount,
+            ft.cheque_number, ft.payee, ft.transaction_status, ft.approved_by_owner_at, ft.approved_by_treasury_at,
+            ft.created_at, ft.updated_at, ft.deleted_at,
+            ba.bank_name, ba.bank_number, fc.category_name,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by,
             CONCAT(ow.first_name, ' ', ow.last_name) AS approved_by_owner,
@@ -47,8 +50,32 @@ function getAllFinanceTransactions($conn, $company_id, $params) {
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
+        $finance_transactions = mysqli_fetch_all($result, MYSQLI_ASSOC);
+
+        $transaction_ids = array_map(fn($row) => "'" . mysqli_real_escape_string($conn, $row['id']) . "'", $finance_transactions);
+        $details_from    = APP_SCHEMA . ".finance_transaction_detail ftd
+                LEFT JOIN " . APP_SCHEMA . ".account_code ac ON ac.id = ftd.account_code_id";
+        $details_result  = mysqli_query($conn, "SELECT ftd.finance_transaction_id, ac.account_code, ac.account_code_name, ftd.amount
+                FROM $details_from
+                WHERE ftd.finance_transaction_id IN (" . implode(',', $transaction_ids) . ") AND ftd.deleted_at IS NULL
+                ORDER BY ftd.created_at ASC");
+
+        $accounts_by_transaction = [];
+        while ($details_result && ($row = mysqli_fetch_assoc($details_result))) {
+            $accounts_by_transaction[$row['finance_transaction_id']][] = [
+                'account_code'      => $row['account_code'],
+                'account_code_name' => $row['account_code_name'],
+                'amount'            => $row['amount'],
+            ];
+        }
+
+        foreach ($finance_transactions as &$finance_transaction) {
+            $finance_transaction['accounts'] = $accounts_by_transaction[$finance_transaction['id']] ?? [];
+        }
+        unset($finance_transaction);
+
         jsonResponse(200, 'Finance transactions found', [
-            'data'       => mysqli_fetch_all($result, MYSQLI_ASSOC),
+            'data'       => $finance_transactions,
             'pagination' => [
                 'total'       => $total,
                 'page'        => $page,

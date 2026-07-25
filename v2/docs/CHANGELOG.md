@@ -7,6 +7,33 @@ Intended audience: frontend developers.
 
 ---
 
+## [2026-07-25 09:30:00 WIB] — Finance transaction list trimmed to display fields + accounts summary
+
+### Updated
+- `GET /api/v2/finance-transaction` — list rows no longer include `company_id`, `bank_account_id`, `finance_category_id`, `approved_by_owner_id`, `approved_by_treasury_id`; the resolved display fields (`bank_name`/`bank_number`, `category_name`, `approved_by_owner`/`approved_by_treasury`) that were already returned are the only reference to those relations kept on list rows now. Each row also gains a new `accounts` array — one entry per GL account split (`account_code`, `account_code_name`, `amount`) — so the frontend can show what account(s) a transaction posts to without a second request, even for transactions with multiple splits.
+
+### Breaking changes
+- List rows drop `company_id`, `bank_account_id`, `finance_category_id`, `approved_by_owner_id`, `approved_by_treasury_id`. If the frontend read any of these five fields off list rows (e.g. to build an edit link), switch to `GET /api/v2/finance-transaction/{id}`, which is unchanged and still returns them.
+
+### Notes for frontend
+- `accounts` is a summary only (`account_code`, `account_code_name`, `amount`) — no `id`, `memo`, or timestamps. For full detail line records use `GET /api/v2/finance-transaction/{id}` (nested `details`) or `GET /api/v2/finance-transaction/{id}/details`.
+- Detail endpoint (`GET /{id}`) is unaffected — still returns every `*_id` field alongside the resolved names.
+
+---
+
+## [2026-07-25 09:00:00 WIB] — Purchase order per-company Shipping Marks default
+
+### Added
+- `GET /api/v2/purchase-order/settings/shipping-marks-default` — fetch the authenticated company's default template text for the "Shipping Marks" field, to prefill it on the New Purchase Order (Import) form instead of a hardcoded string.
+- `PUT /api/v2/purchase-order/settings/shipping-marks-default` — set the authenticated company's default template text. Send `shipping_marks_default: ""` to clear it.
+
+### Notes for frontend
+- Returns `shipping_marks_default: ""` for any company that hasn't set one yet — there is no 404 case, so no fallback branch is needed on `GET`.
+- This is a company-level setting, not a field on any individual purchase order — it does not appear anywhere in `GET /api/v2/purchase-order` or `GET /api/v2/purchase-order/{id}`.
+- Existing behavior is unaffected: `shipping_marks` on `POST /api/v2/purchase-order` remains free text the user can still edit before submitting; this endpoint only supplies the initial prefill value.
+
+---
+
 ## [2026-07-25 07:15:00 WIB] — Purchase order shipment field now an ETA period, not a raw date
 
 ### Added

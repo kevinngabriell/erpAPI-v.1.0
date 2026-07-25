@@ -6,6 +6,7 @@ require_once __DIR__ . '/../../helpers/audit_log.php';
 require_once __DIR__ . '/../../helpers/notification.php';
 
 const PURCHASE_ORDER_SHIPMENT_METHODS = ['FOB', 'CIF', 'EXW', 'CFR', 'CIP', 'DAP', 'DDP', 'FCA'];
+const PURCHASE_ORDER_SHIPPING_MARKS_KEY = 'purchase_order.shipping_marks_default';
 
 function getPurchaseStatusIdByName($conn, $status_name) {
     $status_name = mysqli_real_escape_string($conn, $status_name);
@@ -67,6 +68,24 @@ function generatePurchaseOrderNumber($conn, $company_id, $params) {
     $po_display_number = strtr($number_format, $tokens + ['{seq}' => $sequence]);
 
     jsonResponse(200, 'Purchase order number generated successfully', ['po_display_number' => $po_display_number]);
+}
+
+function getShippingMarksDefault($conn, $company_id) {
+    $shipping_marks_default = getCompanySetting($conn, $company_id, PURCHASE_ORDER_SHIPPING_MARKS_KEY, '');
+    jsonResponse(200, 'Shipping marks default retrieved', ['shipping_marks_default' => $shipping_marks_default]);
+}
+
+function updateShippingMarksDefault($conn, $input, $username, $company_id) {
+    if (!isset($input['shipping_marks_default'])) {
+        jsonResponse(400, 'shipping_marks_default is required');
+        return;
+    }
+
+    $shipping_marks_default = trim($input['shipping_marks_default']);
+
+    setCompanySetting($conn, $company_id, PURCHASE_ORDER_SHIPPING_MARKS_KEY, $shipping_marks_default, $username);
+    insertAuditLog($conn, $company_id, 'company_setting', PURCHASE_ORDER_SHIPPING_MARKS_KEY, 'updated', $username);
+    jsonResponse(200, 'Shipping marks default updated successfully', ['shipping_marks_default' => $shipping_marks_default]);
 }
 
 function getAllPurchaseOrders($conn, $company_id, $params) {
@@ -519,6 +538,19 @@ try {
     if ($purchase_order_id === 'generate-number' && $sub_action === '') {
         if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
         generatePurchaseOrderNumber($conn, $company_id, $_GET);
+
+    } elseif ($purchase_order_id === 'settings' && $sub_action === 'shipping-marks-default') {
+        switch ($method) {
+            case 'GET':
+                getShippingMarksDefault($conn, $company_id);
+                break;
+            case 'PUT':
+                $input = json_decode(file_get_contents('php://input'), true) ?? [];
+                updateShippingMarksDefault($conn, $input, $username, $company_id);
+                break;
+            default:
+                jsonResponse(405, 'Method Not Allowed');
+        }
 
     } elseif ($purchase_order_id && $sub_action === 'items') {
         require __DIR__ . '/items.php';

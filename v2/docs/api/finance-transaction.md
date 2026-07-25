@@ -1,6 +1,6 @@
 # Finance Transaction API
 
-> **Last updated:** 2026-07-23 22:30:00 WIB
+> **Last updated:** 2026-07-25 07:12:00 WIB
 > **Base URL:** `/api/v2/finance-transaction`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -50,19 +50,14 @@ List all finance transactions belonging to the authenticated company.
     "data": [
       {
         "id": "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",
-        "company_id": "b2c3d4e5-f6a7-4b5c-9d0e-1f2a3b4c5d6e",
         "voucher_number": "VC-2026-0001",
-        "bank_account_id": "c3d4e5f6-a7b8-4c5d-0e1f-2a3b4c5d6e7f",
         "transaction_date": "2026-07-01",
         "memo": "Office supplies payment",
         "amount": 1500000,
         "cheque_number": "CHQ-0011",
         "payee": "PT Sumber Makmur",
-        "finance_category_id": "e5f6a7b8-c9d0-4e5f-2a3b-4c5d6e7f8a9b",
         "transaction_status": "partially_approved",
-        "approved_by_owner_id": "614442bc-476a-4bbb-81f1-b3ccc2523d50",
         "approved_by_owner_at": "2026-07-02 09:15:00",
-        "approved_by_treasury_id": null,
         "approved_by_treasury_at": null,
         "bank_name": "Bank Central Asia",
         "bank_number": "1234567890",
@@ -71,9 +66,16 @@ List all finance transactions belonging to the authenticated company.
         "created_at": "2026-07-01 10:00:00",
         "updated_by": "Kevin Gabriel",
         "updated_at": "2026-07-02 09:15:00",
+        "deleted_at": null,
         "approved_by_owner": "Kevin Gabriel",
         "approved_by_treasury": null,
-        "deleted_at": null
+        "accounts": [
+          {
+            "account_code": "5100",
+            "account_code_name": "Office Supplies Expense",
+            "amount": 1500000
+          }
+        ]
       }
     ],
     "pagination": {
@@ -86,7 +88,7 @@ List all finance transactions belonging to the authenticated company.
 }
 ```
 
-The list response does **not** include the nested `details` array — only the detail endpoint does. Note that as of this version, `account_code_id`, `account_amount`, and `account_code`/`account_code_name` no longer appear on the header row at all (see "Breaking change" note at the bottom).
+The list response does **not** include the nested `details` array — only the detail endpoint does. As of this version, the list row also drops `company_id`, `bank_account_id`, `finance_category_id`, `approved_by_owner_id`, and `approved_by_treasury_id` — the resolved display fields (`bank_name`/`bank_number`, `category_name`, `approved_by_owner`/`approved_by_treasury`) are returned instead, and the raw IDs are only available from the detail endpoint (`GET /{id}`). Each row now also carries an `accounts` summary — one entry per GL account split (from `details[]`), each with just `account_code`, `account_code_name`, and `amount` (no `id`, `memo`, or timestamps — use the detail endpoint or the `/details` sub-resource for that). See "Breaking change" note at the bottom.
 
 #### Response `404 Not Found`
 
@@ -720,11 +722,16 @@ Soft-deletes the detail line (sets `deleted_at`) — it will no longer appear in
 - **`SUM(details[].amount)` must equal `amount` on create**, or the request is rejected with `400 Sum of details.amount must equal amount`. This is only enforced at create time — `PUT` on the header and the details sub-resource endpoints do not re-check reconciliation after the fact.
 - create/update/delete write `audit_log` rows with action `created`/`updated`/`deleted`; approve writes `approved_owner` or `approved_treasury` depending on which slot was filled; reject writes `rejected`. Detail line sub-resource endpoints do not write their own audit_log rows. Query history via `GET /api/v2/audit-log?module=finance_transaction&reference_id={id}` — see the `audit-log` module doc.
 - **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a finance transaction or a finance transaction detail line — list, detail, and the nested `details` array. Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.
-- **List and detail responses now include LEFT JOIN-resolved display fields** alongside the existing `*_id` foreign keys, so the frontend no longer needs to call `bank-account`, `account-code`, and `finance-category` separately and map the results client-side: `bank_name` / `bank_number` (from `bank_account_id`), `category_name` (from `finance_category_id`), and `account_code` / `account_code_name` on each detail line (from `account_code_id`). The `*_id` fields are still returned unchanged. Any of these can be `null` if the referenced record has been deleted.
+- **List and detail responses include LEFT JOIN-resolved display fields**, so the frontend no longer needs to call `bank-account`, `account-code`, and `finance-category` separately and map the results client-side: `bank_name` / `bank_number` (from `bank_account_id`), `category_name` (from `finance_category_id`), and `account_code` / `account_code_name` on each detail line (from `account_code_id`). Any of these can be `null` if the referenced record has been deleted. The detail endpoint (`GET /{id}`) still returns the raw `*_id` fields alongside the resolved names; **the list endpoint (`GET /`) no longer returns `bank_account_id`, `finance_category_id`, `approved_by_owner_id`, `approved_by_treasury_id`, or `company_id`** — only the resolved display fields — since list rows are for display, not for driving edit/approval forms.
+- **List rows carry an `accounts` summary array** (`account_code`, `account_code_name`, `amount` per GL split), built from the same `finance_transaction_detail` rows as the detail endpoint's `details` array but fetched in a single grouped query keyed by transaction ID — so a transaction with multiple account splits shows one `accounts` entry per split rather than duplicating the transaction row. It's a lighter summary than `details`: no `id`, `memo`, or timestamps — fetch `GET /{id}` or `GET /{id}/details` for the full record.
 - **New: dual approval.** `transaction_status` (`draft` \| `submitted` \| `partially_approved` \| `posted` \| `rejected`), `approved_by_owner_id`/`approved_by_owner_at`, and `approved_by_treasury_id`/`approved_by_treasury_at` are new columns on every finance transaction — Pembayaran (cash-out) **and** Penerimaan (cash-in) alike, there is no debit/credit distinction in the approval requirement. New transactions are created with `transaction_status = 'draft'`. `approved_by_owner`/`approved_by_treasury` (resolved display names) are also returned alongside the raw `*_id` fields, same pattern as `created_by`/`updated_by`.
 - **Permission model:** two new permission keys gate the 2-signer workflow — `keuangan.approve_owner` and `keuangan.approve_treasury`. They are shared across `finance-transaction` and `finance-payment` (see that module's doc) since it is the same control in both places. **As of this writing, no role has either permission assigned yet** — an admin must assign `keuangan.approve_owner` to whichever role represents the Business Owner and `keuangan.approve_treasury` to whichever role represents Treasury/Controller (a "Treasury" role does not yet exist in `movira_core` — create it or repurpose an existing role) via the roles/permissions admin UI before this endpoint is usable in production.
 - Update/delete are **not** blocked by `transaction_status` — editing or soft-deleting an already-`posted` transaction is still allowed by the API today, matching this codebase's existing precedent on `purchase_order`/`sales_order` (neither locks edits post-approval either). Revisit if Finance wants posted transactions to be immutable.
 - **`POST` (create) and `PATCH .../approve`/`.../reject` now trigger notifications.** Create notifies everyone holding `keuangan.approve_owner`/`keuangan.approve_treasury`. On approve: if the signature just applied leaves the transaction `partially_approved`, the still-open slot's holder(s) get a reminder (with a fresh approval link) and the creator gets a progress update; once both signatures are in (`posted`), the creator gets a final notice and any other open approval links for the document are invalidated. Reject notifies the creator. This is a side effect only; it does not change this endpoint's own request/response shape. See `notification.md`.
+
+### Breaking change (2026-07-25)
+
+`GET /api/v2/finance-transaction` (list) no longer returns `company_id`, `bank_account_id`, `finance_category_id`, `approved_by_owner_id`, or `approved_by_treasury_id` on each row — these raw foreign keys were redundant with the already-present resolved display fields (`bank_name`/`bank_number`, `category_name`, `approved_by_owner`/`approved_by_treasury`). If the frontend list view was reading any of these five `*_id` fields directly (e.g. to build an edit link), switch to `GET /{id}` instead, which is unchanged. Each list row also gains a new `accounts` array (see Notes) — additive, not breaking.
 
 ### Breaking change (2026-07-23)
 
