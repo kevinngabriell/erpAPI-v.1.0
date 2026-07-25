@@ -406,7 +406,10 @@ $sub_action           = $parts[4] ?? '';
 try {
     $conn = getConn();
 
-    if ($purchase_receive_id && $sub_action !== '') {
+    if ($purchase_receive_id && $sub_action === 'items') {
+        require __DIR__ . '/items.php';
+
+    } elseif ($purchase_receive_id && $sub_action !== '') {
         $input = in_array($method, ['POST', 'PUT', 'PATCH'])
             ? (json_decode(file_get_contents('php://input'), true) ?? [])
             : [];

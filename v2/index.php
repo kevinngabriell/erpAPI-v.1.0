@@ -188,6 +188,11 @@ switch ($module) {
         require __DIR__ . '/notification/settings.php';
         break;
 
+    // ── Global search ────────────────────────────────────────────────────────
+    case 'search':
+        require __DIR__ . '/search/index.php';
+        break;
+
     // ── Dashboard / reporting ────────────────────────────────────────────────
     case 'dashboard':
         require __DIR__ . '/dashboard/index.php';

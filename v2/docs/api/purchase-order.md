@@ -1,6 +1,6 @@
 # Purchase Order API
 
-> **Last updated:** 2026-07-25 09:00:00 WIB
+> **Last updated:** 2026-07-25 14:17:12 WIB
 > **Base URL:** `/api/v2/purchase-order`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -440,8 +440,8 @@ Update a purchase order. Only send the fields you want to change. Does not updat
 | term_id | string | No | Cannot be empty if provided |
 | payment_method_id | string | No | Cannot be empty if provided |
 | origin_id | string | No | Cannot be empty if provided |
-| shipping_marks | string | No | Cannot be empty if provided |
-| remarks | string | No | Cannot be empty if provided |
+| shipping_marks | null \| string | No | Send `""` to clear it to `NULL` |
+| remarks | null \| string | No | Send `""` to clear it to `NULL` |
 | type_id | string | No | Cannot be empty if provided |
 | currency_id | string | No | Cannot be empty if provided |
 | ppn_type_id | string | No | Cannot be empty if provided |

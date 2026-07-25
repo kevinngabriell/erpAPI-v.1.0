@@ -1,6 +1,6 @@
 # Purchase Receive API
 
-> **Last updated:** 2026-07-25 06:24:59 WIB
+> **Last updated:** 2026-07-25 15:16:54 WIB
 > **Base URL:** `/api/v2/purchase-receive`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -18,6 +18,9 @@
 | PATCH  | `/api/v2/purchase-receive/{id}/approve` | Approve a purchase receive |
 | PATCH  | `/api/v2/purchase-receive/{id}/reject` | Reject a purchase receive |
 | PATCH  | `/api/v2/purchase-receive/{id}/revise` | Revise a rejected purchase receive back to Draft |
+| GET    | `/api/v2/purchase-receive/{id}/items` | List items of a purchase receive |
+| GET    | `/api/v2/purchase-receive/{id}/items/{item_id}` | Get a single purchase receive item |
+| PUT    | `/api/v2/purchase-receive/{id}/items/{item_id}` | Update a purchase receive item |
 
 ---
 
@@ -237,7 +240,7 @@ Get detail of a single purchase receive, including its nested `items` array.
 
 ### PUT `/api/v2/purchase-receive/{id}`
 
-Update a purchase receive. Only send the fields you want to change. Does not update `purchase_order_id`, items, or `status_id` — status transitions only happen via `approve`/`reject`/`revise`.
+Update a purchase receive. Only send the fields you want to change. Does not update `purchase_order_id`, items, or `status_id` — use the items sub-resource for item changes; status transitions only happen via `approve`/`reject`/`revise`.
 
 #### Path parameters
 
@@ -450,6 +453,147 @@ Move a rejected purchase receive back to `Draft` so it can be edited and resubmi
 
 ---
 
+### Purchase receive items (`/api/v2/purchase-receive/{id}/items`)
+
+Items are also a sub-resource in their own right, separate from the nested `items` array returned on the purchase receive itself. `{id}` below is the parent purchase receive ID; the item's own ID is `{item_id}`. Unlike purchase-order items, receive items cannot be added or deleted through this sub-resource — only updated — since receive items are created together with the parent record (`POST /api/v2/purchase-receive`).
+
+#### GET `/api/v2/purchase-receive/{id}/items`
+
+List all items belonging to the purchase receive.
+
+##### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Purchase receive items found",
+  "data": {
+    "data": [
+      {
+        "id": "f6a7b8c9-d0e1-4f5a-3b4c-5d6e7f8a9b0c",
+        "purchase_receive_id": "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",
+        "product_name": "Steel Rod 12mm",
+        "quantity": 100,
+        "packaging_size": 10,
+        "unit_price": 50000,
+        "vat": 5000,
+        "total": 5005000,
+        "created_by": "Budi Santoso",
+        "created_at": "2026-07-05 09:00:00",
+        "updated_by": null,
+        "updated_at": null,
+        "deleted_at": null
+      }
+    ]
+  }
+}
+```
+
+##### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "No purchase receive items found",
+  "data": []
+}
+```
+
+If the parent purchase receive does not belong to the company or does not exist, all item endpoints respond:
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Purchase receive not found",
+  "data": []
+}
+```
+
+#### GET `/api/v2/purchase-receive/{id}/items/{item_id}`
+
+Get a single purchase receive item.
+
+##### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Purchase receive item found",
+  "data": {
+    "id": "f6a7b8c9-d0e1-4f5a-3b4c-5d6e7f8a9b0c",
+    "purchase_receive_id": "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",
+    "product_name": "Steel Rod 12mm",
+    "quantity": 100,
+    "packaging_size": 10,
+    "unit_price": 50000,
+    "vat": 5000,
+    "total": 5005000,
+    "created_by": "Budi Santoso",
+    "created_at": "2026-07-05 09:00:00",
+    "updated_by": null,
+    "updated_at": null,
+    "deleted_at": null
+  }
+}
+```
+
+##### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Purchase receive item not found",
+  "data": []
+}
+```
+
+#### PUT `/api/v2/purchase-receive/{id}/items/{item_id}`
+
+Update a purchase receive item — this is how `quantity` and `unit_price` get corrected on a rejected receive before resubmitting via `PATCH .../revise`. Only send the fields you want to change.
+
+##### Request body (`application/json`)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| product_name | string | No | Cannot be empty if provided |
+| quantity | number | No | — |
+| packaging_size | number | No | — |
+| unit_price | number | No | — |
+| vat | number | No | — |
+| total | number | No | — |
+
+##### Response `200 OK`
+
+```json
+{
+  "status_code": 200,
+  "status_message": "Purchase receive item updated successfully",
+  "data": []
+}
+```
+
+##### Response `400 Bad Request`
+
+```json
+{
+  "status_code": 400,
+  "status_message": "No fields provided for update",
+  "data": []
+}
+```
+
+##### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Purchase receive item not found",
+  "data": []
+}
+```
+
+---
+
 ## Error responses (all endpoints)
 
 | Code | When |
@@ -475,3 +619,4 @@ Move a rejected purchase receive back to `Draft` so it can be edited and resubmi
 - **`created_by`, `updated_by`, and `approved_by` are resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a purchase receive (list, detail, and any nested items). There is no separate `*_id` field for them, the resolved name **is** the value. `updated_by`/`approved_by` are `null` until the record has actually been updated/approved; `created_by` can be `null` only if the creating user has since been deleted.
 - **List and detail responses also resolve reference IDs to their display names**, alongside the existing `*_id` field (both are returned): `purchase_order_id` → `po_display_number`, `supplier_id` → `supplier_name`, `ship_via_id` → `ship_name`, `status_id` → `status_name`. All are `LEFT JOIN`ed, so the resolved field is `null` if the referenced record is missing or was deleted; the `*_id` field is unaffected either way.
 - **`POST` (create) and `PATCH .../approve`/`.../reject` now trigger notifications** — in-app + WhatsApp to the users holding `notification.purchase_receive.approver` on create, and to the receive's creator on approve/reject. This is a side effect only; it does not change this endpoint's own request/response shape. See `notification.md`.
+- **The items sub-resource (`/api/v2/purchase-receive/{id}/items`) is new** — added specifically so `quantity`/`unit_price`/`packaging_size` can be corrected on a rejected receive before resubmitting, which was previously impossible (`PUT /api/v2/purchase-receive/{id}` never touched items). Unlike the equivalent purchase-order sub-resource, there is no `POST`/`DELETE` here — receive items can only be updated in place, not added or removed, since they're always created together with the parent record.

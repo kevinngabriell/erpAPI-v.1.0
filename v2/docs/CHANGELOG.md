@@ -7,6 +7,42 @@ Intended audience: frontend developers.
 
 ---
 
+## [2026-07-25 15:16:54 WIB] — Purchase Receive items are now editable
+
+### Added
+- `GET /api/v2/purchase-receive/{id}/items` — list items of a purchase receive.
+- `GET /api/v2/purchase-receive/{id}/items/{item_id}` — get a single purchase receive item.
+- `PUT /api/v2/purchase-receive/{id}/items/{item_id}` — update `product_name`/`quantity`/`packaging_size`/`unit_price`/`vat`/`total` on a purchase receive item.
+
+### Notes for frontend
+- This unblocks correcting quantity/price on the "Kirim Ulang" (resubmit-after-reject) flow for Penerimaan Barang — previously `PUT /api/v2/purchase-receive/{id}` never touched items, so there was no way to fix a wrong qty/price before resubmitting.
+- No add/remove: only `PUT` on an existing item is supported, mirroring the restriction that receive items are always created together with the parent record via `POST /api/v2/purchase-receive`. There is no `POST`/`DELETE` on this sub-resource (unlike purchase-order items).
+- Same 404 shape as purchase-order items: if `{id}` doesn't resolve to a purchase receive owned by the caller's company, every item endpoint under it returns `404 Purchase receive not found` rather than an item-specific message.
+
+---
+
+## [2026-07-25 14:17:12 WIB] — Purchase Order
+
+### Updated
+- `PUT /api/v2/purchase-order/{id}` — `shipping_marks` and `remarks` can now be cleared by sending `""`; previously an empty value was rejected with a 400 like every other string field on this endpoint.
+
+### Notes for frontend
+- This unblocks the "Kirim Ulang" (resubmit-after-reject) flow — you can now blank out shipping marks/remarks on resubmit instead of being forced to keep the rejected value or supply a new one.
+
+---
+
+## [2026-07-25 10:00:00 WIB] — Global search endpoint
+
+### Added
+- `GET /api/v2/search?q=<text>&limit=<n>` — new command-palette-style endpoint that searches sales orders/invoices/deliveries/SPPBs, purchase orders/receives/invoices, customers, suppliers, products, and finance transactions/payments in one call. Response groups matches by resource type (`data.groups[]`, each `{ type, label, items }`), capped at `limit` items per group (default 5, max 10). Groups with no matches are omitted. See `docs/api/search.md` for the full field-by-field catalog.
+
+### Notes for frontend
+- Every item is `{ id, title, subtitle }`; `purchase-order` items additionally carry `type_name` (`Local`/`Import`) since routing to the PO detail page depends on it.
+- Results are scoped to the caller's company only — same as every other list endpoint. There is no permission-based filtering of which groups can appear; any authenticated user sees a match in any group.
+- `employee` and `company`/`user` result types are not included — no v2 resource exists for either yet.
+
+---
+
 ## [2026-07-25 09:30:00 WIB] — Finance transaction list trimmed to display fields + accounts summary
 
 ### Updated

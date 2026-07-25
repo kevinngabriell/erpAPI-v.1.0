@@ -336,7 +336,7 @@ function updatePurchaseOrder($conn, $purchase_order_id, $input, $username, $comp
 
     $string_fields = [
         'po_display_number', 'supplier_id', 'term_id', 'payment_method_id', 'origin_id',
-        'shipping_marks', 'remarks', 'type_id', 'currency_id', 'ppn_type_id',
+        'type_id', 'currency_id', 'ppn_type_id',
         'container_number', 'bl_number', 'vessel_name', 'shipment_period_id',
     ];
     foreach ($string_fields as $field) {
@@ -344,6 +344,14 @@ function updatePurchaseOrder($conn, $purchase_order_id, $input, $username, $comp
             $val = trim(mysqli_real_escape_string($conn, $input[$field]));
             if ($val === '') { jsonResponse(400, "$field cannot be empty"); return; }
             $updates[] = "$field = '$val'";
+        }
+    }
+
+    $nullable_fields = ['shipping_marks', 'remarks'];
+    foreach ($nullable_fields as $field) {
+        if (isset($input[$field])) {
+            $val = trim(mysqli_real_escape_string($conn, $input[$field]));
+            $updates[] = $val === '' ? "$field = NULL" : "$field = '$val'";
         }
     }
 
