@@ -158,6 +158,9 @@ switch ($module) {
     case 'finance-payment':
         require __DIR__ . '/finance/finance-payment/index.php';
         break;
+    case 'general-journal':
+        require __DIR__ . '/finance/general-journal/index.php';
+        break;
 
     // ── Warehouse ────────────────────────────────────────────────────────────
     case 'warehouse-lot':

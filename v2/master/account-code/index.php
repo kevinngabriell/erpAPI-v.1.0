@@ -33,6 +33,9 @@ function getAllAccountCodes($conn, $company_id, $params) {
         $account_codes = mysqli_fetch_all($result, MYSQLI_ASSOC);
         foreach ($account_codes as &$account_code) {
             $account_code['is_active'] = (bool)(int)$account_code['is_active'];
+            foreach (DEFAULT_ACCOUNT_FLAGS as $flag) {
+                $account_code[$flag] = (bool)(int)$account_code[$flag];
+            }
         }
         jsonResponse(200, 'Account codes found', [
             'data'       => $account_codes,
@@ -46,6 +49,21 @@ function getAllAccountCodes($conn, $company_id, $params) {
     } else {
         jsonResponse(404, 'No account codes found');
     }
+}
+
+const DEFAULT_ACCOUNT_FLAGS = ['is_default_receivable', 'is_default_payable', 'is_default_sales_revenue', 'is_default_purchase_expense'];
+const DEFAULT_ACCOUNT_FLAG_TYPES = [
+    'is_default_receivable'       => 'asset',
+    'is_default_payable'          => 'liability',
+    'is_default_sales_revenue'    => 'revenue',
+    'is_default_purchase_expense' => 'expense',
+];
+
+// Only one account per company can hold a given default-account flag (e.g. one
+// "default receivable" account) — clears the flag off every other account first.
+function setSingleDefaultAccountFlag($conn, $company_id, $flag_column, $account_code_id) {
+    mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".account_code SET $flag_column = 0
+            WHERE company_id = '$company_id' AND id != '$account_code_id'");
 }
 
 function createAccountCode($conn, $input, $username, $company_id) {
@@ -83,6 +101,15 @@ function createAccountCode($conn, $input, $username, $company_id) {
 
     $is_active = isset($input['is_active']) ? (!empty($input['is_active']) ? 1 : 0) : 1;
 
+    $default_flag_values = [];
+    foreach (DEFAULT_ACCOUNT_FLAGS as $flag) {
+        $default_flag_values[$flag] = isset($input[$flag]) && !empty($input[$flag]) ? 1 : 0;
+        if ($default_flag_values[$flag] === 1 && $input['account_type'] !== DEFAULT_ACCOUNT_FLAG_TYPES[$flag]) {
+            jsonResponse(400, "$flag can only be set on an account_type=" . DEFAULT_ACCOUNT_FLAG_TYPES[$flag] . ' account');
+            return;
+        }
+    }
+
     $dup = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".account_code WHERE company_id = '$company_id' AND account_code = '$account_code' AND deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($dup) > 0) {
         jsonResponse(409, 'Account code already exists');
@@ -92,11 +119,19 @@ function createAccountCode($conn, $input, $username, $company_id) {
     $account_code_id = generateUUID();
     $now             = date('Y-m-d H:i:s');
 
+    $flag_columns = implode(', ', DEFAULT_ACCOUNT_FLAGS);
+    $flag_values  = implode(', ', $default_flag_values);
+
     $sql = "INSERT INTO " . APP_SCHEMA . ".account_code
-            (id, company_id, account_code, account_code_name, account_code_name_alias, account_type, parent_account_code_id, is_active, created_by, created_at)
-            VALUES ('$account_code_id', '$company_id', '$account_code', '$account_code_name', $account_code_name_alias_sql, '$account_type', $parent_account_code_id_sql, $is_active, '$username', '$now')";
+            (id, company_id, account_code, account_code_name, account_code_name_alias, account_type, parent_account_code_id, is_active, $flag_columns, created_by, created_at)
+            VALUES ('$account_code_id', '$company_id', '$account_code', '$account_code_name', $account_code_name_alias_sql, '$account_type', $parent_account_code_id_sql, $is_active, $flag_values, '$username', '$now')";
 
     if (mysqli_query($conn, $sql)) {
+        foreach (DEFAULT_ACCOUNT_FLAGS as $flag) {
+            if ($default_flag_values[$flag] === 1) {
+                setSingleDefaultAccountFlag($conn, $company_id, $flag, $account_code_id);
+            }
+        }
         jsonResponse(201, 'Account code created successfully', ['account_code_id' => $account_code_id]);
     } else {
         jsonResponse(500, 'Failed to create account code', ['error' => mysqli_error($conn)]);
@@ -120,6 +155,9 @@ function getDetailAccountCode($conn, $account_code_id, $company_id) {
 
     $account_code = mysqli_fetch_assoc($result);
     $account_code['is_active'] = (bool)(int)$account_code['is_active'];
+    foreach (DEFAULT_ACCOUNT_FLAGS as $flag) {
+        $account_code[$flag] = (bool)(int)$account_code[$flag];
+    }
 
     jsonResponse(200, 'Account code found', $account_code);
 }
@@ -127,11 +165,12 @@ function getDetailAccountCode($conn, $account_code_id, $company_id) {
 function updateAccountCode($conn, $account_code_id, $input, $username, $company_id) {
     $account_code_id = mysqli_real_escape_string($conn, $account_code_id);
 
-    $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".account_code WHERE id = '$account_code_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $check = mysqli_query($conn, "SELECT account_type FROM " . APP_SCHEMA . ".account_code WHERE id = '$account_code_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Account code not found');
         return;
     }
+    $existing_account_type = mysqli_fetch_assoc($check)['account_type'];
 
     $updates = [];
 
@@ -187,6 +226,22 @@ function updateAccountCode($conn, $account_code_id, $input, $username, $company_
         $updates[] = "is_active = $is_active";
     }
 
+    $resulting_account_type = isset($input['account_type']) ? $input['account_type'] : $existing_account_type;
+    $flags_to_set_exclusive = [];
+    foreach (DEFAULT_ACCOUNT_FLAGS as $flag) {
+        if (isset($input[$flag])) {
+            $value = !empty($input[$flag]) ? 1 : 0;
+            if ($value === 1 && $resulting_account_type !== DEFAULT_ACCOUNT_FLAG_TYPES[$flag]) {
+                jsonResponse(400, "$flag can only be set on an account_type=" . DEFAULT_ACCOUNT_FLAG_TYPES[$flag] . ' account');
+                return;
+            }
+            $updates[] = "$flag = $value";
+            if ($value === 1) {
+                $flags_to_set_exclusive[] = $flag;
+            }
+        }
+    }
+
     if (empty($updates)) {
         jsonResponse(400, 'No fields provided for update');
         return;
@@ -197,6 +252,9 @@ function updateAccountCode($conn, $account_code_id, $input, $username, $company_
     $updates[] = "updated_at = '$now'";
 
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".account_code SET " . implode(', ', $updates) . " WHERE id = '$account_code_id' AND company_id = '$company_id'")) {
+        foreach ($flags_to_set_exclusive as $flag) {
+            setSingleDefaultAccountFlag($conn, $company_id, $flag, $account_code_id);
+        }
         jsonResponse(200, 'Account code updated successfully');
     } else {
         jsonResponse(500, 'Failed to update account code', ['error' => mysqli_error($conn)]);

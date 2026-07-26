@@ -7,6 +7,63 @@ Intended audience: frontend developers.
 
 ---
 
+## [2026-07-26 20:15:00 WIB] — Product now carries the legacy product/SKU code
+
+### Added
+- `POST /api/v2/product` and `PUT /api/v2/product/{id}` now accept `product_code` (nullable string). Unique within the company when provided — `409 Product code already exists` otherwise.
+- `GET /api/v2/product` and `GET /api/v2/product/{id}` now return `product_code` on every product row. `GET /api/v2/product?search=` and the global search endpoint (`GET /api/v2/search`) now also match against `product_code`.
+
+### Notes for frontend
+- Products migrated from the legacy system (v1) had their old `skuID` backfilled into `product_code` automatically — no action needed to see existing codes. A small number of legacy products never had a code and correctly show `product_code: null`; this is expected, not missing data.
+- See `v2/docs/migrations/v34_product_code_backfill_from_legacy_sku.md` for the backfill details.
+
+---
+
+## [2026-07-26 19:40:12 WIB] — General Journal added; Balance Sheet/GL/P&L now reflect real invoice activity
+
+### Added
+- `GET /api/v2/general-journal` and `GET /api/v2/general-journal/{id}` — read-only view of system-generated accrual journal entries (invoice recognition, payment settlement). No create/update/delete/approve — every entry here comes from approving a sales invoice, purchase invoice, or finance payment; nothing hand-keys a journal entry.
+- `PUT /api/v2/account-code/{id}` (and `POST /api/v2/account-code`) now accept 4 new boolean fields: `is_default_receivable`, `is_default_payable`, `is_default_sales_revenue`, `is_default_purchase_expense`. Only one account per company can hold a given flag — setting it on one account clears it from any other. Each flag is restricted to a matching `account_type` (e.g. `is_default_receivable` requires `account_type=asset`), `400` otherwise. Also returned on `GET /api/v2/account-code`/`GET /api/v2/account-code/{id}`.
+- `PUT /api/v2/bank-account/{id}` (and `POST /api/v2/bank-account`) now accept `account_code_id`, mapping a bank/cash register to its GL asset account. Must reference an `account_type=asset` account, `400` otherwise. Also returned on the list/detail endpoints.
+
+### Updated
+- `GET /api/v2/reports/balance-sheet`, `GET /api/v2/reports/profit-loss`, `GET /api/v2/reports/general-ledger` — now include postings from the new General Journal alongside the existing manual cash-book (`finance_transaction`). Piutang Usaha/Hutang Usaha/Revenue/Expense move automatically when a sales invoice, purchase invoice, or finance payment is approved (previously these reports only reflected manually-entered `finance_transaction` rows, so approved invoices never appeared on them at all).
+- `general-ledger`'s per-account transaction list now includes a `source` field (`cash_transaction` or `general_journal`) per row, and `reference_number` replaces the `cash_transaction`-only `voucher_number` field.
+
+### Notes for frontend
+- **Nothing posts until configured.** A company with no `is_default_*` accounts set on `account-code`, or a bank account with no `account_code_id` mapped, will simply not see invoice/payment activity reflected on these reports — by design, not a bug. No account is ever guessed or fabricated.
+- If you're building a settings screen for this, it needs: 4 single-select account pickers (filtered to the matching `account_type`) plus a per-bank-account asset-account picker.
+- See `v2/docs/migrations/v33_general_journal_schema_and_default_accounts.md` for the full rationale and a live example of the gap this closes.
+
+---
+
+## [2026-07-26 19:15:00 WIB] — Close approval-workflow holes on invoice approve/reject and A/P payment gating
+
+### Fixed
+- `POST /api/v2/finance-payment` — the "must be approved before a payment can be recorded" check previously only ever looked at `sales_invoice`, no matter whether the payment was A/P or A/R. A/P payments (`supplier_id` set) were not gated on the purchase invoice's approval status at all. Now checks `purchase_invoice`/`purchase_status` when `supplier_id` is set, and `sales_invoice`/`sales_status` otherwise. New response: `400 Purchase invoice must be approved before a payment can be recorded`, `404 Purchase invoice not found`.
+- `PATCH /api/v2/sales-invoice/{id}/approve` and `PATCH /api/v2/purchase-invoice/{id}/reject` (and their sales/purchase counterparts) previously had no guard on the invoice's current status. An already-`Approved` invoice — including one with real payments already recorded against it — could be rejected back to `Rejected`, and a `Rejected` invoice could be approved directly, skipping the required `PATCH .../revise` step back to `Draft`. Both `approve` and `reject` now require the invoice's current status to be `Draft`, returning `400 Only draft {sales|purchase} invoices can be {approved|rejected}` otherwise.
+
+### Updated
+- `GET /api/v2/finance-payment/outstanding-invoices` (both `?supplier_id=` and `?customer_id=`) — each row now also returns `status_name`, resolved from `purchase_status`/`sales_status`. Needed because the outstanding list is driven off the `finance_payment` baseline table, which is only ever seeded once (on first approval) and never removed if the invoice is later rejected — so an invoice can appear here without currently being `Approved`.
+
+### Notes for frontend
+- **Root cause of the "must be approved" 400 shown after picking an invoice from the outstanding list:** the outstanding list never exposed approval status, so an invoice that was approved (baseline row seeded) and later rejected-and-sent-back-for-revision would still show up as pickable, only to be rejected by `POST /api/v2/finance-payment` at submit time. Gate the invoice-selection row on the new `status_name === "Approved"` field instead of relying on presence in the list alone.
+- If your UI called `approve`/`reject` on invoices outside the `Draft` state (relying on the previous lack of server-side enforcement), those calls now return `400` — update any such flow to route through `PATCH .../revise` first.
+
+---
+
+## [2026-07-26 18:25:30 WIB] — Outstanding invoices now carry currency/kurs (A/P side)
+
+### Updated
+- `GET /api/v2/finance-payment/outstanding-invoices?supplier_id=` — each row now also returns `purchase_order_id`, `kurs`, `currency_code`, and `currency_name`, resolved via `purchase_invoice.purchase_order_id` → `purchase_order.currency_id` → `currency` (same resolution `purchase-order.md` already uses).
+
+### Notes for frontend
+- These four fields are A/P-only — a `?customer_id=` (A/R) call does not include them at all, since `sales_invoice`/`sales_order` keeps currency/kurs at the item level rather than the header. No change on the A/R side.
+- Requested to stop `NewPenerimaanPembelian.js`'s client-side reconstruction (per-invoice `purchase_invoice`/`purchase_order` lookups just to get currency for display) — that workaround can be deleted once the frontend consumes these fields directly.
+- If a row's `purchase_invoice`/`purchase_order`/`currency` can't be resolved, the corresponding field(s) come back `null` — never guess/default to a currency.
+
+---
+
 ## [2026-07-25 20:27:34 WIB] — Per-partner outstanding invoice list (A/P and A/R payment entry)
 
 ### Added

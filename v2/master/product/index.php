@@ -11,7 +11,7 @@ function getAllProducts($conn, $company_id, $params) {
 
     $where = "p.company_id = '$company_id' AND p.deleted_at IS NULL";
     if ($search) {
-        $where .= " AND (p.product_name LIKE '%$search%' OR p.hs_code LIKE '%$search%')";
+        $where .= " AND (p.product_name LIKE '%$search%' OR p.product_code LIKE '%$search%' OR p.hs_code LIKE '%$search%')";
     }
 
     $from = APP_SCHEMA . ".product p
@@ -51,6 +51,9 @@ function createProduct($conn, $input, $username, $company_id) {
 
     $product_name = trim(mysqli_real_escape_string($conn, $input['product_name']));
 
+    $product_code_sql = isset($input['product_code']) && trim($input['product_code']) !== ''
+        ? "'" . mysqli_real_escape_string($conn, trim($input['product_code'])) . "'"
+        : 'NULL';
     $product_desc_sql = isset($input['product_desc']) && trim($input['product_desc']) !== ''
         ? "'" . mysqli_real_escape_string($conn, trim($input['product_desc'])) . "'"
         : 'NULL';
@@ -64,11 +67,19 @@ function createProduct($conn, $input, $username, $company_id) {
         return;
     }
 
+    if ($product_code_sql !== 'NULL') {
+        $dup = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".product WHERE company_id = '$company_id' AND product_code = $product_code_sql AND deleted_at IS NULL LIMIT 1");
+        if (mysqli_num_rows($dup) > 0) {
+            jsonResponse(409, 'Product code already exists');
+            return;
+        }
+    }
+
     $product_id = generateUUID();
     $now        = date('Y-m-d H:i:s');
 
-    $sql = "INSERT INTO " . APP_SCHEMA . ".product (id, company_id, product_name, product_desc, hs_code, created_by, created_at)
-            VALUES ('$product_id', '$company_id', '$product_name', $product_desc_sql, $hs_code_sql, '$username', '$now')";
+    $sql = "INSERT INTO " . APP_SCHEMA . ".product (id, company_id, product_name, product_code, product_desc, hs_code, created_by, created_at)
+            VALUES ('$product_id', '$company_id', '$product_name', $product_code_sql, $product_desc_sql, $hs_code_sql, '$username', '$now')";
 
     if (mysqli_query($conn, $sql)) {
         jsonResponse(201, 'Product created successfully', ['product_id' => $product_id]);
@@ -115,6 +126,20 @@ function updateProduct($conn, $product_id, $input, $username, $company_id) {
             return;
         }
         $updates[] = "product_name = '$val'";
+    }
+
+    if (array_key_exists('product_code', $input)) {
+        $val = isset($input['product_code']) && trim($input['product_code']) !== ''
+            ? "'" . mysqli_real_escape_string($conn, trim($input['product_code'])) . "'"
+            : 'NULL';
+        if ($val !== 'NULL') {
+            $dup = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".product WHERE company_id = '$company_id' AND product_code = $val AND id != '$product_id' AND deleted_at IS NULL LIMIT 1");
+            if (mysqli_num_rows($dup) > 0) {
+                jsonResponse(409, 'Product code already exists');
+                return;
+            }
+        }
+        $updates[] = "product_code = $val";
     }
 
     if (array_key_exists('product_desc', $input)) {

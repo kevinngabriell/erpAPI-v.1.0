@@ -1,6 +1,6 @@
 # Finance Payment API
 
-> **Last updated:** 2026-07-25 20:27:34 WIB
+> **Last updated:** 2026-07-26 19:15:00 WIB
 > **Base URL:** `/api/v2/finance-payment`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -126,7 +126,12 @@ Exactly one of `supplier_id` or `customer_id` must be provided.
         "invoice_date": "2026-07-10",
         "invoice_value": 5000000,
         "paid_amount": 3500000,
-        "outstanding": 1500000
+        "outstanding": 1500000,
+        "purchase_order_id": "po_64a1b2c3",
+        "kurs": 15500,
+        "currency_code": "USD",
+        "currency_name": "US Dollar",
+        "status_name": "Approved"
       }
     ]
   }
@@ -134,6 +139,10 @@ Exactly one of `supplier_id` or `customer_id` must be provided.
 ```
 
 `invoice_value` is the invoice's total amount; `paid_amount` is the sum of everything paid against it so far; `outstanding` = `invoice_value - paid_amount`. Only invoices where `outstanding > 0` are returned — a fully paid invoice never appears here. `invoice_date` is joined from `purchase_invoice`/`sales_invoice` and can be `null` if that invoice record was hard-deleted independently of its `finance_payment` rows.
+
+`purchase_order_id`, `kurs` (the exchange rate the invoice was created at), and `currency_code`/`currency_name` (resolved from `purchase_order.currency_id`, same resolution as `purchase-order.md`) are only present on the A/P side (`supplier_id` query) — these four keys are absent entirely from A/R (`customer_id` query) results, since `sales_invoice`/`sales_order` carries currency/kurs at the item level rather than the header and isn't resolved here. On the A/P side, if the underlying `purchase_invoice`/`purchase_order`/`currency` row can't be matched (e.g. hard-deleted, or no currency set on the PO), the corresponding field(s) are `null` rather than omitted.
+
+**`status_name`** is new — resolved from `purchase_status`/`sales_status` (matching whichever side the query is on) and reflects the invoice's *current* status, not its status at the time the baseline `finance_payment` row was seeded. Because a `finance_payment` baseline row is only ever created once (on first approval) and is never deleted if the invoice is later rejected, an invoice can appear here with `status_name` other than `"Approved"` — e.g. it was approved, then rejected and sent back for revision. **The frontend must check `status_name === "Approved"` before allowing the row to be selected for payment** — `POST /api/v2/finance-payment` will reject the attempt with `400` otherwise (see below).
 
 #### Response `400 Bad Request`
 
@@ -163,13 +172,13 @@ Also returned as `Customer not found` (when `customer_id` doesn't resolve), or `
 
 ### POST `/api/v2/finance-payment`
 
-Create a new finance payment. `invoice_number` must match an existing, non-deleted `sales_invoice.invoice_display_number` in the same company, and that sales invoice's `status_name` must be `Approved` — creation is rejected otherwise.
+Create a new finance payment. If `supplier_id` is provided (A/P), `invoice_number` must match an existing, non-deleted `purchase_invoice.invoice_display_number` in the same company with `status_name = 'Approved'`. Otherwise (A/R), it must match an existing, non-deleted `sales_invoice.invoice_display_number` with `status_name = 'Approved'`. Creation is rejected otherwise. Which table is checked is decided purely by whether `supplier_id` is present in the request body — it does not look at `customer_id` or the invoice number's format.
 
 #### Request body (`application/json`)
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| invoice_number | string | Yes | Must match an existing sales invoice's `invoice_display_number` in the same company, and that invoice must currently be `Approved` |
+| invoice_number | string | Yes | Must match an existing invoice's `invoice_display_number` in the same company (`purchase_invoice` if `supplier_id` is set, otherwise `sales_invoice`), and that invoice must currently be `Approved` |
 | paid_amount | number | Yes | — |
 | customer_id | string | No | If provided, must reference an existing, non-deleted customer in the company |
 | supplier_id | string | No | If provided, must reference an existing, non-deleted supplier in the company |
@@ -215,7 +224,17 @@ Create a new finance payment. `invoice_number` must match an existing, non-delet
 }
 ```
 
-Returned when `invoice_number` matches a real sales invoice, but that invoice's current status is not `Approved` (e.g. still `Draft` or `Rejected`).
+Returned when `supplier_id` is **not** set and `invoice_number` matches a real sales invoice, but that invoice's current status is not `Approved` (e.g. still `Draft`, or `Rejected` after having been approved and then rejected).
+
+```json
+{
+  "status_code": 400,
+  "status_message": "Purchase invoice must be approved before a payment can be recorded",
+  "data": []
+}
+```
+
+Returned when `supplier_id` **is** set and `invoice_number` matches a real purchase invoice, but that invoice's current status is not `Approved`.
 
 #### Response `404 Not Found`
 
@@ -227,7 +246,17 @@ Returned when `invoice_number` matches a real sales invoice, but that invoice's 
 }
 ```
 
-Returned when `invoice_number` does not match any non-deleted `sales_invoice.invoice_display_number` in the company.
+Returned when `supplier_id` is not set and `invoice_number` does not match any non-deleted `sales_invoice.invoice_display_number` in the company.
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Purchase invoice not found",
+  "data": []
+}
+```
+
+Returned when `supplier_id` is set and `invoice_number` does not match any non-deleted `purchase_invoice.invoice_display_number` in the company.
 
 ```json
 {
@@ -546,7 +575,7 @@ Rejects the payment. Either signer (owner or treasury permission holder) can rej
 
 ## Notes
 
-- **`POST` (create) now requires `invoice_number` to resolve to an `Approved` sales invoice.** `invoice_number` is still a free-text field, not a foreign key — there is no `sales_invoice_id` column on `finance_payment` — but on create it is matched against `sales_invoice.invoice_display_number` (scoped to the company) purely for this validation. `404` if no such invoice exists, `400` if it exists but isn't `Approved`. This check runs on create only; `PUT` does not re-validate `invoice_number` against `sales_invoice` if it's changed (see the existing note below on update not re-validating FK-like fields).
+- **`POST` (create) now requires `invoice_number` to resolve to an `Approved` invoice.** `invoice_number` is still a free-text field, not a foreign key — there is no `sales_invoice_id`/`purchase_invoice_id` column on `finance_payment` — but on create it is matched against `sales_invoice.invoice_display_number` (A/R) or `purchase_invoice.invoice_display_number` (A/P) (both scoped to the company) purely for this validation, decided by whether `supplier_id` is present in the request body. `404` if no matching invoice exists, `400` if it exists but isn't `Approved`. This check runs on create only; `PUT` does not re-validate `invoice_number` against the invoice table if it's changed (see the existing note below on update not re-validating FK-like fields). **Previously this gate only ever checked `sales_invoice`, regardless of whether the payment was A/P or A/R** — A/P payments (`supplier_id` set) were not gated on the purchase invoice's approval status at all; this has been fixed.
 - No enum-constrained fields exist on this module. `customer_id` and `supplier_id` are optional and, only when provided, are validated for existence against non-deleted records in the company; neither is required to be mutually exclusive.
 - On update, `customer_id`, `supplier_id`, and `bank_account_id` are not re-validated for existence — only re-checked for emptiness (cleared to `null` if sent empty).
 - create/update/delete write `audit_log` rows with action `created`/`updated`/`deleted`; approve writes `approved_owner` or `approved_treasury` depending on which slot was filled; reject writes `rejected`. Query this history via `GET /api/v2/audit-log?module=finance_payment&reference_id={id}` — see the `audit-log` module doc.

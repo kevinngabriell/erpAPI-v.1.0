@@ -1,6 +1,6 @@
 # Product API
 
-> **Last updated:** 2026-07-11 18:49:02 WIB
+> **Last updated:** 2026-07-26 00:00:00 WIB
 > **Base URL:** `/api/v2/product`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -28,7 +28,7 @@ List all products belonging to the authenticated company.
 |-----------|--------|----------|---------|-------------|
 | page      | int    | No       | 1       | Page number |
 | limit     | int    | No       | 10      | Items per page (max 100) |
-| search    | string | No       | —       | Full-text search on `product_name` and `hs_code` |
+| search    | string | No       | —       | Full-text search on `product_name`, `product_code`, and `hs_code` |
 
 #### Response `200 OK`
 
@@ -42,6 +42,7 @@ List all products belonging to the authenticated company.
         "id": "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",
         "company_id": "b2c3d4e5-f6a7-4b5c-9d0e-1f2a3b4c5d6e",
         "product_name": "Kertas HVS A4 80gsm",
+        "product_code": "C-029",
         "product_desc": "Rim, 500 lembar per rim",
         "hs_code": "4802.56.00",
         "created_by": "Budi Santoso",
@@ -82,6 +83,7 @@ Create a new product.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | product_name | string | Yes | Unique within the company |
+| product_code | null \| string | No | Product/SKU code. Unique within the company when provided |
 | product_desc | null \| string | No | — |
 | hs_code | null \| string | No | Harmonized System tariff code |
 
@@ -117,6 +119,8 @@ Create a new product.
 }
 ```
 
+Also returned as `Product code already exists` when `product_code` is provided and already in use by another product in the same company.
+
 ---
 
 ### GET `/api/v2/product/{id}`
@@ -139,6 +143,7 @@ Get detail of a single product.
     "id": "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",
     "company_id": "b2c3d4e5-f6a7-4b5c-9d0e-1f2a3b4c5d6e",
     "product_name": "Kertas HVS A4 80gsm",
+    "product_code": "C-029",
     "product_desc": "Rim, 500 lembar per rim",
     "hs_code": "4802.56.00",
     "created_by": "Budi Santoso",
@@ -177,6 +182,7 @@ Update a product. Only send the fields you want to change.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | product_name | string | No | Cannot be empty if provided. Checked for duplicates. |
+| product_code | null \| string | No | Send `null` (or omit) to leave unchanged, send an empty string to clear. Checked for duplicates against other products in the company when non-empty. |
 | product_desc | null \| string | No | Send `null` to clear |
 | hs_code | null \| string | No | Send `null` to clear |
 
@@ -221,6 +227,8 @@ Also returned as `product_name cannot be empty` when `product_name` is provided 
   "data": []
 }
 ```
+
+Also returned as `Product code already exists` when `product_code` is provided and already in use by another product in the same company.
 
 ---
 
@@ -272,5 +280,6 @@ Soft-deletes the product (sets `deleted_at`) — it will no longer appear in lis
 ## Notes
 
 - Resource is scoped to the authenticated company (`company_id` from the JWT) — records from other companies are never returned or modifiable.
-- No fields other than `product_name` reference other tables — `hs_code` is a free-text field, not validated against an external tariff list.
+- **`product_code`** is the product's business/SKU code (e.g. `C-029`, `F-051`). It is optional and nullable — not every product has one. When provided on create or update, it must be unique within the company (`409 Conflict` otherwise). Products migrated from the legacy system had their old `skuID` carried over into this field automatically; products with no legacy code have `product_code: null`.
+- No fields other than `product_name`/`product_code` reference other tables — `hs_code` is a free-text field, not validated against an external tariff list.
 - **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a product (list, detail, and any nested items). Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.

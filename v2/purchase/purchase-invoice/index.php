@@ -7,6 +7,7 @@ require_once __DIR__ . '/../../helpers/notification.php';
 require_once __DIR__ . '/../../helpers/excel_export.php';
 require_once __DIR__ . '/../../helpers/word_export.php';
 require_once __DIR__ . '/../../helpers/finance_payment.php';
+require_once __DIR__ . '/../../helpers/general_journal.php';
 
 use PhpOffice\PhpWord\PhpWord;
 
@@ -22,6 +23,29 @@ function calculatePurchaseInvoiceTotal($conn, $purchase_invoice_id) {
     $result = mysqli_query($conn, "SELECT SUM(total) AS total_invoice
             FROM " . APP_SCHEMA . ".purchase_invoice_item WHERE purchase_invoice_id = '$purchase_invoice_id' AND deleted_at IS NULL");
     return $result ? (float)(mysqli_fetch_assoc($result)['total_invoice'] ?? 0) : 0;
+}
+
+// Recognizes Hutang Usaha + Expense in the General Journal when a purchase invoice is
+// approved. No inventory/COGS layer exists yet, so this posts straight to a default
+// expense account. Skips (never blocks approval, never guesses an account) if the
+// company hasn't configured its default payable/purchase-expense accounts yet.
+function postPurchaseInvoiceRecognition($conn, $company_id, $purchase_invoice_id, $total_invoice, $transaction_date, $username) {
+    if ($total_invoice <= 0) return;
+
+    $expense_account = getDefaultAccountCode($conn, $company_id, 'is_default_purchase_expense');
+    $payable_account  = getDefaultAccountCode($conn, $company_id, 'is_default_payable');
+
+    if (!$expense_account || !$payable_account) {
+        $missing = !$expense_account ? 'is_default_purchase_expense' : 'is_default_payable';
+        insertAuditLog($conn, $company_id, 'general_journal', $purchase_invoice_id, 'gl_posting_skipped', $username, "missing default account: $missing");
+        return;
+    }
+
+    postGeneralJournalEntry($conn, $company_id, substr($transaction_date, 0, 10), "Pengakuan hutang - purchase_invoice $purchase_invoice_id",
+        'purchase_invoice', $purchase_invoice_id, [
+            ['account_code_id' => $expense_account['id'], 'amount' => $total_invoice],
+            ['account_code_id' => $payable_account['id'], 'amount' => $total_invoice],
+        ], $username);
 }
 
 function getAllPurchaseInvoices($conn, $company_id, $params) {
@@ -293,12 +317,19 @@ function deletePurchaseInvoice($conn, $purchase_invoice_id, $username, $company_
 }
 
 function approvePurchaseInvoice($conn, $purchase_invoice_id, $input, $username, $company_id) {
-    $check = mysqli_query($conn, "SELECT invoice_display_number, supplier_id, created_by FROM " . APP_SCHEMA . ".purchase_invoice WHERE id = '$purchase_invoice_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $check = mysqli_query($conn, "SELECT pi.invoice_display_number, pi.supplier_id, pi.created_by, ps.status_name
+            FROM " . APP_SCHEMA . ".purchase_invoice pi
+            LEFT JOIN " . APP_SCHEMA . ".purchase_status ps ON ps.id = pi.status_id
+            WHERE pi.id = '$purchase_invoice_id' AND pi.company_id = '$company_id' AND pi.deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Purchase invoice not found');
         return;
     }
     $purchase_invoice = mysqli_fetch_assoc($check);
+    if ($purchase_invoice['status_name'] !== 'Draft') {
+        jsonResponse(400, 'Only draft purchase invoices can be approved');
+        return;
+    }
 
     $status_id = getPurchaseStatusIdByName($conn, 'Approved');
     if (!$status_id) {
@@ -317,6 +348,7 @@ function approvePurchaseInvoice($conn, $purchase_invoice_id, $input, $username, 
 
         $total_invoice = calculatePurchaseInvoiceTotal($conn, $purchase_invoice_id);
         seedFinancePaymentBaseline($conn, $company_id, $purchase_invoice['invoice_display_number'], $total_invoice, null, $purchase_invoice['supplier_id'], $username);
+        postPurchaseInvoiceRecognition($conn, $company_id, $purchase_invoice_id, $total_invoice, $now, $username);
 
         $approver_name = resolveDisplayName($conn, $username);
         notify($conn, [
@@ -337,12 +369,19 @@ function approvePurchaseInvoice($conn, $purchase_invoice_id, $input, $username, 
 }
 
 function rejectPurchaseInvoice($conn, $purchase_invoice_id, $input, $username, $company_id) {
-    $check = mysqli_query($conn, "SELECT invoice_display_number, created_by FROM " . APP_SCHEMA . ".purchase_invoice WHERE id = '$purchase_invoice_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $check = mysqli_query($conn, "SELECT pi.invoice_display_number, pi.created_by, ps.status_name
+            FROM " . APP_SCHEMA . ".purchase_invoice pi
+            LEFT JOIN " . APP_SCHEMA . ".purchase_status ps ON ps.id = pi.status_id
+            WHERE pi.id = '$purchase_invoice_id' AND pi.company_id = '$company_id' AND pi.deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Purchase invoice not found');
         return;
     }
     $purchase_invoice = mysqli_fetch_assoc($check);
+    if ($purchase_invoice['status_name'] !== 'Draft') {
+        jsonResponse(400, 'Only draft purchase invoices can be rejected');
+        return;
+    }
 
     $status_id = getPurchaseStatusIdByName($conn, 'Rejected');
     if (!$status_id) {

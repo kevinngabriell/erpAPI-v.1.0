@@ -144,15 +144,15 @@ function searchSuppliers($conn, $company_id, $search, $limit) {
 }
 
 function searchProducts($conn, $company_id, $search, $limit) {
-    $result = mysqli_query($conn, "SELECT p.id, p.product_name, p.hs_code
+    $result = mysqli_query($conn, "SELECT p.id, p.product_name, p.product_code, p.hs_code
             FROM " . APP_SCHEMA . ".product p
             WHERE p.company_id = '$company_id' AND p.deleted_at IS NULL
-              AND (p.product_name LIKE '%$search%' OR p.hs_code LIKE '%$search%')
+              AND (p.product_name LIKE '%$search%' OR p.product_code LIKE '%$search%' OR p.hs_code LIKE '%$search%')
             ORDER BY p.created_at DESC LIMIT $limit");
 
     $items = [];
     while ($row = mysqli_fetch_assoc($result)) {
-        $items[] = ['id' => $row['id'], 'title' => $row['product_name'], 'subtitle' => $row['hs_code']];
+        $items[] = ['id' => $row['id'], 'title' => $row['product_name'], 'subtitle' => $row['product_code'] ?? $row['hs_code']];
     }
     return $items;
 }

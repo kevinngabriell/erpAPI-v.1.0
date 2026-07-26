@@ -1,6 +1,6 @@
 # Purchase Invoice API
 
-> **Last updated:** 2026-07-25 20:27:34 WIB
+> **Last updated:** 2026-07-26 19:15:00 WIB
 > **Base URL:** `/api/v2/purchase-invoice`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -353,7 +353,7 @@ Soft-deletes the purchase invoice (sets `deleted_at`) — it will no longer appe
 
 ### PATCH `/api/v2/purchase-invoice/{id}/approve`
 
-Approve a purchase invoice. Server-side sets `status_id` to the `Approved` purchase status, plus `approved_by`, `approved_at`. The client does not send `status_id`. Also seeds a baseline `finance_payment` row for this invoice (`due_amount` = sum of item totals, `paid_amount: 0`) if one doesn't already exist — see `finance-payment.md`'s note on baseline rows.
+Approve a purchase invoice. Only allowed when the invoice's current status is `Draft`. Server-side sets `status_id` to the `Approved` purchase status, plus `approved_by`, `approved_at`. The client does not send `status_id`. Also seeds a baseline `finance_payment` row for this invoice (`due_amount` = sum of item totals, `paid_amount: 0`) if one doesn't already exist — see `finance-payment.md`'s note on baseline rows.
 
 #### Path parameters
 
@@ -377,6 +377,18 @@ Approve a purchase invoice. Server-side sets `status_id` to the `Approved` purch
 }
 ```
 
+#### Response `400 Bad Request`
+
+```json
+{
+  "status_code": 400,
+  "status_message": "Only draft purchase invoices can be approved",
+  "data": []
+}
+```
+
+Returned when the invoice's current status is not `Draft` (e.g. it's already `Approved` or `Rejected`). An `Approved` invoice can no longer be re-approved, and a `Rejected` invoice must go through `PATCH .../revise` back to `Draft` first.
+
 #### Response `404 Not Found`
 
 ```json
@@ -391,7 +403,7 @@ Approve a purchase invoice. Server-side sets `status_id` to the `Approved` purch
 
 ### PATCH `/api/v2/purchase-invoice/{id}/reject`
 
-Reject a purchase invoice. Server-side sets `status_id` to the `Rejected` purchase status (does not set `approved_by`/`approved_at`). The client does not send `status_id`.
+Reject a purchase invoice. Only allowed when the invoice's current status is `Draft`. Server-side sets `status_id` to the `Rejected` purchase status (does not set `approved_by`/`approved_at`). The client does not send `status_id`.
 
 #### Path parameters
 
@@ -414,6 +426,18 @@ Reject a purchase invoice. Server-side sets `status_id` to the `Rejected` purcha
   "data": []
 }
 ```
+
+#### Response `400 Bad Request`
+
+```json
+{
+  "status_code": 400,
+  "status_message": "Only draft purchase invoices can be rejected",
+  "data": []
+}
+```
+
+Returned when the invoice's current status is not `Draft` — in particular, an already-`Approved` invoice (which may already have payments recorded against it via `finance-payment.md`) can no longer be rejected.
 
 #### Response `404 Not Found`
 
@@ -668,6 +692,7 @@ Update a purchase invoice item — this is how `quantity` and `unit_price` get c
 - Approve/reject/revise write an `audit_log` row with action `approved`/`rejected`/`revised`; create writes a `created` audit_log row (update/delete do not call `insertAuditLog` — pre-existing gap, unrelated to the approval stage added here). Query this history via `GET /api/v2/audit-log?module=purchase_invoice&reference_id={id}` — see the `audit-log` module doc.
 - **`status_id`, `approved_by`, and `approved_at` are new as of this addendum** — added specifically to bring purchase-invoice's approval workflow in line with purchase-order/sales. `status_id` is resolved server-side by matching `purchase_status.status_name` (the same shared lookup table `purchase_order` uses): `POST` sets it to `"Draft"`, `PATCH .../approve` sets it to `"Approved"`, `PATCH .../reject` sets it to `"Rejected"`, `PATCH .../revise` sets it back to `"Draft"`. `PUT` cannot change `status_id` — status transitions only happen via `approve`/`reject`/`revise`. `approve` sets `approved_by`/`approved_at`; `reject` and `revise` do not.
 - `revise` only succeeds when the purchase invoice's current status is `Rejected`; any other status returns `400`.
+- **`approve` and `reject` now both require the invoice's current status to be `Draft`**, returning `400` otherwise. Previously unenforced; this closes a hole where an already-`Approved` invoice — potentially with real payments recorded against it via `finance-payment.md` — could be rejected, or a `Rejected` invoice could be approved directly, skipping `PATCH .../revise`.
 - Purchase invoices created before this addendum were backfilled to `Approved` with `approved_by`/`approved_at` left `NULL` (no real approver was ever recorded for them) — see `v2/docs/migrations/v22_purchase_invoice_receive_approval_schema.md`.
 - `invoice_display_number` must be unique per company among non-deleted purchase invoices; violating this returns `409 Conflict`.
 - The create response only returns `purchase_invoice_id`. Only the detail endpoint (`GET /api/v2/purchase-invoice/{id}`) returns the nested `items` array.

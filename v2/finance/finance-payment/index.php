@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../connection/db.php';
 require_once __DIR__ . '/../../helpers/audit_log.php';
 require_once __DIR__ . '/../../helpers/dual_approval.php';
 require_once __DIR__ . '/../../helpers/notification.php';
+require_once __DIR__ . '/../../helpers/general_journal.php';
 
 function getAllFinancePayments($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
@@ -83,9 +84,17 @@ function getOutstandingInvoices($conn, $company_id, $params) {
         $result = mysqli_query($conn, "SELECT fp.invoice_number, pi.invoice_date,
                 MAX(fp.due_amount) AS invoice_value,
                 SUM(COALESCE(fp.paid_amount, 0)) AS paid_amount,
-                MAX(fp.due_amount) - SUM(COALESCE(fp.paid_amount, 0)) AS outstanding
+                MAX(fp.due_amount) - SUM(COALESCE(fp.paid_amount, 0)) AS outstanding,
+                MAX(pi.purchase_order_id) AS purchase_order_id,
+                MAX(pi.kurs) AS kurs,
+                MAX(cur.currency_code) AS currency_code,
+                MAX(cur.currency_name) AS currency_name,
+                MAX(ps.status_name) AS status_name
             FROM " . APP_SCHEMA . ".finance_payment fp
             LEFT JOIN " . APP_SCHEMA . ".purchase_invoice pi ON pi.invoice_display_number = fp.invoice_number AND pi.company_id = fp.company_id
+            LEFT JOIN " . APP_SCHEMA . ".purchase_order po ON po.id = pi.purchase_order_id
+            LEFT JOIN " . APP_SCHEMA . ".currency cur ON cur.id = po.currency_id
+            LEFT JOIN " . APP_SCHEMA . ".purchase_status ps ON ps.id = pi.status_id
             WHERE fp.company_id = '$company_id' AND fp.supplier_id = '$supplier_id' AND fp.deleted_at IS NULL
             GROUP BY fp.invoice_number, pi.invoice_date
             HAVING outstanding > 0
@@ -101,9 +110,11 @@ function getOutstandingInvoices($conn, $company_id, $params) {
         $result = mysqli_query($conn, "SELECT fp.invoice_number, si.invoice_date,
                 MAX(fp.due_amount) AS invoice_value,
                 SUM(COALESCE(fp.paid_amount, 0)) AS paid_amount,
-                MAX(fp.due_amount) - SUM(COALESCE(fp.paid_amount, 0)) AS outstanding
+                MAX(fp.due_amount) - SUM(COALESCE(fp.paid_amount, 0)) AS outstanding,
+                MAX(ss.status_name) AS status_name
             FROM " . APP_SCHEMA . ".finance_payment fp
             LEFT JOIN " . APP_SCHEMA . ".sales_invoice si ON si.invoice_display_number = fp.invoice_number AND si.company_id = fp.company_id
+            LEFT JOIN " . APP_SCHEMA . ".sales_status ss ON ss.id = si.status_id
             WHERE fp.company_id = '$company_id' AND fp.customer_id = '$customer_id' AND fp.deleted_at IS NULL
             GROUP BY fp.invoice_number, si.invoice_date
             HAVING outstanding > 0
@@ -116,6 +127,9 @@ function getOutstandingInvoices($conn, $company_id, $params) {
             $invoice['invoice_value'] = (float)$invoice['invoice_value'];
             $invoice['paid_amount']   = (float)$invoice['paid_amount'];
             $invoice['outstanding']   = (float)$invoice['outstanding'];
+            if (array_key_exists('kurs', $invoice)) {
+                $invoice['kurs'] = isset($invoice['kurs']) ? (float)$invoice['kurs'] : null;
+            }
         }
         jsonResponse(200, 'Outstanding invoices found', ['data' => $invoices]);
     } else {
@@ -132,20 +146,36 @@ function createFinancePayment($conn, $input, $username, $company_id) {
         }
     }
 
-    $invoice_number = trim(mysqli_real_escape_string($conn, $input['invoice_number']));
-    $paid_amount    = (float)$input['paid_amount'];
+    $invoice_number    = trim(mysqli_real_escape_string($conn, $input['invoice_number']));
+    $paid_amount       = (float)$input['paid_amount'];
+    $is_supplier_payment = isset($input['supplier_id']) && trim($input['supplier_id']) !== '';
 
-    $invoice_check = mysqli_query($conn, "SELECT ss.status_name FROM " . APP_SCHEMA . ".sales_invoice si
-            LEFT JOIN " . APP_SCHEMA . ".sales_status ss ON ss.id = si.status_id
-            WHERE si.invoice_display_number = '$invoice_number' AND si.company_id = '$company_id' AND si.deleted_at IS NULL LIMIT 1");
-    if (!$invoice_check || mysqli_num_rows($invoice_check) === 0) {
-        jsonResponse(404, 'Sales invoice not found');
-        return;
-    }
-    $sales_invoice = mysqli_fetch_assoc($invoice_check);
-    if ($sales_invoice['status_name'] !== 'Approved') {
-        jsonResponse(400, 'Sales invoice must be approved before a payment can be recorded');
-        return;
+    if ($is_supplier_payment) {
+        $invoice_check = mysqli_query($conn, "SELECT ps.status_name FROM " . APP_SCHEMA . ".purchase_invoice pi
+                LEFT JOIN " . APP_SCHEMA . ".purchase_status ps ON ps.id = pi.status_id
+                WHERE pi.invoice_display_number = '$invoice_number' AND pi.company_id = '$company_id' AND pi.deleted_at IS NULL LIMIT 1");
+        if (!$invoice_check || mysqli_num_rows($invoice_check) === 0) {
+            jsonResponse(404, 'Purchase invoice not found');
+            return;
+        }
+        $purchase_invoice = mysqli_fetch_assoc($invoice_check);
+        if ($purchase_invoice['status_name'] !== 'Approved') {
+            jsonResponse(400, 'Purchase invoice must be approved before a payment can be recorded');
+            return;
+        }
+    } else {
+        $invoice_check = mysqli_query($conn, "SELECT ss.status_name FROM " . APP_SCHEMA . ".sales_invoice si
+                LEFT JOIN " . APP_SCHEMA . ".sales_status ss ON ss.id = si.status_id
+                WHERE si.invoice_display_number = '$invoice_number' AND si.company_id = '$company_id' AND si.deleted_at IS NULL LIMIT 1");
+        if (!$invoice_check || mysqli_num_rows($invoice_check) === 0) {
+            jsonResponse(404, 'Sales invoice not found');
+            return;
+        }
+        $sales_invoice = mysqli_fetch_assoc($invoice_check);
+        if ($sales_invoice['status_name'] !== 'Approved') {
+            jsonResponse(400, 'Sales invoice must be approved before a payment can be recorded');
+            return;
+        }
     }
 
     if (isset($input['customer_id']) && trim($input['customer_id']) !== '') {
@@ -311,8 +341,53 @@ function deleteFinancePayment($conn, $finance_payment_id, $username, $company_id
     }
 }
 
+// Posts the cash-side settlement (Kas/Bank vs Piutang/Hutang) to the General Journal
+// once a payment is fully approved. Skips (never blocks the approval, never guesses
+// an account) if the payment has no bank_account_id, that bank has no mapped
+// account_code_id, or the relevant default receivable/payable account is missing.
+function postFinancePaymentSettlement($conn, $company_id, $finance_payment_id, $paid_amount, $customer_id, $supplier_id, $bank_account_id, $transaction_date, $username) {
+    if ($paid_amount <= 0) return;
+    if (!$bank_account_id) {
+        insertAuditLog($conn, $company_id, 'general_journal', $finance_payment_id, 'gl_posting_skipped', $username, 'payment has no bank_account_id');
+        return;
+    }
+
+    $bank_result = mysqli_query($conn, "SELECT account_code_id FROM " . APP_SCHEMA . ".bank_account WHERE id = '$bank_account_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $bank        = $bank_result ? mysqli_fetch_assoc($bank_result) : null;
+    if (!$bank || !$bank['account_code_id']) {
+        insertAuditLog($conn, $company_id, 'general_journal', $finance_payment_id, 'gl_posting_skipped', $username, 'bank_account has no mapped account_code_id');
+        return;
+    }
+    $bank_account_code_id = $bank['account_code_id'];
+
+    if ($customer_id) {
+        $receivable_account = getDefaultAccountCode($conn, $company_id, 'is_default_receivable');
+        if (!$receivable_account) {
+            insertAuditLog($conn, $company_id, 'general_journal', $finance_payment_id, 'gl_posting_skipped', $username, 'missing default account: is_default_receivable');
+            return;
+        }
+        postGeneralJournalEntry($conn, $company_id, substr($transaction_date, 0, 10), "Pelunasan piutang - finance_payment $finance_payment_id",
+            'finance_payment', $finance_payment_id, [
+                ['account_code_id' => $bank_account_code_id, 'amount' => $paid_amount],
+                ['account_code_id' => $receivable_account['id'], 'amount' => -$paid_amount],
+            ], $username);
+    } elseif ($supplier_id) {
+        $payable_account = getDefaultAccountCode($conn, $company_id, 'is_default_payable');
+        if (!$payable_account) {
+            insertAuditLog($conn, $company_id, 'general_journal', $finance_payment_id, 'gl_posting_skipped', $username, 'missing default account: is_default_payable');
+            return;
+        }
+        postGeneralJournalEntry($conn, $company_id, substr($transaction_date, 0, 10), "Pelunasan hutang - finance_payment $finance_payment_id",
+            'finance_payment', $finance_payment_id, [
+                ['account_code_id' => $payable_account['id'], 'amount' => -$paid_amount],
+                ['account_code_id' => $bank_account_code_id, 'amount' => -$paid_amount],
+            ], $username);
+    }
+}
+
 function approveFinancePayment($conn, $finance_payment_id, $input, $username, $app_role_id, $company_id) {
-    $doc_check = mysqli_query($conn, "SELECT invoice_number, created_by FROM " . APP_SCHEMA . ".finance_payment WHERE id = '$finance_payment_id' AND company_id = '$company_id' LIMIT 1");
+    $doc_check = mysqli_query($conn, "SELECT invoice_number, created_by, paid_amount, customer_id, supplier_id, bank_account_id, payment_date
+            FROM " . APP_SCHEMA . ".finance_payment WHERE id = '$finance_payment_id' AND company_id = '$company_id' LIMIT 1");
     $doc       = $doc_check ? mysqli_fetch_assoc($doc_check) : null;
 
     $result = applyDualApproval($conn, APP_SCHEMA . '.finance_payment', $finance_payment_id, $company_id, $username, $app_role_id);
@@ -330,6 +405,11 @@ function approveFinancePayment($conn, $finance_payment_id, $input, $username, $a
 
     if ($result['transaction_status'] === 'posted') {
         invalidateApprovalTokens($conn, 'finance_payment', $finance_payment_id);
+        if ($doc) {
+            $settlement_date = $doc['payment_date'] ?? date('Y-m-d H:i:s');
+            postFinancePaymentSettlement($conn, $company_id, $finance_payment_id, (float)$doc['paid_amount'],
+                $doc['customer_id'], $doc['supplier_id'], $doc['bank_account_id'], $settlement_date, $username);
+        }
         notify($conn, [
             'company_id'         => $company_id,
             'type'               => 'approval_approved',

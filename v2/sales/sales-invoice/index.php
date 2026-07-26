@@ -6,6 +6,7 @@ require_once __DIR__ . '/../../helpers/audit_log.php';
 require_once __DIR__ . '/../../helpers/excel_export.php';
 require_once __DIR__ . '/../../helpers/notification.php';
 require_once __DIR__ . '/../../helpers/finance_payment.php';
+require_once __DIR__ . '/../../helpers/general_journal.php';
 
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
@@ -50,6 +51,28 @@ function calculateSalesInvoiceTotal($conn, $sales_invoice_id) {
     $result = mysqli_query($conn, "SELECT SUM(quantity * unit_price * (1 + tax / 100)) AS total_invoice
             FROM " . APP_SCHEMA . ".sales_invoice_item WHERE sales_invoice_id = '$sales_invoice_id' AND deleted_at IS NULL");
     return $result ? (float)(mysqli_fetch_assoc($result)['total_invoice'] ?? 0) : 0;
+}
+
+// Recognizes Piutang Usaha + Revenue in the General Journal when a sales invoice is
+// approved. Skips (never blocks the approval, never guesses an account) if the
+// company hasn't configured its default receivable/sales-revenue accounts yet.
+function postSalesInvoiceRecognition($conn, $company_id, $sales_invoice_id, $total_invoice, $transaction_date, $username) {
+    if ($total_invoice <= 0) return;
+
+    $receivable_account = getDefaultAccountCode($conn, $company_id, 'is_default_receivable');
+    $revenue_account     = getDefaultAccountCode($conn, $company_id, 'is_default_sales_revenue');
+
+    if (!$receivable_account || !$revenue_account) {
+        $missing = !$receivable_account ? 'is_default_receivable' : 'is_default_sales_revenue';
+        insertAuditLog($conn, $company_id, 'general_journal', $sales_invoice_id, 'gl_posting_skipped', $username, "missing default account: $missing");
+        return;
+    }
+
+    postGeneralJournalEntry($conn, $company_id, substr($transaction_date, 0, 10), "Pengakuan piutang - sales_invoice $sales_invoice_id",
+        'sales_invoice', $sales_invoice_id, [
+            ['account_code_id' => $receivable_account['id'], 'amount' => $total_invoice],
+            ['account_code_id' => $revenue_account['id'], 'amount' => $total_invoice],
+        ], $username);
 }
 
 function getAllSalesInvoices($conn, $company_id, $params) {
@@ -318,15 +341,20 @@ function deleteSalesInvoice($conn, $sales_invoice_id, $username, $company_id) {
 }
 
 function approveSalesInvoice($conn, $sales_invoice_id, $input, $username, $company_id) {
-    $check = mysqli_query($conn, "SELECT si.created_by, si.invoice_display_number, si.customer_id, c.customer_name
+    $check = mysqli_query($conn, "SELECT si.created_by, si.invoice_display_number, si.customer_id, c.customer_name, ss.status_name
             FROM " . APP_SCHEMA . ".sales_invoice si
             LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = si.customer_id
+            LEFT JOIN " . APP_SCHEMA . ".sales_status ss ON ss.id = si.status_id
             WHERE si.id = '$sales_invoice_id' AND si.company_id = '$company_id' AND si.deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Sales invoice not found');
         return;
     }
     $sales_invoice = mysqli_fetch_assoc($check);
+    if ($sales_invoice['status_name'] !== 'Draft') {
+        jsonResponse(400, 'Only draft sales invoices can be approved');
+        return;
+    }
 
     $status_id = getSalesStatusIdByName($conn, 'Approved');
     if (!$status_id) {
@@ -345,6 +373,7 @@ function approveSalesInvoice($conn, $sales_invoice_id, $input, $username, $compa
         $approver_name = resolveDisplayName($conn, $username);
         $total_invoice = calculateSalesInvoiceTotal($conn, $sales_invoice_id);
         seedFinancePaymentBaseline($conn, $company_id, $sales_invoice['invoice_display_number'], $total_invoice, $sales_invoice['customer_id'], null, $username);
+        postSalesInvoiceRecognition($conn, $company_id, $sales_invoice_id, $total_invoice, $now, $username);
         $detail_link   = rtrim(APPROVAL_BASE_URL, '/') . '/sales/sales-invoice/' . $sales_invoice_id;
 
         notify($conn, [
@@ -368,14 +397,19 @@ function approveSalesInvoice($conn, $sales_invoice_id, $input, $username, $compa
 }
 
 function rejectSalesInvoice($conn, $sales_invoice_id, $input, $username, $company_id) {
-    $check = mysqli_query($conn, "SELECT created_by, invoice_display_number
-            FROM " . APP_SCHEMA . ".sales_invoice
-            WHERE id = '$sales_invoice_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
+    $check = mysqli_query($conn, "SELECT si.created_by, si.invoice_display_number, ss.status_name
+            FROM " . APP_SCHEMA . ".sales_invoice si
+            LEFT JOIN " . APP_SCHEMA . ".sales_status ss ON ss.id = si.status_id
+            WHERE si.id = '$sales_invoice_id' AND si.company_id = '$company_id' AND si.deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Sales invoice not found');
         return;
     }
     $sales_invoice = mysqli_fetch_assoc($check);
+    if ($sales_invoice['status_name'] !== 'Draft') {
+        jsonResponse(400, 'Only draft sales invoices can be rejected');
+        return;
+    }
 
     $status_id = getSalesStatusIdByName($conn, 'Rejected');
     if (!$status_id) {

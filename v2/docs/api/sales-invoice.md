@@ -1,6 +1,6 @@
 # Sales Invoice API
 
-> **Last updated:** 2026-07-25 20:27:34 WIB
+> **Last updated:** 2026-07-26 19:15:00 WIB
 > **Base URL:** `/api/v2/sales-invoice`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -389,7 +389,7 @@ Soft-deletes the sales invoice (sets `deleted_at`) — it will no longer appear 
 
 ### PATCH `/api/v2/sales-invoice/{id}/approve`
 
-Approve a sales invoice. Server-side sets `status_id` to the `Approved` sales status, plus `approved_by`, `approved_at`. The client does not send `status_id`. Also seeds a baseline `finance_payment` row for this invoice (`due_amount` = sum of item totals, `paid_amount: 0`) if one doesn't already exist — see `finance-payment.md`'s note on baseline rows.
+Approve a sales invoice. Only allowed when the invoice's current status is `Draft`. Server-side sets `status_id` to the `Approved` sales status, plus `approved_by`, `approved_at`. The client does not send `status_id`. Also seeds a baseline `finance_payment` row for this invoice (`due_amount` = sum of item totals, `paid_amount: 0`) if one doesn't already exist — see `finance-payment.md`'s note on baseline rows.
 
 #### Path parameters
 
@@ -413,6 +413,18 @@ Approve a sales invoice. Server-side sets `status_id` to the `Approved` sales st
 }
 ```
 
+#### Response `400 Bad Request`
+
+```json
+{
+  "status_code": 400,
+  "status_message": "Only draft sales invoices can be approved",
+  "data": []
+}
+```
+
+Returned when the invoice's current status is not `Draft` (e.g. it's already `Approved` or `Rejected`). An `Approved` invoice can no longer be re-approved, and a `Rejected` invoice must go through `PATCH .../revise` back to `Draft` first.
+
 #### Response `404 Not Found`
 
 ```json
@@ -427,7 +439,7 @@ Approve a sales invoice. Server-side sets `status_id` to the `Approved` sales st
 
 ### PATCH `/api/v2/sales-invoice/{id}/reject`
 
-Reject a sales invoice. Server-side sets `status_id` to the `Rejected` sales status (does not set `approved_by`/`approved_at`). The client does not send `status_id`.
+Reject a sales invoice. Only allowed when the invoice's current status is `Draft`. Server-side sets `status_id` to the `Rejected` sales status (does not set `approved_by`/`approved_at`). The client does not send `status_id`.
 
 #### Path parameters
 
@@ -450,6 +462,18 @@ Reject a sales invoice. Server-side sets `status_id` to the `Rejected` sales sta
   "data": []
 }
 ```
+
+#### Response `400 Bad Request`
+
+```json
+{
+  "status_code": 400,
+  "status_message": "Only draft sales invoices can be rejected",
+  "data": []
+}
+```
+
+Returned when the invoice's current status is not `Draft` — in particular, an already-`Approved` invoice (which may already have payments recorded against it via `finance-payment.md`) can no longer be rejected.
 
 #### Response `404 Not Found`
 
@@ -572,5 +596,6 @@ The filename's `invoice_display_number` has any character outside `[A-Za-z0-9_-]
 - **`status_id` is a server-resolved field, not client-supplied**, matching the pattern already used by `sales-order`/`sales-sppb`/`sales-delivery`/`sales-profit`: `POST` sets it to `"Draft"`, `PATCH .../approve` sets it to `"Approved"`, `PATCH .../reject` sets it to `"Rejected"`, `PATCH .../revise` sets it back to `"Draft"`. `PUT` cannot change `status_id` at all. Resolved by matching `sales_status.status_name` — the frontend never needs to know or send a `sales_status.id` UUID. `GET /api/v2/sales-invoice` accepts `status_id` as a read-only filter; resolve it from `GET /api/v2/sales-status` at request time.
 - `approve` sets `approved_by` and `approved_at`; `reject` and `revise` do not. If `sales_status` is ever missing a `Draft`/`Approved`/`Rejected` row (non-deleted), the corresponding endpoint returns `500` naming the missing status — a master-data configuration problem, not a client error.
 - `revise` only works when the current status is `Rejected` — there is no "un-approve" action; approved invoices cannot be reverted to `Draft` through the API.
+- **`approve` and `reject` now both require the invoice's current status to be `Draft`**, returning `400` otherwise. Previously this was undocumented-but-assumed; it is now enforced server-side. This closes a hole where an already-`Approved` invoice — potentially with real payments recorded against it via `finance-payment.md` — could be rejected, or a `Rejected` invoice could be approved directly, skipping `PATCH .../revise`.
 - **Every sales invoice that existed before `status_id` was added has been backfilled to `Draft`** (200 rows on dev, as of the migration that introduced this field) — this was a deliberate choice, not an inference: pre-existing invoices are treated as not-yet-approved rather than grandfathered in as already-approved. Expect them to appear in any "pending approval" view built around `status_name = 'Draft'`. See `v2/docs/migrations/v27_sales_invoice_approval_schema.md`.
 - Frontend should gate the Approve/Reject buttons on `status_name === 'Draft'`, and a Revise action on `status_name === 'Rejected'`.
