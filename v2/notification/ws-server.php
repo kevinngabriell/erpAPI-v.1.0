@@ -62,6 +62,12 @@ class ConnectionRegistry {
     }
 }
 
+// pid/log files must live outside the repo — the repo dir's owner flips
+// between deploys (`chown -R www-data`) and `git clean -fd` on every deploy
+// would delete them anyway.
+Worker::$pidFile = '/var/run/erp-notification-ws/ws-server.pid';
+Worker::$logFile = '/var/log/erp-notification-ws/ws-server.log';
+
 $wsWorker        = new Worker('websocket://0.0.0.0:' . WS_PORT);
 $wsWorker->count = 1;
 $wsWorker->name  = 'notification-ws';
