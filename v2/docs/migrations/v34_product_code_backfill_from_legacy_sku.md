@@ -66,40 +66,83 @@ WHERE product_code IS NULL;                                       -- expect exac
 
 ## PROD — NOT yet applied
 
-**Do not run this against production without Kage's sign-off first** — same review gate as every other schema/data change in this project. Mirrors the DEV block above exactly, scoped to prod schema names.
+**Do not run this against production without Kage's sign-off first** — same review gate as every other schema/data change in this project. Same logic as the DEV block above, restructured into an explicit precondition-check-then-write flow: **Step 0 is a read-only gate that must pass before Step 1/2 touch any data.** Schema names are set once at the top instead of repeated inline, so there's a single place to get them right instead of several places to miss one.
+
+Run as one session, top to bottom, in order — do not skip Step 0, and do not proceed past it if the counts don't match.
 
 ```sql
--- Replace aluria_prod / migration_temp_venken below with prod's real schema names
--- (from prod's .env APP_SCHEMA, and wherever prod's legacy source DB lives) before running.
+-- ============================================================================
+-- v34 PROD — product.product_code column + backfill from legacy skuID
+-- ============================================================================
 
+-- Set this once, before running anything below.
+SET @app_schema := 'aluria_prod'; -- replace with prod's real APP_SCHEMA (from prod's .env)
+
+-- ----------------------------------------------------------------------------
+-- STEP 0 — PRECONDITION (read-only): confirms prod's `product` rows were
+-- migrated the same way dev's were — via `legacy_id_map` with
+-- entity_type='product', 1:1 with the `product` table (dev was 96/96).
+-- If prod's `product` table was populated some other way (hand-entered,
+-- different migration script), this backfill will silently match 0 rows in
+-- Step 2 rather than error — this check is what catches that up front.
+-- ----------------------------------------------------------------------------
+SET @sql := CONCAT(
+  'SELECT ',
+  '  (SELECT COUNT(*) FROM ', @app_schema, '.product) AS product_rows, ',
+  '  (SELECT COUNT(*) FROM ', @app_schema, '.legacy_id_map WHERE entity_type = ''product'') AS legacy_map_rows'
+);
+PREPARE precondition_check FROM @sql;
+EXECUTE precondition_check;
+DEALLOCATE PREPARE precondition_check;
+-- STOP HERE if product_rows != legacy_map_rows, or if legacy_map_rows = 0.
+-- Do not run Step 1/2 until that's resolved.
+
+-- ----------------------------------------------------------------------------
+-- STEP 1 — add the column (idempotent)
+-- ----------------------------------------------------------------------------
 SET @schema_check := (
   SELECT COUNT(*) FROM information_schema.COLUMNS
-  WHERE table_schema = 'aluria_prod' AND table_name = 'product'
+  WHERE table_schema = @app_schema AND table_name = 'product'
     AND column_name = 'product_code'
 );
 SET @alter_sql := IF(@schema_check > 0,
   'SELECT ''product.product_code already exists, skipping'' AS note',
-  'ALTER TABLE aluria_prod.product ADD COLUMN product_code VARCHAR(50) NULL AFTER product_name'
+  CONCAT('ALTER TABLE ', @app_schema, '.product ADD COLUMN product_code VARCHAR(50) NULL AFTER product_name')
 );
 PREPARE alter_product_code FROM @alter_sql;
 EXECUTE alter_product_code;
 DEALLOCATE PREPARE alter_product_code;
 
-UPDATE aluria_prod.product p
-JOIN aluria_prod.legacy_id_map lim
-  ON lim.entity_type = 'product' AND lim.new_id = p.id
-SET p.product_code = lim.legacy_id
-WHERE p.product_code IS NULL
-  AND lim.legacy_id IS NOT NULL
-  AND lim.legacy_id != '';
+-- ----------------------------------------------------------------------------
+-- STEP 2 — backfill from legacy_id_map (exact key join, see doc header above)
+-- ----------------------------------------------------------------------------
+SET @sql := CONCAT(
+  'UPDATE ', @app_schema, '.product p ',
+  'JOIN ', @app_schema, '.legacy_id_map lim ',
+  '  ON lim.entity_type = ''product'' AND lim.new_id = p.id ',
+  'SET p.product_code = lim.legacy_id ',
+  'WHERE p.product_code IS NULL ',
+  '  AND lim.legacy_id IS NOT NULL ',
+  '  AND lim.legacy_id != '''''
+);
+PREPARE backfill_product_code FROM @sql;
+EXECUTE backfill_product_code;
+DEALLOCATE PREPARE backfill_product_code;
 
--- Verification
-DESCRIBE aluria_prod.product;
-SELECT COUNT(*) AS total, COUNT(product_code) AS with_code FROM aluria_prod.product;
-SELECT id, product_name, product_code FROM aluria_prod.product WHERE product_code IS NULL;
+-- ----------------------------------------------------------------------------
+-- STEP 3 — post-migration verification
+-- ----------------------------------------------------------------------------
+SET @sql := CONCAT('DESCRIBE ', @app_schema, '.product');
+PREPARE verify_describe FROM @sql; EXECUTE verify_describe; DEALLOCATE PREPARE verify_describe;
+
+SET @sql := CONCAT('SELECT COUNT(*) AS total, COUNT(product_code) AS with_code FROM ', @app_schema, '.product');
+PREPARE verify_counts FROM @sql; EXECUTE verify_counts; DEALLOCATE PREPARE verify_counts;
+
+SET @sql := CONCAT('SELECT id, product_name, product_code FROM ', @app_schema, '.product WHERE product_code IS NULL');
+PREPARE verify_nulls FROM @sql; EXECUTE verify_nulls; DEALLOCATE PREPARE verify_nulls;
 ```
 
-**Precondition:** this backfill only works if prod's `product` rows were migrated the same way as dev — via `legacy_id_map` with `entity_type = 'product'` rows whose `legacy_id` is the legacy `skuID`. **Verify that assumption against prod's own `legacy_id_map` before running** (`SELECT COUNT(*) FROM aluria_prod.legacy_id_map WHERE entity_type = 'product'` should be > 0 and match `aluria_prod.product`'s row count). If prod's `product` table was populated some other way (hand-entered, different migration script), this join will silently backfill 0 rows — check the verification query's `with_code` count against expectations before considering it done, don't assume success from a clean run.
+**Reading Step 3's output:** `with_code` should equal `total` minus however many rows had a genuinely blank legacy `skuID` (dev's case: 1 row out of 96). Don't assume success from a clean run with no errors — the join silently matches 0 rows if the Step 0 precondition didn't actually hold, so `with_code` staying at 0 (or far below expectations) after Step 2 is the real signal to check, not the absence of SQL errors.
 
 **Deploy order:** code (the `product_code` field on create/update/search) can deploy before or after this schema change — the column addition is additive and nullable, so old code against the new schema is a no-op (extra column simply unused), and new code against the old schema will error on every write since `product_code` won't exist yet. **Schema change must land in prod before the code deploy**, not after.
 
@@ -107,7 +150,7 @@ SELECT id, product_name, product_code FROM aluria_prod.product WHERE product_cod
 
 ## Post-migration checklist
 
-- [ ] Get Kage's sign-off, then run the PROD block above, after confirming prod's `legacy_id_map` actually covers `product` the same way dev's does (see precondition above).
+- [ ] Get Kage's sign-off, then run the PROD block above — Step 0 is the precondition check (confirms prod's `legacy_id_map` actually covers `product` the same way dev's does) and must pass before Step 1/2 run.
 - [ ] `docs/api/product.md` regenerated via `/standards` to document the new `product_code` field on create/update/list/detail (done this session for dev's shape — re-verify field is present after prod backfill).
 - [ ] No permission keys or role assignments involved — this is a data/schema addition to an already-authenticated, already-scoped module.
 - [ ] The 1 dev product row with `product_code IS NULL` (blank legacy `skuID`) is a legitimate "no code" product, not a migration bug — do not backfill it with a guessed value later without checking with the business first.

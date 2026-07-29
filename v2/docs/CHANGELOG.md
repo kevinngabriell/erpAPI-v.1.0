@@ -7,6 +7,19 @@ Intended audience: frontend developers.
 
 ---
 
+## [2026-07-29 14:00:00 WIB] — Notification list gains a category filter
+
+### Added
+- `GET /api/v2/notification` now accepts `category` (`sales` \| `purchase` \| `finance` \| `system`), filtering to the `source_module` values that bucket lives on the notifications page (see `docs/api/notification.md` for the full mapping table). Invalid values return `400`. Combines with `unread=1` and with `page`/`limit` — all three are independent filters/params on the same request.
+
+### Changed
+- `limit`'s default (when omitted) dropped from `20` to `10`. Still capped at `100` server-side, same as every other list endpoint.
+
+### Notes for frontend
+- Move the category tabs on the notifications "See All" page to request params (`?category=purchase`) instead of filtering the already-fetched array, so a tab reflects the account's full history instead of whatever happened to be in the last page fetched.
+
+---
+
 ## [2026-07-26 20:15:00 WIB] — Product now carries the legacy product/SKU code
 
 ### Added

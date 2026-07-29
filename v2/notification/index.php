@@ -4,14 +4,30 @@ require_once __DIR__ . '/../general.php';
 require_once __DIR__ . '/../connection/db.php';
 require_once __DIR__ . '/../helpers/notification.php';
 
+const NOTIFICATION_CATEGORY_MODULES = [
+    'sales'    => ['sales_order', 'sales_invoice', 'sales_delivery', 'sales_sppb', 'sales_profit'],
+    'purchase' => ['purchase_order', 'purchase_invoice', 'purchase_receive'],
+    'finance'  => ['finance_transaction', 'finance_payment'],
+    'system'   => ['notification'],
+];
+
 function getAllNotifications($conn, $company_id, $username, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 20)));
+    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
     $offset = ($page - 1) * $limit;
 
     $where = "n.company_id = '$company_id' AND n.target_user_id = '$username' AND n.deleted_at IS NULL";
     if (isset($params['unread']) && $params['unread'] === '1') {
         $where .= " AND n.read_at IS NULL";
+    }
+    if (isset($params['category']) && trim($params['category']) !== '') {
+        $category = trim($params['category']);
+        if (!isset(NOTIFICATION_CATEGORY_MODULES[$category])) {
+            jsonResponse(400, 'category must be one of: ' . implode(', ', array_keys(NOTIFICATION_CATEGORY_MODULES)));
+            return;
+        }
+        $modules_sql = implode(',', array_map(fn($module) => "'" . mysqli_real_escape_string($conn, $module) . "'", NOTIFICATION_CATEGORY_MODULES[$category]));
+        $where .= " AND n.source_module IN ($modules_sql)";
     }
 
     $from = APP_SCHEMA . ".notification n";

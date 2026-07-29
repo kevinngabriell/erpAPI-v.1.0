@@ -1,6 +1,6 @@
 # Notification API
 
-> **Last updated:** 2026-07-25 06:24:59 WIB
+> **Last updated:** 2026-07-29 14:00:00 WIB
 > **Base URL:** `/api/v2/notification`, `/api/v2/approvals`, `/api/v2/notification-settings`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -34,8 +34,9 @@ List in-app notifications belonging to the authenticated user.
 | Parameter | Type   | Required | Default | Description |
 |-----------|--------|----------|---------|-------------|
 | page      | int    | No       | 1       | Page number |
-| limit     | int    | No       | 20      | Items per page (max 100) |
+| limit     | int    | No       | 10      | Items per page (max 100) |
 | unread    | string | No       | —       | Pass `1` to return only unread notifications |
+| category  | string | No       | —       | Filter by category bucket: `sales` \| `purchase` \| `finance` \| `system`. Combines with `unread` (both apply together, not either/or). Invalid values return `400` |
 
 #### Response `200 OK`
 
@@ -65,14 +66,33 @@ List in-app notifications belonging to the authenticated user.
     "pagination": {
       "total": 12,
       "page": 1,
-      "limit": 20,
-      "total_pages": 1
+      "limit": 10,
+      "total_pages": 2
     }
   }
 }
 ```
 
-`type` is one of `approval_pending` \| `approval_approved` \| `approval_rejected` \| `digest_daily`. `source_module` is one of `sales_order` \| `purchase_order` \| `purchase_invoice` \| `purchase_receive` \| `finance_transaction` \| `finance_payment` (or `notification` for `digest_daily` rows, which don't point at one specific document). Construct the click-through link from `source_module` + `source_document_id` using the same per-module URL pattern already used elsewhere in the app.
+`type` is one of `approval_pending` \| `approval_approved` \| `approval_rejected` \| `digest_daily`. `source_module` is one of `sales_order` \| `sales_invoice` \| `sales_delivery` \| `sales_sppb` \| `sales_profit` \| `purchase_order` \| `purchase_invoice` \| `purchase_receive` \| `finance_transaction` \| `finance_payment` (or `notification` for `digest_daily` rows, which don't point at one specific document). Construct the click-through link from `source_module` + `source_document_id` using the same per-module URL pattern already used elsewhere in the app.
+
+`category` groups those `source_module` values as follows — use this instead of fetching everything and filtering client-side:
+
+| category | source_module values |
+|----------|----------------------|
+| `sales` | `sales_order`, `sales_invoice`, `sales_delivery`, `sales_sppb`, `sales_profit` |
+| `purchase` | `purchase_order`, `purchase_invoice`, `purchase_receive` |
+| `finance` | `finance_transaction`, `finance_payment` |
+| `system` | `notification` |
+
+#### Response `400 Bad Request`
+
+```json
+{
+  "status_code": 400,
+  "status_message": "category must be one of: sales, purchase, finance, system",
+  "data": []
+}
+```
 
 ---
 
