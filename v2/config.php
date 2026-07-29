@@ -27,3 +27,7 @@ if (!defined('APP_ID'))      define('APP_ID',      $_ENV['APP_ID']      ?? '');
 if (!defined('WAHA_BASE_URL')) define('WAHA_BASE_URL', $_ENV['WAHA_BASE_URL'] ?? '');
 if (!defined('WAHA_SESSION'))  define('WAHA_SESSION',  $_ENV['WAHA_SESSION']  ?? '');
 if (!defined('WAHA_API_KEY'))  define('WAHA_API_KEY',  $_ENV['WAHA_API_KEY']  ?? '');
+
+if (!defined('WS_PORT'))          define('WS_PORT',          (int)($_ENV['WS_PORT'] ?? 9502));
+if (!defined('WS_PUBLISH_PORT'))  define('WS_PUBLISH_PORT',  (int)($_ENV['WS_PUBLISH_PORT'] ?? 9503));
+if (!defined('APPROVAL_BASE_URL')) define('APPROVAL_BASE_URL', $_ENV['APPROVAL_BASE_URL'] ?? '');

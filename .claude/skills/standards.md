@@ -79,6 +79,11 @@ Check the file against every item below. Mark each **PASS**, **FAIL**, or **WARN
 - [ ] No unnecessary comments or docblocks
 - [ ] No `$query` / `$res` / `$cnt` / `$rows` / `$flag` variable names
 
+### Database schema changes
+- [ ] If this task altered the DB schema (new columns/tables/enum values) or inserted rows into a shared lookup/permission table, a migration doc exists under `v2/docs/migrations/` covering every environment (dev + prod), per `.claude/CODE_STANDARDS.md` §17 — **FAIL** if the schema was changed but no doc was written
+- [ ] Any historical-row backfill on a new column either derives from real source data or is explicitly left `NULL` with a stated reason — never a guessed default
+- [ ] Any new permission key is not paired with a guessed role assignment — role/permission assignment is left as a checklist item, not silently decided
+
 ---
 
 ## Step 4 — Report findings

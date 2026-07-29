@@ -2,10 +2,11 @@ name: Deploy Venken API
 
 on:
   push:
-    branches: [main]
+    branches: [main, "dev/release/v*"]
 
 jobs:
-  deploy:
+  deploy-prod:
+    if: github.ref == 'refs/heads/main'
     runs-on: self-hosted
     steps:
       - name: Pull latest code
@@ -30,3 +31,34 @@ jobs:
         run: |
           sudo chown -R www-data:www-data /home/ubuntu/apps/erpAPI-v.1.0
           sudo chmod -R 755 /home/ubuntu/apps/erpAPI-v.1.0
+
+  deploy-dev:
+    if: startsWith(github.ref, 'refs/heads/dev/release/v')
+    runs-on: self-hosted
+    steps:
+      - name: Pull latest code
+        run: |
+          sudo mkdir -p /home/ubuntu/apps/erpAPI-dev
+          sudo chown -R $USER:$USER /home/ubuntu/apps/erpAPI-dev
+          git config --global --add safe.directory /home/ubuntu/apps/erpAPI-dev
+          cd /home/ubuntu/apps/erpAPI-dev
+          if [ ! -d .git ]; then
+            git clone https://github.com/kevinngabriell/erpAPI-v.1.0.git .
+          fi
+          git fetch origin "${GITHUB_REF#refs/heads/}"
+          git reset --hard "origin/${GITHUB_REF#refs/heads/}"
+          git clean -fd
+
+      - name: Install PHP extensions
+        run: |
+          sudo apt-get install -y php8.3-xml php8.3-zip php8.3-gd php8.3-mbstring php8.3-intl php8.3-bcmath
+
+      - name: Install dependencies
+        run: |
+          cd /home/ubuntu/apps/erpAPI-dev
+          composer install --no-dev --optimize-autoloader
+
+      - name: Fix permissions
+        run: |
+          sudo chown -R www-data:www-data /home/ubuntu/apps/erpAPI-dev
+          sudo chmod -R 755 /home/ubuntu/apps/erpAPI-dev
