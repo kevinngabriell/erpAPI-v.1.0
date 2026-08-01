@@ -1,6 +1,6 @@
 # Finance Payment API
 
-> **Last updated:** 2026-07-26 19:15:00 WIB
+> **Last updated:** 2026-08-01 12:24:45 WIB
 > **Base URL:** `/api/v2/finance-payment`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -12,6 +12,7 @@
 |--------|------|-------------|
 | GET    | `/api/v2/finance-payment` | List all finance payments (paginated) |
 | GET    | `/api/v2/finance-payment/outstanding-invoices` | List a single supplier's or customer's unpaid invoices |
+| GET    | `/api/v2/finance-payment/export` | Download Penerimaan (receipts) or Pembayaran (payments) as an `.xlsx` file |
 | POST   | `/api/v2/finance-payment` | Create a new finance payment |
 | GET    | `/api/v2/finance-payment/{id}` | Get finance payment detail |
 | PUT    | `/api/v2/finance-payment/{id}` | Update a finance payment |
@@ -167,6 +168,35 @@ Also returned as `Provide only one of supplier_id or customer_id` if both are se
 ```
 
 Also returned as `Customer not found` (when `customer_id` doesn't resolve), or `No outstanding invoices found` (when the partner exists but has nothing outstanding).
+
+---
+
+### GET `/api/v2/finance-payment/export`
+
+Downloads Penerimaan (customer receipts) or Pembayaran (supplier payments) for a date range as an Excel workbook (`.xlsx`). Response headers set `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` and `Content-Disposition: attachment; filename="penerimaan_{date_from}_{date_to}.xlsx"` (or `pembayaran_...`).
+
+#### Query parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| type | string | No | `penerimaan` | `penerimaan` (rows with `customer_id` set) \| `pembayaran` (rows with `supplier_id` set) |
+| date_from | string (date) | No | First day of the current month | Filters `finance_payment.payment_date >=` this date (`YYYY-MM-DD`) |
+| date_to   | string (date) | No | Today | Filters `finance_payment.payment_date <=` this date (`YYYY-MM-DD`) |
+| transaction_status | string | No | — | Filter by `transaction_status`: `draft` \| `submitted` \| `partially_approved` \| `posted` \| `rejected` |
+
+#### Response `200 OK`
+
+Binary `.xlsx` file body (not JSON). One sheet with columns No, Tanggal, No Invoice, No Form, Customer/Supplier, Bank, No Cek, Jumlah Dibayar, Status, and a total row.
+
+#### Response `400 Bad Request`
+
+```json
+{
+  "status_code": 400,
+  "status_message": "type must be penerimaan or pembayaran",
+  "data": []
+}
+```
 
 ---
 

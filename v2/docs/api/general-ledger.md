@@ -1,6 +1,6 @@
 # General Ledger Report API
 
-> **Last updated:** 2026-07-23 22:30:00 WIB
+> **Last updated:** 2026-08-01 12:24:45 WIB
 > **Base URL:** `/api/v2/general-ledger`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -11,7 +11,9 @@
 | Method | Path | Description |
 |--------|------|-------------|
 | GET    | `/api/v2/general-ledger` | Buku Besar — per-account summary for a date range (paginated) |
+| GET    | `/api/v2/general-ledger/export` | Download the per-account summary as an `.xlsx` file |
 | GET    | `/api/v2/general-ledger/{account_code_id}` | Transaction-level ledger detail for one account, with running balance |
+| GET    | `/api/v2/general-ledger/{account_code_id}/export` | Download one account's transaction ledger as an `.xlsx` file |
 
 ---
 
@@ -55,6 +57,42 @@ Per-account opening balance, period movement, and closing balance for the authen
       "total_pages": 4
     }
   }
+}
+```
+
+---
+
+### GET `/api/v2/general-ledger/export`
+
+Same figures as `GET /api/v2/general-ledger`, streamed as an `.xlsx` file — one row per account (opening balance, period movement, closing balance). Not paginated. Filename: `buku_besar_{date_from}_{date_to}.xlsx`.
+
+#### Query parameters
+
+Same as `GET /api/v2/general-ledger` (`date_from`, `date_to`) — pagination params are ignored.
+
+---
+
+### GET `/api/v2/general-ledger/{account_code_id}/export`
+
+Same data as `GET /api/v2/general-ledger/{account_code_id}`, streamed as an `.xlsx` file — the full unpaginated transaction ledger for one account with a running balance, opening balance row, and closing balance row. Filename: `buku_besar_{account_code}_{date_from}_{date_to}.xlsx`.
+
+#### Path parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| account_code_id | string | The `account_code` ID |
+
+#### Query parameters
+
+Same as `GET /api/v2/general-ledger/{account_code_id}` (`date_from`, `date_to`) — pagination params are ignored.
+
+#### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Account code not found",
+  "data": []
 }
 ```
 

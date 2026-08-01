@@ -3,6 +3,11 @@
 require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
 require_once __DIR__ . '/../../helpers/report_dates.php';
+require_once __DIR__ . '/../../helpers/excel_export.php';
+
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use PhpOffice\PhpSpreadsheet\Style\Border;
 
 function getCogsReport($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
@@ -65,6 +70,86 @@ function getCogsReport($conn, $company_id, $params) {
     ]);
 }
 
+function exportCogsReport($conn, $company_id, $params) {
+    [$date_from, $date_to] = resolveReportDateRange($params);
+    $date_from = mysqli_real_escape_string($conn, $date_from);
+    $date_to   = mysqli_real_escape_string($conn, $date_to);
+
+    $where = "sp.company_id = '$company_id' AND sp.deleted_at IS NULL
+              AND sp.created_at BETWEEN '$date_from 00:00:00' AND '$date_to 23:59:59'";
+
+    $from = APP_SCHEMA . ".sales_profit sp
+            JOIN " . APP_SCHEMA . ".sales_profit_item spi ON spi.sales_profit_id = sp.id AND spi.deleted_at IS NULL";
+
+    $result = mysqli_query($conn, "SELECT spi.product_name,
+            SUM(spi.quantity) AS quantity_sold,
+            SUM(spi.price * spi.quantity) AS revenue,
+            SUM(spi.landed_cost * spi.quantity) AS cogs
+        FROM $from WHERE $where
+        GROUP BY spi.product_name ORDER BY revenue DESC");
+    $rows = mysqli_fetch_all($result, MYSQLI_ASSOC);
+
+    $spreadsheet = new Spreadsheet();
+    $sheet       = $spreadsheet->getActiveSheet();
+
+    $sheet->setCellValue('A1', 'LAPORAN HARGA POKOK PENJUALAN (HPP)');
+    $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(14);
+    $sheet->mergeCells('A1:F1');
+
+    $sheet->setCellValue('A2', 'Periode: ' . formatIndonesianDate($date_from) . ' - ' . formatIndonesianDate($date_to));
+    $sheet->mergeCells('A2:F2');
+
+    $headers = ['No', 'Produk', 'Qty Terjual', 'Pendapatan', 'HPP', 'Laba Kotor', 'Margin %'];
+    $sheet->fromArray($headers, null, 'A4');
+    $sheet->getStyle('A4:G4')->getFont()->setBold(true);
+    $sheet->getStyle('A4:G4')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+    $sheet->getStyle('A4:G4')->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+
+    $row                = 5;
+    $no                 = 1;
+    $total_revenue      = 0;
+    $total_cogs         = 0;
+    $total_gross_profit = 0;
+    foreach ($rows as $item) {
+        $quantity_sold = (float)$item['quantity_sold'];
+        $revenue       = (float)$item['revenue'];
+        $cogs          = (float)$item['cogs'];
+        $gross_profit  = $revenue - $cogs;
+        $margin        = $revenue > 0 ? round($gross_profit / $revenue * 100, 2) : 0;
+
+        $sheet->setCellValue("A$row", $no);
+        $sheet->setCellValue("B$row", $item['product_name']);
+        $sheet->setCellValue("C$row", number_format($quantity_sold, 0));
+        $sheet->setCellValue("D$row", number_format($revenue, 2));
+        $sheet->setCellValue("E$row", number_format($cogs, 2));
+        $sheet->setCellValue("F$row", number_format($gross_profit, 2));
+        $sheet->setCellValue("G$row", $margin);
+        $sheet->getStyle("A$row:G$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+
+        $total_revenue      += $revenue;
+        $total_cogs         += $cogs;
+        $total_gross_profit += $gross_profit;
+        $row++;
+        $no++;
+    }
+
+    $overall_margin = $total_revenue > 0 ? round($total_gross_profit / $total_revenue * 100, 2) : 0;
+
+    $sheet->setCellValue("B$row", 'TOTAL');
+    $sheet->setCellValue("D$row", number_format($total_revenue, 2));
+    $sheet->setCellValue("E$row", number_format($total_cogs, 2));
+    $sheet->setCellValue("F$row", number_format($total_gross_profit, 2));
+    $sheet->setCellValue("G$row", $overall_margin);
+    $sheet->getStyle("B$row:G$row")->getFont()->setBold(true);
+    $sheet->getStyle("A$row:G$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+
+    foreach (range('A', 'G') as $col) {
+        $sheet->getColumnDimension($col)->setAutoSize(true);
+    }
+
+    streamXlsx($spreadsheet, 'hpp_' . sanitizeFilename("{$date_from}_{$date_to}") . '.xlsx');
+}
+
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
 $authUser   = requireAuth();
@@ -82,7 +167,12 @@ if ($method !== 'GET') {
 
 try {
     $conn = getConn();
-    getCogsReport($conn, $company_id, $_GET);
+
+    if ($action === 'export') {
+        exportCogsReport($conn, $company_id, $_GET);
+    } else {
+        getCogsReport($conn, $company_id, $_GET);
+    }
 } catch (Exception $e) {
     jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
 }

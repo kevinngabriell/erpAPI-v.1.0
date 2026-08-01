@@ -6,6 +6,12 @@ require_once __DIR__ . '/../../helpers/audit_log.php';
 require_once __DIR__ . '/../../helpers/dual_approval.php';
 require_once __DIR__ . '/../../helpers/notification.php';
 require_once __DIR__ . '/../../helpers/general_journal.php';
+require_once __DIR__ . '/../../helpers/report_dates.php';
+require_once __DIR__ . '/../../helpers/excel_export.php';
+
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use PhpOffice\PhpSpreadsheet\Style\Border;
 
 function getAllFinancePayments($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
@@ -135,6 +141,89 @@ function getOutstandingInvoices($conn, $company_id, $params) {
     } else {
         jsonResponse(404, 'No outstanding invoices found');
     }
+}
+
+function exportFinancePayments($conn, $company_id, $params) {
+    $type = in_array($params['type'] ?? 'penerimaan', ['penerimaan', 'pembayaran'], true) ? $params['type'] : null;
+    if (!$type) {
+        jsonResponse(400, 'type must be penerimaan or pembayaran');
+        return;
+    }
+
+    [$date_from, $date_to] = resolveReportDateRange($params);
+    $date_from = mysqli_real_escape_string($conn, $date_from);
+    $date_to   = mysqli_real_escape_string($conn, $date_to);
+
+    $where = "fp.company_id = '$company_id' AND fp.deleted_at IS NULL
+              AND fp.payment_date BETWEEN '$date_from' AND '$date_to'
+              AND fp." . ($type === 'penerimaan' ? 'customer_id' : 'supplier_id') . " IS NOT NULL";
+
+    if (isset($params['transaction_status']) && trim($params['transaction_status']) !== '') {
+        $transaction_status = mysqli_real_escape_string($conn, $params['transaction_status']);
+        $where .= " AND fp.transaction_status = '$transaction_status'";
+    }
+
+    $from = APP_SCHEMA . ".finance_payment fp
+            LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = fp.customer_id
+            LEFT JOIN " . APP_SCHEMA . ".supplier s ON s.id = fp.supplier_id
+            LEFT JOIN " . APP_SCHEMA . ".bank_account ba ON ba.id = fp.bank_account_id";
+
+    $result = mysqli_query($conn, "SELECT fp.payment_date, fp.invoice_number, fp.form_number, fp.paid_amount, fp.due_amount,
+            fp.transaction_status, fp.cheque_number, fp.memo,
+            COALESCE(c.customer_name, s.supplier_name) AS partner_name, ba.bank_name
+        FROM $from WHERE $where ORDER BY fp.payment_date ASC, fp.created_at ASC");
+    $rows = mysqli_fetch_all($result, MYSQLI_ASSOC);
+
+    $title = $type === 'penerimaan' ? 'LAPORAN PENERIMAAN' : 'LAPORAN PEMBAYARAN';
+    $partner_label = $type === 'penerimaan' ? 'Customer' : 'Supplier';
+
+    $spreadsheet = new Spreadsheet();
+    $sheet       = $spreadsheet->getActiveSheet();
+
+    $sheet->setCellValue('A1', $title);
+    $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(14);
+    $sheet->mergeCells('A1:I1');
+
+    $sheet->setCellValue('A2', 'Periode: ' . formatIndonesianDate($date_from) . ' - ' . formatIndonesianDate($date_to));
+    $sheet->mergeCells('A2:I2');
+
+    $headers = ['No', 'Tanggal', 'No Invoice', 'No Form', $partner_label, 'Bank', 'No Cek', 'Jumlah Dibayar', 'Status'];
+    $sheet->fromArray($headers, null, 'A4');
+    $sheet->getStyle('A4:I4')->getFont()->setBold(true);
+    $sheet->getStyle('A4:I4')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+    $sheet->getStyle('A4:I4')->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+
+    $row   = 5;
+    $no    = 1;
+    $total = 0;
+    foreach ($rows as $item) {
+        $paid_amount = (float)$item['paid_amount'];
+        $sheet->setCellValue("A$row", $no);
+        $sheet->setCellValue("B$row", $item['payment_date']);
+        $sheet->setCellValue("C$row", $item['invoice_number']);
+        $sheet->setCellValue("D$row", $item['form_number'] ?? '-');
+        $sheet->setCellValue("E$row", $item['partner_name'] ?? '-');
+        $sheet->setCellValue("F$row", $item['bank_name'] ?? '-');
+        $sheet->setCellValue("G$row", $item['cheque_number'] ?? '-');
+        $sheet->setCellValue("H$row", number_format($paid_amount, 2));
+        $sheet->setCellValue("I$row", $item['transaction_status']);
+        $sheet->getStyle("A$row:I$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+
+        $total += $paid_amount;
+        $row++;
+        $no++;
+    }
+
+    $sheet->setCellValue("G$row", 'TOTAL');
+    $sheet->setCellValue("H$row", number_format($total, 2));
+    $sheet->getStyle("G$row:H$row")->getFont()->setBold(true);
+    $sheet->getStyle("A$row:I$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+
+    foreach (range('A', 'I') as $col) {
+        $sheet->getColumnDimension($col)->setAutoSize(true);
+    }
+
+    streamXlsx($spreadsheet, ($type === 'penerimaan' ? 'penerimaan_' : 'pembayaran_') . sanitizeFilename("{$date_from}_{$date_to}") . '.xlsx');
 }
 
 function createFinancePayment($conn, $input, $username, $company_id) {
@@ -507,6 +596,10 @@ try {
     if ($finance_payment_id === 'outstanding-invoices') {
         if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
         getOutstandingInvoices($conn, $company_id, $_GET);
+
+    } elseif ($finance_payment_id === 'export') {
+        if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
+        exportFinancePayments($conn, $company_id, $_GET);
 
     } elseif ($finance_payment_id && $sub_action !== '') {
         $input = in_array($method, ['POST', 'PUT', 'PATCH'])
