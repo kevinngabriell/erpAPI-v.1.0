@@ -1,6 +1,6 @@
 # AR/AP Report API
 
-> **Last updated:** 2026-07-11 19:44:37 WIB
+> **Last updated:** 2026-08-01 12:24:45 WIB
 > **Base URL:** `/api/v2/ar-ap-report`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -11,6 +11,7 @@
 | Method | Path | Description |
 |--------|------|-------------|
 | GET    | `/api/v2/ar-ap-report` | Piutang & Hutang — paginated outstanding AR/AP list with aging buckets |
+| GET    | `/api/v2/ar-ap-report/export` | Download the full (unpaginated) AR/AP list and aging summary as an `.xlsx` file |
 
 ---
 
@@ -60,6 +61,16 @@ Outstanding receivables (AR) and payables (AP), aged into buckets, with a search
   }
 }
 ```
+
+---
+
+### GET `/api/v2/ar-ap-report/export`
+
+Same data as `GET /api/v2/ar-ap-report`, but unpaginated (full AR/AP list) and streamed as an `.xlsx` file with a detail table plus an aging-bucket summary table (Piutang/Hutang per bucket). Filename: `piutang_hutang_{YYYY-MM-DD}.xlsx`.
+
+#### Query parameters
+
+Same as `GET /api/v2/ar-ap-report` — `type`, `bucket`, `search`. `page`/`limit` are ignored.
 
 ---
 

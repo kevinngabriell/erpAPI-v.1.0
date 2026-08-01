@@ -1,6 +1,6 @@
 # Balance Sheet Report API
 
-> **Last updated:** 2026-07-23 22:30:00 WIB
+> **Last updated:** 2026-08-01 12:24:45 WIB
 > **Base URL:** `/api/v2/balance-sheet`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -11,6 +11,7 @@
 | Method | Path | Description |
 |--------|------|-------------|
 | GET    | `/api/v2/balance-sheet` | Neraca (balance sheet) as of a given date, broken down by account |
+| GET    | `/api/v2/balance-sheet/export` | Download the same report as an `.xlsx` file |
 
 ---
 
@@ -53,6 +54,16 @@ Asset, liability, and equity balances for the authenticated company as of a give
   }
 }
 ```
+
+---
+
+### GET `/api/v2/balance-sheet/export`
+
+Same data as `GET /api/v2/balance-sheet`, streamed as an `.xlsx` file — Aset, Liabilitas, and Ekuitas sections each with a per-account table and a subtotal row, plus a "Total Liabilitas + Ekuitas" row. Filename: `neraca_{as_of_date}.xlsx`.
+
+#### Query parameters
+
+Same as `GET /api/v2/balance-sheet` — `as_of_date`.
 
 ---
 

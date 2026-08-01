@@ -1,6 +1,6 @@
 # Profit & Loss Report API
 
-> **Last updated:** 2026-07-23 22:30:00 WIB
+> **Last updated:** 2026-08-01 12:24:45 WIB
 > **Base URL:** `/api/v2/profit-loss`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -11,6 +11,7 @@
 | Method | Path | Description |
 |--------|------|-------------|
 | GET    | `/api/v2/profit-loss` | Laporan Laba Rugi (P&L) for a date range, broken down by account |
+| GET    | `/api/v2/profit-loss/export` | Download the same report as an `.xlsx` file |
 
 ---
 
@@ -50,6 +51,24 @@ Revenue, expense, and net profit for the authenticated company over a date range
   }
 }
 ```
+
+---
+
+### GET `/api/v2/profit-loss/export`
+
+Same data as `GET /api/v2/profit-loss`, streamed as an Excel workbook (`.xlsx`) instead of JSON. Response headers set `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` and `Content-Disposition: attachment; filename="laba_rugi_{date_from}_{date_to}.xlsx"`.
+
+#### Query parameters
+
+Same as `GET /api/v2/profit-loss` — `date_from` and `date_to`, with the same defaults.
+
+#### Response `200 OK`
+
+Binary `.xlsx` file body (not JSON). The workbook has one sheet with:
+- Title `LAPORAN LABA RUGI` and the resolved period (`Periode: {date_from} - {date_to}`) formatted as Indonesian long dates.
+- A `PENDAPATAN` (revenue) section: a `Kode Akun` / `Nama Akun` / `Jumlah` table of `revenue.by_account`, followed by a `TOTAL PENDAPATAN` row.
+- A `BEBAN` (expense) section in the same shape, followed by a `TOTAL BEBAN` row.
+- A final `LABA/RUGI BERSIH` row with `net_profit`.
 
 ---
 

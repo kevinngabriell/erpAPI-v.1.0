@@ -2,6 +2,11 @@
 
 require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
+require_once __DIR__ . '/../../helpers/excel_export.php';
+
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use PhpOffice\PhpSpreadsheet\Style\Border;
 
 function agingBucket($days) {
     if ($days <= 0)  return 'current';
@@ -106,6 +111,97 @@ function getArApReport($conn, $company_id, $params) {
     ]);
 }
 
+function exportArApReport($conn, $company_id, $params) {
+    $type   = in_array($params['type'] ?? 'all', ['ar', 'ap', 'all'], true) ? $params['type'] : 'all';
+    $bucket = in_array($params['bucket'] ?? '', ['current', '30', '60', '90', '90+'], true) ? $params['bucket'] : '';
+    $search = isset($params['search']) ? mb_strtolower(trim($params['search'])) : '';
+
+    $ar_rows = fetchArRows($conn, $company_id);
+    $ap_rows = fetchApRows($conn, $company_id);
+
+    $rows = [];
+    if ($type === 'ar' || $type === 'all') $rows = array_merge($rows, $ar_rows);
+    if ($type === 'ap' || $type === 'all') $rows = array_merge($rows, $ap_rows);
+
+    if ($bucket !== '') {
+        $rows = array_values(array_filter($rows, fn($row) => $row['bucket'] === $bucket));
+    }
+    if ($search !== '') {
+        $rows = array_values(array_filter($rows, fn($row) =>
+            str_contains(mb_strtolower($row['partner_name'] ?? ''), $search) ||
+            str_contains(mb_strtolower($row['invoice_number'] ?? ''), $search)
+        ));
+    }
+
+    usort($rows, fn($a, $b) => $b['days_overdue'] <=> $a['days_overdue']);
+
+    $bucket_labels = ['current' => 'Current', '30' => '1-30 hari', '60' => '31-60 hari', '90' => '61-90 hari', '90+' => '> 90 hari'];
+
+    $spreadsheet = new Spreadsheet();
+    $sheet       = $spreadsheet->getActiveSheet();
+
+    $sheet->setCellValue('A1', 'LAPORAN PIUTANG & HUTANG');
+    $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(14);
+    $sheet->mergeCells('A1:H1');
+
+    $headers = ['No', 'Tipe', 'No Invoice', 'Partner', 'Tanggal Invoice', 'Outstanding', 'Hari Terlambat', 'Aging'];
+    $sheet->fromArray($headers, null, 'A3');
+    $sheet->getStyle('A3:H3')->getFont()->setBold(true);
+    $sheet->getStyle('A3:H3')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+    $sheet->getStyle('A3:H3')->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+
+    $row              = 4;
+    $no               = 1;
+    $total_outstanding = 0;
+    foreach ($rows as $item) {
+        $sheet->setCellValue("A$row", $no);
+        $sheet->setCellValue("B$row", $item['type'] === 'ar' ? 'Piutang' : 'Hutang');
+        $sheet->setCellValue("C$row", $item['invoice_number']);
+        $sheet->setCellValue("D$row", $item['partner_name'] ?? '-');
+        $sheet->setCellValue("E$row", $item['invoice_date'] ?? '-');
+        $sheet->setCellValue("F$row", number_format($item['outstanding'], 2));
+        $sheet->setCellValue("G$row", $item['days_overdue']);
+        $sheet->setCellValue("H$row", $bucket_labels[$item['bucket']]);
+        $sheet->getStyle("A$row:H$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+
+        $total_outstanding += $item['outstanding'];
+        $row++;
+        $no++;
+    }
+
+    $sheet->setCellValue("E$row", 'TOTAL');
+    $sheet->setCellValue("F$row", number_format($total_outstanding, 2));
+    $sheet->getStyle("E$row:F$row")->getFont()->setBold(true);
+    $sheet->getStyle("A$row:H$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+
+    $receivables = ['current' => 0, '30' => 0, '60' => 0, '90' => 0, '90+' => 0];
+    $payables    = $receivables;
+    foreach ($ar_rows as $item) $receivables[$item['bucket']] += $item['outstanding'];
+    foreach ($ap_rows as $item) $payables[$item['bucket']]    += $item['outstanding'];
+
+    $row += 2;
+    $sheet->setCellValue("A$row", 'RINGKASAN AGING');
+    $sheet->getStyle("A$row")->getFont()->setBold(true);
+    $row++;
+    $sheet->fromArray(['Aging', 'Piutang', 'Hutang'], null, "A$row");
+    $sheet->getStyle("A$row:C$row")->getFont()->setBold(true);
+    $sheet->getStyle("A$row:C$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+    $row++;
+    foreach ($bucket_labels as $key => $label) {
+        $sheet->setCellValue("A$row", $label);
+        $sheet->setCellValue("B$row", number_format($receivables[$key], 2));
+        $sheet->setCellValue("C$row", number_format($payables[$key], 2));
+        $sheet->getStyle("A$row:C$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+        $row++;
+    }
+
+    foreach (range('A', 'H') as $col) {
+        $sheet->getColumnDimension($col)->setAutoSize(true);
+    }
+
+    streamXlsx($spreadsheet, 'piutang_hutang_' . sanitizeFilename(date('Y-m-d')) . '.xlsx');
+}
+
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
 $authUser   = requireAuth();
@@ -123,7 +219,12 @@ if ($method !== 'GET') {
 
 try {
     $conn = getConn();
-    getArApReport($conn, $company_id, $_GET);
+
+    if ($action === 'export') {
+        exportArApReport($conn, $company_id, $_GET);
+    } else {
+        getArApReport($conn, $company_id, $_GET);
+    }
 } catch (Exception $e) {
     jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
 }

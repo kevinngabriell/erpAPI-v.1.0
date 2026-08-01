@@ -1,6 +1,6 @@
 # Cash Book Report API
 
-> **Last updated:** 2026-07-23 22:30:00 WIB
+> **Last updated:** 2026-08-01 12:24:45 WIB
 > **Base URL:** `/api/v2/cash-book`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -11,7 +11,9 @@
 | Method | Path | Description |
 |--------|------|-------------|
 | GET    | `/api/v2/cash-book` | Buku Kas — per-bank-account summary for a date range (paginated) |
+| GET    | `/api/v2/cash-book/export` | Download the per-bank-account summary as an `.xlsx` file |
 | GET    | `/api/v2/cash-book/{bank_account_id}` | Transaction-level cash book detail for one bank account, with running balance |
+| GET    | `/api/v2/cash-book/{bank_account_id}/export` | Download one bank account's transaction ledger as an `.xlsx` file |
 
 ---
 
@@ -54,6 +56,42 @@ Per-bank-account opening balance, period movement, and closing balance for the a
       "total_pages": 1
     }
   }
+}
+```
+
+---
+
+### GET `/api/v2/cash-book/export`
+
+Same figures as `GET /api/v2/cash-book`, streamed as an `.xlsx` file — one row per bank account (opening balance, period movement, closing balance) plus a total row. Not paginated. Filename: `buku_kas_{date_from}_{date_to}.xlsx`.
+
+#### Query parameters
+
+Same as `GET /api/v2/cash-book` (`date_from`, `date_to`) — pagination params are ignored.
+
+---
+
+### GET `/api/v2/cash-book/{bank_account_id}/export`
+
+Same data as `GET /api/v2/cash-book/{bank_account_id}`, streamed as an `.xlsx` file — the full unpaginated transaction ledger for one bank account with a running balance, opening balance row, and closing balance row. Filename: `buku_kas_{bank_name}_{date_from}_{date_to}.xlsx`.
+
+#### Path parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| bank_account_id | string | The `bank_account` ID |
+
+#### Query parameters
+
+Same as `GET /api/v2/cash-book/{bank_account_id}` (`date_from`, `date_to`) — pagination params are ignored.
+
+#### Response `404 Not Found`
+
+```json
+{
+  "status_code": 404,
+  "status_message": "Bank account not found",
+  "data": []
 }
 ```
 
@@ -144,4 +182,4 @@ Transaction-level detail for a single bank account within a date range, includin
 - `reference_number` is `voucher_number` for `finance_transaction` rows and `invoice_number` for `finance_payment` rows. `description` is only populated for `finance_transaction` rows — always `null` for `finance_payment` rows. Since a `finance_transaction` can now split across multiple `account_code`s via its `details` (see the `finance-transaction` module doc), `description` is the comma-separated list of every account code name on that transaction's detail lines, e.g. `"Office Supplies Expense, Utilities Expense"` — not a single account name.
 - `opening_balance` is the sum of `signed_amount` for all transactions strictly before `date_from`; `closing_balance` = `opening_balance + period_movement` (list endpoint) or the final `running_balance` after the last listed transaction (detail endpoint) — both represent the same figure.
 - The detail endpoint's `transactions` are ordered oldest to newest (`transaction_date ASC, created_at ASC`) so `running_balance` accumulates correctly; pagination applies to this transaction list, not to the opening/closing balance calculation (those are computed from the full unpaginated history/period).
-- This is a read-only reporting endpoint — no `POST`/`PUT`/`DELETE`. It is the v2 equivalent of v1's `getbukukas.php` / `BukuKasdocument.php` / `exportbukukas.php`, minus the Excel export (JSON only, per the current API standard).
+- This is a read-only reporting endpoint — no `POST`/`PUT`/`DELETE`. It is the v2 equivalent of v1's `getbukukas.php` / `BukuKasdocument.php` / `exportbukukas.php`, now including the `/export` Excel download.

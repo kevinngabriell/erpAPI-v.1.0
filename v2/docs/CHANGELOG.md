@@ -7,6 +7,25 @@ Intended audience: frontend developers.
 
 ---
 
+## [2026-08-01 12:24:45 WIB] — Excel export added across finance and report modules
+
+### Added
+- `GET /api/v2/profit-loss/export` — downloads the P&L (Laba Rugi) report as an `.xlsx` file, with revenue and expense broken down by account and a net profit total.
+- `GET /api/v2/finance-payment/export?type=penerimaan|pembayaran` — downloads customer receipts (Penerimaan) or supplier payments (Pembayaran) for a date range as an `.xlsx` file.
+- `GET /api/v2/cash-book/export` — downloads the Buku Kas per-bank-account summary as an `.xlsx` file.
+- `GET /api/v2/cash-book/{bank_account_id}/export` — downloads one bank account's full transaction ledger as an `.xlsx` file.
+- `GET /api/v2/sales-report/export` — downloads the Omset/Penjualan report (summary, monthly trend, top products, top customers) as an `.xlsx` file.
+- `GET /api/v2/ar-ap-report/export` — downloads the full Piutang & Hutang list with aging summary as an `.xlsx` file.
+- `GET /api/v2/balance-sheet/export` — downloads the Neraca report as an `.xlsx` file.
+- `GET /api/v2/general-ledger/export` — downloads the Buku Besar per-account summary as an `.xlsx` file.
+- `GET /api/v2/general-ledger/{account_code_id}/export` — downloads one account's full transaction ledger as an `.xlsx` file.
+- `GET /api/v2/cogs-report/export` — downloads the full HPP (COGS) report as an `.xlsx` file.
+
+### Notes for frontend
+- All `/export` routes require the same Bearer auth as their JSON counterparts and accept the same query filters (`date_from`/`date_to`, etc. — see each module's doc). The response is a binary `.xlsx` file, not JSON — trigger these as a direct download/`window.open`, not via your JSON API client.
+
+---
+
 ## [2026-07-29 14:00:00 WIB] — Notification list gains a category filter
 
 ### Added

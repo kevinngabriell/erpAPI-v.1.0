@@ -1,6 +1,6 @@
 # COGS Report API
 
-> **Last updated:** 2026-07-11 19:44:37 WIB
+> **Last updated:** 2026-08-01 12:24:45 WIB
 > **Base URL:** `/api/v2/cogs-report`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -11,6 +11,7 @@
 | Method | Path | Description |
 |--------|------|-------------|
 | GET    | `/api/v2/cogs-report` | HPP (COGS) & gross profit per product, for a date range (paginated) |
+| GET    | `/api/v2/cogs-report/export` | Download the full (unpaginated) HPP report as an `.xlsx` file |
 
 ---
 
@@ -61,6 +62,16 @@ Cost of goods sold and gross profit per product for the authenticated company ov
   }
 }
 ```
+
+---
+
+### GET `/api/v2/cogs-report/export`
+
+Same data as `GET /api/v2/cogs-report`, but unpaginated (full product list) and streamed as an `.xlsx` file with a per-product table and a total row. Filename: `hpp_{date_from}_{date_to}.xlsx`.
+
+#### Query parameters
+
+Same as `GET /api/v2/cogs-report` — `date_from`, `date_to`. `page`/`limit` are ignored.
 
 ---
 

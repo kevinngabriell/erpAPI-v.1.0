@@ -1,6 +1,6 @@
 # Sales Report API
 
-> **Last updated:** 2026-07-11 19:44:37 WIB
+> **Last updated:** 2026-08-01 12:24:45 WIB
 > **Base URL:** `/api/v2/sales-report`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -11,6 +11,7 @@
 | Method | Path | Description |
 |--------|------|-------------|
 | GET    | `/api/v2/sales-report` | Omset/sales report — monthly trend, top products, top customers |
+| GET    | `/api/v2/sales-report/export` | Download the same report as an `.xlsx` file |
 
 ---
 
@@ -50,6 +51,16 @@ Sales/omset report for the authenticated company over a date range: total omset,
   }
 }
 ```
+
+---
+
+### GET `/api/v2/sales-report/export`
+
+Same data as `GET /api/v2/sales-report`, streamed as an `.xlsx` file with a summary, monthly trend table, top-10-products table, and top-10-customers table. Filename: `penjualan_{date_from}_{date_to}.xlsx`.
+
+#### Query parameters
+
+Same as `GET /api/v2/sales-report` — `date_from`, `date_to`.
 
 ---
 
