@@ -1,6 +1,6 @@
 # Warehouse Transaction API
 
-> **Last updated:** 2026-07-11 18:49:02 WIB
+> **Last updated:** 2026-08-07 10:15:00 WIB
 > **Base URL:** `/api/v2/warehouse-transaction`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -342,3 +342,5 @@ Soft-deletes the warehouse transaction (sets `deleted_at`) — it will no longer
 - Unlike some other modules (e.g. `purchase-order`), this module does not currently write any `audit_log` entries — no calls to `insertAuditLog()` exist in its source. There is no corresponding `GET /api/v2/audit-log?module=warehouse_transaction...` history available at this time.
 - There is no duplicate/uniqueness check on create, so no `409 Conflict` response exists for this module.
 - **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns a warehouse transaction (list, detail, and any nested items). Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.
+- **`POST` now keeps `warehouse_lot.end_balance` in sync as a side effect.** For each item, the referenced lot's `end_balance` is adjusted: `stock_in` adds `quantity`, `stock_out` subtracts it, and `adjustment`/`transfer` apply `quantity` as given (the caller controls the sign — a `transfer` is modeled as two items in one transaction: a negative entry at the source lot, a positive entry at the destination lot). This happens inside the same DB transaction as the item inserts, so it either all commits or all rolls back together. `PUT`/`DELETE` do **not** reverse or adjust any lot balance — only `POST` touches balances.
+- **Low-stock alerts fire after a successful `POST`**, once per unique product+location the transaction touched, if a `reorder-point` (see `reorder-point.md`) is configured for it and the summed `warehouse_lot.end_balance` across all lots for that product+location drops below the configured `min_stock`. This creates a `type: "low_stock_alert"` row visible via `GET /api/v2/notification` (see `notification.md`) — it is fire-and-forget from this endpoint's perspective and never affects the `201` response or its shape. Repeated dips while already below threshold do not re-notify; a notification fires again only after stock recovers at/above threshold and then drops below it again.

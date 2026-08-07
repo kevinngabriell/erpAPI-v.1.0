@@ -580,6 +580,29 @@ function buildStockByLocation($conn, $company_id) {
     return $rows;
 }
 
+function buildLowStock($conn, $company_id) {
+    $result = mysqli_query($conn, "SELECT rp.id AS reorder_point_id, p.id AS product_id, p.product_name,
+            wl.id AS location_id, wl.location_name, rp.min_stock,
+            COALESCE(SUM(lot.end_balance), 0) AS current_stock
+        FROM " . APP_SCHEMA . ".reorder_point rp
+        JOIN " . APP_SCHEMA . ".product p ON p.id = rp.product_id
+        JOIN " . APP_SCHEMA . ".warehouse_location wl ON wl.id = rp.location_id
+        LEFT JOIN " . APP_SCHEMA . ".warehouse_lot lot
+               ON lot.product_id = rp.product_id AND lot.location_id = rp.location_id AND lot.deleted_at IS NULL
+        WHERE rp.company_id = '$company_id' AND rp.deleted_at IS NULL
+        GROUP BY rp.id, p.id, p.product_name, wl.id, wl.location_name, rp.min_stock
+        HAVING current_stock < rp.min_stock
+        ORDER BY p.product_name ASC");
+
+    $rows = mysqli_fetch_all($result, MYSQLI_ASSOC);
+    foreach ($rows as &$row) {
+        $row['min_stock']     = (float)$row['min_stock'];
+        $row['current_stock'] = (float)$row['current_stock'];
+    }
+
+    return $rows;
+}
+
 function buildWarehouseMonthlySummary($conn, $company_id) {
     $result = mysqli_query($conn, "SELECT wl.location_name, wt.transaction_type, COUNT(*) AS total
         FROM " . APP_SCHEMA . ".warehouse_transaction wt
@@ -622,7 +645,7 @@ try {
     $conn = getConn();
 
     // Widgets not listed here (dept_comparison, payment_verification,
-    // supplier_scorecard, clearance_mode, low_stock, adjustment_approvals,
+    // supplier_scorecard, clearance_mode, adjustment_approvals,
     // discrepancy_flags) have no backing schema yet — see docs/api/dashboard.md
     // "Unavailable widgets". Holding the permission_key just means the widget
     // key never appears in the response, not an error.
@@ -674,6 +697,7 @@ try {
 
         'dashboard.stock_by_location.view'              => fn() => buildStockByLocation($conn, $company_id),
         'dashboard.warehouse_monthly_summary.view'      => fn() => buildWarehouseMonthlySummary($conn, $company_id),
+        'dashboard.low_stock.view'                       => fn() => buildLowStock($conn, $company_id),
     ];
 
     $permitted = getPermittedDashboardKeys($conn, $app_role_id);

@@ -169,6 +169,9 @@ switch ($module) {
     case 'warehouse-transaction':
         require __DIR__ . '/warehouse/warehouse-transaction/index.php';
         break;
+    case 'reorder-point':
+        require __DIR__ . '/warehouse/reorder-point/index.php';
+        break;
 
     // ── HR ───────────────────────────────────────────────────────────────────
     case 'salary-transaction':
