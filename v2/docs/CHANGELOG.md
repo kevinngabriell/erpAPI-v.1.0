@@ -7,6 +7,26 @@ Intended audience: frontend developers.
 
 ---
 
+## [2026-08-07 10:15:00 WIB] — Low-stock alerts (reorder points)
+
+### Added
+- `GET /api/v2/reorder-point` — list reorder points (paginated, filter by `product_id`/`location_id`).
+- `POST /api/v2/reorder-point` — set a minimum-stock threshold for one product at one warehouse location.
+- `GET /api/v2/reorder-point/{id}` — reorder point detail.
+- `PUT /api/v2/reorder-point/{id}` — update `min_stock` (the only mutable field).
+- `DELETE /api/v2/reorder-point/{id}` — remove a reorder point.
+- `GET /api/v2/dashboard` — new `low_stock` widget (`dashboard.low_stock.view`) listing every product+location currently below its configured reorder point.
+- `GET /api/v2/notification` — new `category=warehouse` filter value, and a new notification `type`: `low_stock_alert`.
+
+### Changed
+- `POST /api/v2/warehouse-transaction` now keeps `warehouse_lot.end_balance` in sync with every posted item (`stock_in` adds, `stock_out` subtracts, `adjustment`/`transfer` apply the given signed quantity), and — after commit — checks each touched product+location against its `reorder-point` and fires a `low_stock_alert` notification (in-app + WhatsApp) if it just dropped below threshold. This does not change the request or response shape of that endpoint; see `warehouse-transaction.md`'s Notes for exactly when it fires.
+
+### Notes for frontend
+- `low_stock_alert` notifications are not approval-flow notifications — no approve/reject token, not reachable via `/api/v2/approvals/{token}`. Treat them like any other informational in-app notification.
+- A product+location with no `reorder-point` configured is never checked — nothing fires for it, and it never appears in the `low_stock` dashboard widget.
+
+---
+
 ## [2026-08-01 12:24:45 WIB] — Excel export added across finance and report modules
 
 ### Added

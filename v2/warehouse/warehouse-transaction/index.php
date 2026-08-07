@@ -2,8 +2,36 @@
 
 require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
+require_once __DIR__ . '/../../helpers/notification.php';
 
 const WAREHOUSE_TRANSACTION_TYPES = ['stock_in', 'stock_out', 'adjustment', 'transfer'];
+
+// stock_in/stock_out apply a fixed sign to a positive quantity; adjustment/
+// transfer apply the caller-supplied quantity as-is (already signed) — a
+// transfer is just two items in one transaction, a negative entry at the
+// source lot and a positive entry at the destination lot.
+function warehouseLotDelta(string $transaction_type, float $quantity): float {
+    return match ($transaction_type) {
+        'stock_in'  => abs($quantity),
+        'stock_out' => -abs($quantity),
+        default     => $quantity,
+    };
+}
+
+function applyWarehouseLotDelta($conn, $warehouse_lot_id, float $delta, $username) {
+    $warehouse_lot_id_sql = mysqli_real_escape_string($conn, $warehouse_lot_id);
+    $now                  = date('Y-m-d H:i:s');
+
+    $lot_result = mysqli_query($conn, "SELECT product_id, location_id FROM " . APP_SCHEMA . ".warehouse_lot WHERE id = '$warehouse_lot_id_sql' LIMIT 1");
+    $lot        = $lot_result ? mysqli_fetch_assoc($lot_result) : null;
+    if (!$lot) return null;
+
+    mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".warehouse_lot
+            SET end_balance = end_balance + ($delta), updated_by = '$username', updated_at = '$now'
+            WHERE id = '$warehouse_lot_id_sql'");
+
+    return $lot;
+}
 
 function getAllWarehouseTransactions($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
@@ -104,6 +132,8 @@ function createWarehouseTransaction($conn, $input, $username, $company_id) {
             throw new Exception(mysqli_error($conn));
         }
 
+        $touched_lot_pairs = [];
+
         foreach ($input['items'] as $item) {
             $item_id           = generateUUID();
             $warehouse_lot_id  = mysqli_real_escape_string($conn, $item['warehouse_lot_id']);
@@ -121,9 +151,20 @@ function createWarehouseTransaction($conn, $input, $username, $company_id) {
             if (!mysqli_query($conn, $item_sql)) {
                 throw new Exception(mysqli_error($conn));
             }
+
+            $delta = warehouseLotDelta($transaction_type, $quantity);
+            $lot   = applyWarehouseLotDelta($conn, $warehouse_lot_id, $delta, $username);
+            if ($lot) {
+                $touched_lot_pairs[$lot['product_id'] . '|' . $lot['location_id']] = $lot;
+            }
         }
 
         $conn->commit();
+
+        foreach ($touched_lot_pairs as $lot) {
+            checkReorderPointAndNotify($conn, $company_id, $lot['product_id'], $lot['location_id'], $username);
+        }
+
         jsonResponse(201, 'Warehouse transaction created successfully', ['warehouse_transaction_id' => $warehouse_transaction_id]);
     } catch (Exception $e) {
         $conn->rollback();

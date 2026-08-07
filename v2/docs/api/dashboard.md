@@ -1,6 +1,6 @@
 # Dashboard API
 
-> **Last updated:** 2026-07-23 22:30:00 WIB
+> **Last updated:** 2026-08-07 10:15:00 WIB
 > **Base URL:** `/api/v2/dashboard`
 > **Auth:** Requires `Authorization: Bearer <access_token>`
 
@@ -130,6 +130,7 @@ All Gudang widgets are **company-wide**, not location-scoped — `app_user` has 
 |---|---|---|
 | `stock_by_location` | `dashboard.stock_by_location.view` | Array of `{ location_id, location_name, total_stock }` from `warehouse_lot.end_balance` grouped by `warehouse_location`. |
 | `warehouse_monthly_summary` | `dashboard.warehouse_monthly_summary.view` | Transaction counts this month, grouped by location and `transaction_type`. |
+| `low_stock` | `dashboard.low_stock.view` | Array of `{ reorder_point_id, product_id, product_name, location_id, location_name, min_stock, current_stock }` — every product+location with a configured `reorder-point` (see `reorder-point.md`) where summed `warehouse_lot.end_balance` is currently below `min_stock`. Empty array when nothing is below threshold, not a 404. |
 
 ---
 
@@ -143,7 +144,6 @@ These `permission_key`s from the original spec are **not implemented** — grant
 | `dashboard.payment_verification.view` | No manual bank-transfer-proof review queue table exists. |
 | `dashboard.supplier_scorecard.view` | Spec itself marks this "nice-to-have, not MVP." |
 | `dashboard.clearance_mode.view` | No broker-vs-in-house field exists on `purchase_order` or `sales_delivery`. |
-| `dashboard.low_stock.view` | `product` has no reorder-point/minimum-stock column. |
 | `dashboard.adjustment_approvals.view` | `warehouse_transaction` has no approval/sign-off workflow — every transaction commits immediately. |
 | `dashboard.discrepancy_flags.view` | No physical-count / stock-opname table exists to compare against system stock. |
 

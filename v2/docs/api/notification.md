@@ -1,6 +1,6 @@
 # Notification API
 
-> **Last updated:** 2026-07-29 14:00:00 WIB
+> **Last updated:** 2026-08-07 10:15:00 WIB
 > **Base URL:** `/api/v2/notification`, `/api/v2/approvals`, `/api/v2/notification-settings`
 > **Auth:** All endpoints require `Authorization: Bearer <access_token>`
 
@@ -36,7 +36,7 @@ List in-app notifications belonging to the authenticated user.
 | page      | int    | No       | 1       | Page number |
 | limit     | int    | No       | 10      | Items per page (max 100) |
 | unread    | string | No       | —       | Pass `1` to return only unread notifications |
-| category  | string | No       | —       | Filter by category bucket: `sales` \| `purchase` \| `finance` \| `system`. Combines with `unread` (both apply together, not either/or). Invalid values return `400` |
+| category  | string | No       | —       | Filter by category bucket: `sales` \| `purchase` \| `finance` \| `warehouse` \| `system`. Combines with `unread` (both apply together, not either/or). Invalid values return `400` |
 
 #### Response `200 OK`
 
@@ -73,7 +73,7 @@ List in-app notifications belonging to the authenticated user.
 }
 ```
 
-`type` is one of `approval_pending` \| `approval_approved` \| `approval_rejected` \| `digest_daily`. `source_module` is one of `sales_order` \| `sales_invoice` \| `sales_delivery` \| `sales_sppb` \| `sales_profit` \| `purchase_order` \| `purchase_invoice` \| `purchase_receive` \| `finance_transaction` \| `finance_payment` (or `notification` for `digest_daily` rows, which don't point at one specific document). Construct the click-through link from `source_module` + `source_document_id` using the same per-module URL pattern already used elsewhere in the app.
+`type` is one of `approval_pending` \| `approval_approved` \| `approval_rejected` \| `low_stock_alert` \| `digest_daily`. `source_module` is one of `sales_order` \| `sales_invoice` \| `sales_delivery` \| `sales_sppb` \| `sales_profit` \| `purchase_order` \| `purchase_invoice` \| `purchase_receive` \| `finance_transaction` \| `finance_payment` \| `reorder_point` (or `notification` for `digest_daily` rows, which don't point at one specific document). For `low_stock_alert` rows, `source_document_id` points at the `reorder-point` record, not at a warehouse transaction. Construct the click-through link from `source_module` + `source_document_id` using the same per-module URL pattern already used elsewhere in the app.
 
 `category` groups those `source_module` values as follows — use this instead of fetching everything and filtering client-side:
 
@@ -82,6 +82,7 @@ List in-app notifications belonging to the authenticated user.
 | `sales` | `sales_order`, `sales_invoice`, `sales_delivery`, `sales_sppb`, `sales_profit` |
 | `purchase` | `purchase_order`, `purchase_invoice`, `purchase_receive` |
 | `finance` | `finance_transaction`, `finance_payment` |
+| `warehouse` | `warehouse_transaction`, `reorder_point` (only `reorder_point` — `low_stock_alert` — actually emits notifications today; `warehouse_transaction` is reserved in the bucket for when/if warehouse gets its own approval workflow) |
 | `system` | `notification` |
 
 #### Response `400 Bad Request`
@@ -89,7 +90,7 @@ List in-app notifications belonging to the authenticated user.
 ```json
 {
   "status_code": 400,
-  "status_message": "category must be one of: sales, purchase, finance, system",
+  "status_message": "category must be one of: sales, purchase, finance, warehouse, system",
   "data": []
 }
 ```
@@ -460,8 +461,9 @@ Update the working-days config.
 ## Notes
 
 - **Scope**: Sales Order, Purchase Order, Purchase Invoice, Purchase Receive, Finance Transaction, and Finance Payment (Purchase Invoice/Purchase Receive added after the original Phase 1 rollout — see `v2/docs/migrations/v29_purchase_invoice_receive_notification_permissions.md`). Warehouse Adjustment has no approval workflow in this codebase yet, so it has no notification hook either — see `v2/docs/migrations/v23_notification_schema.md`.
+- **`low_stock_alert` is not an approval-flow notification** (added in `v35_reorder_point_low_stock_schema.md`) — it has no approval token, no `dual_approval_progress`, and isn't reachable via `GET /api/v2/approvals/{token}`. It's a plain informational alert: `POST /api/v2/warehouse-transaction` triggers the check after it commits, and it's marked `low_stock_alert`-type actionable purely so it also goes out over WhatsApp (see `warehouse-transaction.md`'s Notes for exactly when it fires).
 - **WhatsApp sends are synchronous**, not queued — same precedent as `auth/send-otp.php`/`auth/forgot-password.php`. A WhatsApp delivery failure never fails the triggering request (create/approve/reject); check `notification_delivery.status` for the actual outcome per channel.
 - **Real-time push is via WebSocket**, not polling: connect to `ws(s)://.../notification/stream` (served by the standalone daemon `v2/notification/ws-server.php`, not through this HTTP router), send `{"type":"auth","token":"<the same bearer JWT>"}` as the first message, then listen for `notification:new` and `notification:unread_count` events. Call `GET /api/v2/notification/unread-count` once on initial load and again immediately after any reconnect, to cover events that happened while disconnected.
-- **Recipient resolution is permission-key driven, not role-name driven** (same convention as the rest of v2, see `dashboard.md`). Sales Order/Purchase Order/Purchase Invoice/Purchase Receive approvers are whoever holds `notification.sales_order.approver`/`notification.purchase_order.approver`/`notification.purchase_invoice.approver`/`notification.purchase_receive.approver` respectively; Finance approvers are whoever holds the existing `keuangan.approve_owner`/`keuangan.approve_treasury` keys — there is no separate Finance-approver configuration endpoint. **No role currently holds any of the four `notification.*.approver` keys** — until one is granted, that module's `approval_pending` notifications have zero recipients (the in-app row still gets created for record-keeping purposes but nobody receives it).
+- **Recipient resolution is permission-key driven, not role-name driven** (same convention as the rest of v2, see `dashboard.md`). Sales Order/Purchase Order/Purchase Invoice/Purchase Receive approvers are whoever holds `notification.sales_order.approver`/`notification.purchase_order.approver`/`notification.purchase_invoice.approver`/`notification.purchase_receive.approver` respectively; Finance approvers are whoever holds the existing `keuangan.approve_owner`/`keuangan.approve_treasury` keys — there is no separate Finance-approver configuration endpoint. **No role currently holds any of the four `notification.*.approver` keys** — until one is granted, that module's `approval_pending` notifications have zero recipients (the in-app row still gets created for record-keeping purposes but nobody receives it). `low_stock_alert` recipients are whoever holds `warehouse.low_stock.view` instead — a viewer permission, not an approver one, since there's nothing to approve.
 - **The daily digest** (`v2/notification/digest.php`) is a CLI/cron script, not an HTTP endpoint under this router — it inserts its own `digest_daily` notification rows (visible via `GET /api/v2/notification`) and is documented in `v2/docs/migrations/v23_notification_schema.md`, not here.
 - Approval tokens are single-use, scoped to one user + one document, and expire 72 hours after creation. A fresh token is minted for every `approval_pending` recipient at submit time (Sales/Purchase Order, Purchase Invoice, Purchase Receive) or at each new pending state (Finance's "menunggu approval ke-2" reminder); the daily digest always mints its own fresh tokens too, never reusing a real-time one.

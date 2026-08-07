@@ -5,10 +5,11 @@ require_once __DIR__ . '/../connection/db.php';
 require_once __DIR__ . '/../helpers/notification.php';
 
 const NOTIFICATION_CATEGORY_MODULES = [
-    'sales'    => ['sales_order', 'sales_invoice', 'sales_delivery', 'sales_sppb', 'sales_profit'],
-    'purchase' => ['purchase_order', 'purchase_invoice', 'purchase_receive'],
-    'finance'  => ['finance_transaction', 'finance_payment'],
-    'system'   => ['notification'],
+    'sales'     => ['sales_order', 'sales_invoice', 'sales_delivery', 'sales_sppb', 'sales_profit'],
+    'purchase'  => ['purchase_order', 'purchase_invoice', 'purchase_receive'],
+    'finance'   => ['finance_transaction', 'finance_payment'],
+    'warehouse' => ['warehouse_transaction', 'reorder_point'],
+    'system'    => ['notification'],
 ];
 
 function getAllNotifications($conn, $company_id, $username, $params) {
