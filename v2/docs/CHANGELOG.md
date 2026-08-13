@@ -7,6 +7,38 @@ Intended audience: frontend developers.
 
 ---
 
+## [2026-08-13 12:55:00 WIB] — Profile module (new, self-service)
+
+### Added
+- `GET /api/v2/profile` — get the logged-in user's own profile: core account fields (`first_name`, `last_name`, `email`, `phone_number`, `position_name`, `account_status`/`is_active`) merged with new HR profile fields (`gender`, `birth_date`, `address`, `emergency_contact_name`, `emergency_contact_phone`, `employee_code`, `department`, `employment_type`, `join_date`, `supervisor_id`/`supervisor_name`, `work_location`). The HR fields are `null` until the user's first profile update.
+- `PUT` / `PATCH /api/v2/profile` — update the caller's own `first_name`, `last_name`, `phone_number`, `gender`, `birth_date`, `address`, `emergency_contact_name`, `emergency_contact_phone`. Sending an empty string on a nullable field clears it. New backing table `employee_profile` (`aluria_dev`), documented in `v37_employee_profile_schema.md`.
+- This is self-service only — there is no way to view or edit another user's profile through this endpoint, and no permission-key gate beyond being logged in.
+
+### Notes for frontend
+- `employee_code`, `department`, `employment_type`, `join_date`, `supervisor_id`, `work_location` are returned by `GET` but **not editable** through this endpoint — sending them in a `PUT` is silently ignored (not an error, just not written). They exist in the schema for a future HR-admin employee-management module, which does not exist yet — expect them to stay `null` for now unless set directly in the DB.
+- `is_active` is derived (`account_status === 'verified'`), not a stored column.
+- Full field-by-field breakdown, validation rules, and error cases are in `profile.md`.
+
+---
+
+## [2026-08-13 12:15:00 WIB] — Analytics module (5 new endpoints)
+
+### Added
+- `GET /api/v2/analytics/overview` — KPI strip (`revenue_ytd`, `gross_margin_percent`, `cash_position`, `total_ar`, `total_ap`) + 12-month `revenue` vs `purchase_spend` trend. Requires `analytics.overview.view`.
+- `GET /api/v2/analytics/sales` — YTD/target/AOV KPIs, monthly `total_sales` trend, top 10 products, and an SO→SPPB→Delivery→Invoice conversion funnel. Requires `analytics.sales.view`.
+- `GET /api/v2/analytics/purchase` — YTD/cycle-time/import-share KPIs, monthly import-vs-local trend, supplier country breakdown, top 10 products, top 10 suppliers. Requires `analytics.purchase.view`.
+- `GET /api/v2/analytics/finance` — revenue/COGS/gross-profit KPIs, monthly P&L trend, top 10 debtors, top 10 creditors. Requires `analytics.finance.view`.
+- `GET /api/v2/analytics/warehouse` — monthly inbound-vs-outbound trend, top 10 fastest-moving products. Requires `analytics.warehouse.view`.
+- All five accept optional `from`/`to` (`YYYY-MM-DD`) to scope the window — see `analytics.md` for per-field default behavior when omitted.
+- Five new permission keys seeded in dev (`v36_analytics_permission_seed.md`): `analytics.overview.view`, `analytics.sales.view`, `analytics.purchase.view`, `analytics.finance.view`, `analytics.warehouse.view`. **Not yet assigned to any role** — every caller gets `403` on every tab until that assignment is made.
+
+### Notes for frontend
+- These are net-new endpoints — nothing existing changed shape. Full field-by-field breakdown, including which fields are point-in-time vs window-scoped, is in `analytics.md`.
+- `finance.monthly[].net_profit` is gross profit (`revenue - COGS` from `sales_profit`), not profit after operating expenses — see `analytics.md` Notes for why `/profit-loss` wasn't reused here.
+- `/master/getoveralldashboard.php` (the old v1-style endpoint `AnalyticsIndex.js` previously called) is not routed through this module and nothing in v2 calls it — flagging for a decommission decision, same open question `warehouse-period-export-v2.md` raised for the warehouse export endpoints.
+
+---
+
 ## [2026-08-07 10:15:00 WIB] — Low-stock alerts (reorder points)
 
 ### Added

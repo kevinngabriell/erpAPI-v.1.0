@@ -42,6 +42,10 @@ switch ($module) {
         require __DIR__ . '/auth/permission-roles.php';
         break;
 
+    case 'profile':
+        require __DIR__ . '/profile/index.php';
+        break;
+
     // ── Master data — global lookups ────────────────────────────────────────
     case 'region':
         require __DIR__ . '/master/region/index.php';
@@ -202,6 +206,9 @@ switch ($module) {
     // ── Dashboard / reporting ────────────────────────────────────────────────
     case 'dashboard':
         require __DIR__ . '/dashboard/index.php';
+        break;
+    case 'analytics':
+        require __DIR__ . '/analytics/index.php';
         break;
 
     // ── Reports ──────────────────────────────────────────────────────────────
