@@ -3,6 +3,7 @@
 require_once __DIR__ . '/whatsapp.php';
 
 const NOTIFICATION_ACTIONABLE_TYPES = ['approval_pending', 'approval_approved', 'approval_rejected', 'low_stock_alert'];
+const NOTIFICATION_WHATSAPP_ENABLED_KEY = 'notification.whatsapp.enabled';
 
 function resolveDisplayName($conn, $user_id) {
     if (!$user_id) return null;
@@ -86,6 +87,37 @@ function setCompanySetting($conn, $company_id, $key, $value, $username) {
             (id, company_id, setting_key, setting_value, created_by, created_at)
             VALUES ('$id', '$company_id_sql', '$key_sql', '$value_sql', '$username_sql', '$now')
             ON DUPLICATE KEY UPDATE setting_value = '$value_sql', updated_by = '$username_sql', updated_at = '$now'");
+}
+
+function getUserSetting($conn, $user_id, $key, $default = null) {
+    $user_id_sql = mysqli_real_escape_string($conn, $user_id);
+    $key_sql     = mysqli_real_escape_string($conn, $key);
+
+    $result = mysqli_query($conn, "SELECT setting_value FROM " . APP_SCHEMA . ".user_setting
+            WHERE user_id = '$user_id_sql' AND setting_key = '$key_sql' LIMIT 1");
+    $row = $result ? mysqli_fetch_assoc($result) : null;
+    return $row ? $row['setting_value'] : $default;
+}
+
+function setUserSetting($conn, $company_id, $user_id, $key, $value, $username) {
+    $id             = generateUUID();
+    $now            = date('Y-m-d H:i:s');
+    $company_id_sql = mysqli_real_escape_string($conn, $company_id);
+    $user_id_sql    = mysqli_real_escape_string($conn, $user_id);
+    $key_sql        = mysqli_real_escape_string($conn, $key);
+    $value_sql      = mysqli_real_escape_string($conn, $value);
+    $username_sql   = mysqli_real_escape_string($conn, $username);
+
+    mysqli_query($conn, "INSERT INTO " . APP_SCHEMA . ".user_setting
+            (id, company_id, user_id, setting_key, setting_value, created_by, created_at)
+            VALUES ('$id', '$company_id_sql', '$user_id_sql', '$key_sql', '$value_sql', '$username_sql', '$now')
+            ON DUPLICATE KEY UPDATE setting_value = '$value_sql', updated_by = '$username_sql', updated_at = '$now'");
+}
+
+// Missing row = enabled, so existing users see no behavior change until they
+// explicitly opt out (matches notify()'s prior unconditional-send behavior).
+function isWhatsAppEnabledForUser($conn, $user_id) {
+    return getUserSetting($conn, $user_id, NOTIFICATION_WHATSAPP_ENABLED_KEY, '1') !== '0';
 }
 
 function isSendableDigestDay($conn, $company_id, DateTime $date) {
@@ -222,6 +254,14 @@ function notify($conn, array $event) {
             ]);
 
             if (!in_array($type, NOTIFICATION_ACTIONABLE_TYPES, true)) {
+                continue;
+            }
+
+            if (!isWhatsAppEnabledForUser($conn, $recipient_user_id)) {
+                $wa_delivery_id = generateUUID();
+                mysqli_query($conn, "INSERT INTO " . APP_SCHEMA . ".notification_delivery
+                        (id, notification_id, company_id, channel, recipient_user_id, status, error_message, created_by, created_at)
+                        VALUES ('$wa_delivery_id', '$notification_id', '$company_id_sql', 'whatsapp', '$recipient_sql', 'skipped', 'Disabled by user', '$username_sql', '$now')");
                 continue;
             }
 
