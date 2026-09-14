@@ -4,9 +4,11 @@ require_once __DIR__ . '/../general.php';
 require_once __DIR__ . '/../connection/db.php';
 require_once __DIR__ . '/../helpers/notification.php';
 require_once __DIR__ . '/../helpers/audit_log.php';
+require_once __DIR__ . '/../helpers/permission.php';
 
-const NOTIFICATION_WORKING_DAYS_KEY = 'notification.working_days';
-const NOTIFICATION_VALID_DAYS       = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+const NOTIFICATION_WORKING_DAYS_KEY               = 'notification.working_days';
+const NOTIFICATION_VALID_DAYS                     = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+const NOTIFICATION_USER_SETTING_MANAGE_PERMISSION = 'notification.user_setting.manage';
 
 function getAllPublicHolidays($conn, $company_id, $params) {
     $where = "(company_id = '$company_id' OR company_id IS NULL) AND deleted_at IS NULL";
@@ -95,12 +97,54 @@ function updateWorkingDays($conn, $input, $username, $company_id) {
     jsonResponse(200, 'Working days updated successfully', ['working_days' => $working_days]);
 }
 
+function getWhatsAppOptOut($conn, $target_user_id, $company_id) {
+    $target_user_id_sql = mysqli_real_escape_string($conn, $target_user_id);
+
+    $check = mysqli_query($conn, "SELECT 1 FROM " . CORE_SCHEMA . ".app_user
+            WHERE user_id COLLATE utf8mb4_general_ci = '$target_user_id_sql' AND company_id = '$company_id' LIMIT 1");
+    if (mysqli_num_rows($check) === 0) {
+        jsonResponse(404, 'User not found');
+        return;
+    }
+
+    jsonResponse(200, 'WhatsApp notification setting retrieved', [
+        'user_id'             => $target_user_id,
+        'is_whatsapp_enabled' => isWhatsAppEnabledForUser($conn, $target_user_id),
+    ]);
+}
+
+function updateWhatsAppOptOut($conn, $target_user_id, $input, $username, $company_id) {
+    if (!isset($input['is_enabled']) || !is_bool($input['is_enabled'])) {
+        jsonResponse(400, 'is_enabled is required and must be true or false');
+        return;
+    }
+
+    $target_user_id_sql = mysqli_real_escape_string($conn, $target_user_id);
+
+    $check = mysqli_query($conn, "SELECT 1 FROM " . CORE_SCHEMA . ".app_user
+            WHERE user_id COLLATE utf8mb4_general_ci = '$target_user_id_sql' AND company_id = '$company_id' LIMIT 1");
+    if (mysqli_num_rows($check) === 0) {
+        jsonResponse(404, 'User not found');
+        return;
+    }
+
+    $is_enabled = $input['is_enabled'];
+    setUserSetting($conn, $company_id, $target_user_id, NOTIFICATION_WHATSAPP_ENABLED_KEY, $is_enabled ? '1' : '0', $username);
+    insertAuditLog($conn, $company_id, 'user_setting', $target_user_id, 'updated', $username, 'WhatsApp notifications ' . ($is_enabled ? 'enabled' : 'disabled'));
+
+    jsonResponse(200, 'WhatsApp notification setting updated successfully', [
+        'user_id'             => $target_user_id,
+        'is_whatsapp_enabled' => $is_enabled,
+    ]);
+}
+
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
-$authUser   = requireAuth();
-$method     = $_SERVER['REQUEST_METHOD'];
-$company_id = $authUser['company_id'] ?? null;
-$username   = $authUser['user_id'] ?? null;
+$authUser    = requireAuth();
+$method      = $_SERVER['REQUEST_METHOD'];
+$company_id  = $authUser['company_id'] ?? null;
+$username    = $authUser['user_id'] ?? null;
+$app_role_id = $authUser['app_role_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
@@ -138,6 +182,26 @@ try {
             case 'PUT':
                 $input = json_decode(file_get_contents('php://input'), true) ?? [];
                 updateWorkingDays($conn, $input, $username, $company_id);
+                break;
+            default:
+                jsonResponse(405, 'Method Not Allowed');
+        }
+
+    } elseif ($setting === 'whatsapp-opt-out') {
+        $target_user_id = $sub_action ?: $username;
+
+        if ($target_user_id !== $username && !userHasPermission($conn, $app_role_id, NOTIFICATION_USER_SETTING_MANAGE_PERMISSION)) {
+            jsonResponse(403, "You do not have permission to manage another user's notification settings");
+            exit;
+        }
+
+        switch ($method) {
+            case 'GET':
+                getWhatsAppOptOut($conn, $target_user_id, $company_id);
+                break;
+            case 'PUT':
+                $input = json_decode(file_get_contents('php://input'), true) ?? [];
+                updateWhatsAppOptOut($conn, $target_user_id, $input, $username, $company_id);
                 break;
             default:
                 jsonResponse(405, 'Method Not Allowed');
