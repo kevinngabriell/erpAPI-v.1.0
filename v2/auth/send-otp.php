@@ -9,7 +9,6 @@ header('X-Frame-Options: DENY');
 header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
 
 function writeSendOtpLog($conn, string $action, string $username): void {
-    $log_id   = generateUUID();
     $ip       = substr(getUserIP(), 0, 45);
     $ua       = substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 500);
     $module   = 'auth';
@@ -17,11 +16,12 @@ function writeSendOtpLog($conn, string $action, string $username): void {
     $user_id  = null;
 
     $stmt = $conn->prepare(
-        "INSERT INTO " . CORE_SCHEMA . ".log (id, action, ip_address, module, resource_id, `timestamp`, user_agent, username)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO " . CORE_SCHEMA . ".log
+            (action, module, description, actor_type, actor_username, resource_id, ip_address, user_agent, occurred_at, app_id)
+         VALUES (?, ?, ?, 'app', ?, ?, ?, ?, ?, '" . APP_ID . "')"
     );
     if ($stmt) {
-        $stmt->bind_param('ssssssss', $log_id, $action, $ip, $module, $user_id, $now, $ua, $username);
+        $stmt->bind_param('ssssssss', $action, $module, $action, $username, $user_id, $ip, $ua, $now);
         $stmt->execute();
         $stmt->close();
     }
@@ -82,8 +82,8 @@ function requestRegisterOtp($conn, $input): void {
 
     // 5. Invalidate any previously issued, still-unused register codes for this email
     $stmt = $conn->prepare(
-        "UPDATE " . CORE_SCHEMA . ".otp_codes SET is_used = 1, used_at = ?
-         WHERE identifier = ? AND purpose = 'register' AND is_used = 0"
+        "UPDATE " . CORE_SCHEMA . ".otp_codes SET used_at = ?
+         WHERE identifier = ? AND purpose = 'register' AND used_at IS NULL"
     );
     $stmt->bind_param('ss', $now, $email);
     $stmt->execute();
@@ -92,13 +92,14 @@ function requestRegisterOtp($conn, $input): void {
     // 6. Generate and store a new OTP
     $otp_id    = 'otp_' . uniqid();
     $otp_code  = str_pad((string)random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+    $otp_hash  = hash_hmac('sha256', $otp_code, OTP_PEPPER);
     $expire_at = date('Y-m-d H:i:s', strtotime('+10 minutes'));
 
     $stmt = $conn->prepare(
-        "INSERT INTO " . CORE_SCHEMA . ".otp_codes (otp_id, identifier, otp_code, purpose, expire_at, is_used, attempt_count, created_at)
-         VALUES (?, ?, ?, 'register', ?, 0, 0, ?)"
+        "INSERT INTO " . CORE_SCHEMA . ".otp_codes (otp_id, identifier, otp_hash, purpose, expire_at, ip_address, created_at)
+         VALUES (?, ?, ?, 'register', ?, ?, ?)"
     );
-    $stmt->bind_param('sssss', $otp_id, $email, $otp_code, $expire_at, $now);
+    $stmt->bind_param('ssssss', $otp_id, $email, $otp_hash, $expire_at, $ip, $now);
     $stmt->execute();
     $stmt->close();
 

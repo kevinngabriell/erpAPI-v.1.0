@@ -8,18 +8,18 @@ header('X-Frame-Options: DENY');
 header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
 
 function writeLoginLog($conn, string $action, ?string $user_id, string $username): void {
-    $log_id = generateUUID();
     $ip     = substr(getUserIP(), 0, 45);
     $ua     = substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 500);
     $module = 'auth';
     $now    = date('Y-m-d H:i:s');
 
     $stmt = $conn->prepare(
-        "INSERT INTO " . CORE_SCHEMA . ".log (id, action, ip_address, module, resource_id, `timestamp`, user_agent, username)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO " . CORE_SCHEMA . ".log
+            (action, module, description, actor_type, actor_username, resource_id, ip_address, user_agent, occurred_at, app_id)
+         VALUES (?, ?, ?, 'app', ?, ?, ?, ?, ?, '" . APP_ID . "')"
     );
     if ($stmt) {
-        $stmt->bind_param('ssssssss', $log_id, $action, $ip, $module, $user_id, $now, $ua, $username);
+        $stmt->bind_param('ssssssss', $action, $module, $action, $username, $user_id, $ip, $ua, $now);
         $stmt->execute();
         $stmt->close();
     }

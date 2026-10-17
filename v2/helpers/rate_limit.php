@@ -4,8 +4,8 @@ function checkRateLimitByEmail($conn, string $email, string $action, int $max, i
     $pattern = $action . '%';
     $stmt    = $conn->prepare(
         "SELECT COUNT(*) AS cnt FROM " . CORE_SCHEMA . ".log
-         WHERE username = ? AND module = 'auth' AND action LIKE ?
-           AND `timestamp` > DATE_SUB(NOW(), INTERVAL ? MINUTE)"
+         WHERE actor_username = ? AND module = 'auth' AND action LIKE ?
+           AND occurred_at > DATE_SUB(NOW(), INTERVAL ? MINUTE)"
     );
     if (!$stmt) return false;
     $stmt->bind_param('ssi', $email, $pattern, $window_minutes);
@@ -20,7 +20,7 @@ function checkRateLimitByIP($conn, string $ip, string $action_prefix, int $max, 
     $stmt    = $conn->prepare(
         "SELECT COUNT(*) AS cnt FROM " . CORE_SCHEMA . ".log
          WHERE ip_address = ? AND module = 'auth' AND action LIKE ?
-           AND `timestamp` > DATE_SUB(NOW(), INTERVAL ? MINUTE)"
+           AND occurred_at > DATE_SUB(NOW(), INTERVAL ? MINUTE)"
     );
     if (!$stmt) return false;
     $stmt->bind_param('ssi', $ip, $pattern, $window_minutes);

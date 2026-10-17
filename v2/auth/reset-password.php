@@ -9,18 +9,18 @@ header('X-Frame-Options: DENY');
 header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
 
 function writeResetPasswordLog($conn, string $action, ?string $user_id, string $username): void {
-    $log_id = generateUUID();
     $ip     = substr(getUserIP(), 0, 45);
     $ua     = substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 500);
     $module = 'auth';
     $now    = date('Y-m-d H:i:s');
 
     $stmt = $conn->prepare(
-        "INSERT INTO " . CORE_SCHEMA . ".log (id, action, ip_address, module, resource_id, `timestamp`, user_agent, username)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO " . CORE_SCHEMA . ".log
+            (action, module, description, actor_type, actor_username, resource_id, ip_address, user_agent, occurred_at, app_id)
+         VALUES (?, ?, ?, 'app', ?, ?, ?, ?, ?, '" . APP_ID . "')"
     );
     if ($stmt) {
-        $stmt->bind_param('ssssssss', $log_id, $action, $ip, $module, $user_id, $now, $ua, $username);
+        $stmt->bind_param('ssssssss', $action, $module, $action, $username, $user_id, $ip, $ua, $now);
         $stmt->execute();
         $stmt->close();
     }
@@ -77,9 +77,9 @@ function resetPassword($conn, $input): void {
 
     // 4. Validate OTP
     $stmt = $conn->prepare(
-        "SELECT otp_id, otp_code, attempt_count
+        "SELECT otp_id, otp_hash, attempt_count
          FROM " . CORE_SCHEMA . ".otp_codes
-         WHERE identifier = ? AND purpose = 'forgot_password' AND is_used = 0 AND expire_at > NOW()
+         WHERE identifier = ? AND purpose = 'forgot_password' AND used_at IS NULL AND expire_at > NOW()
          ORDER BY created_at DESC
          LIMIT 1"
     );
@@ -97,7 +97,7 @@ function resetPassword($conn, $input): void {
         authResponse(429, 'Too many OTP attempts. Request a new code.', 'PWD_003');
         return;
     }
-    if ($otp_row['otp_code'] !== $otp_code) {
+    if ($otp_row['otp_hash'] !== hash_hmac('sha256', $otp_code, OTP_PEPPER)) {
         $stmt = $conn->prepare(
             "UPDATE " . CORE_SCHEMA . ".otp_codes SET attempt_count = attempt_count + 1 WHERE otp_id = ?"
         );
@@ -140,7 +140,7 @@ function resetPassword($conn, $input): void {
         $stmt->close();
 
         $stmt = $conn->prepare(
-            "UPDATE " . CORE_SCHEMA . ".otp_codes SET is_used = 1, used_at = ? WHERE otp_id = ?"
+            "UPDATE " . CORE_SCHEMA . ".otp_codes SET used_at = ? WHERE otp_id = ?"
         );
         $stmt->bind_param('ss', $now, $otp_id);
         $stmt->execute();

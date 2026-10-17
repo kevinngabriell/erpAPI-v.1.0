@@ -60,5 +60,8 @@ function buildWhatsAppChatId(string $rawPhone): string {
     if (str_starts_with($digits, '0')) {
         $digits = '62' . substr($digits, 1);
     }
+    if (!str_starts_with($digits, '62')) {
+        $digits = '62' . ltrim($digits, '+');
+    }
     return $digits . '@c.us';
 }

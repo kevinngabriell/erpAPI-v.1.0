@@ -23,6 +23,7 @@ if (!defined('JWT_SECRET'))  define('JWT_SECRET',  $_ENV['JWT_SECRET']  ?? '');
 if (!defined('CORE_SCHEMA')) define('CORE_SCHEMA', $_ENV['CORE_SCHEMA'] ?? 'movira_core_dev');
 if (!defined('APP_SCHEMA'))  define('APP_SCHEMA',  $_ENV['APP_SCHEMA']  ?? 'aluria_dev');
 if (!defined('APP_ID'))      define('APP_ID',      $_ENV['APP_ID']      ?? '');
+if (!defined('OTP_PEPPER'))  define('OTP_PEPPER',  $_ENV['OTP_PEPPER']  ?? 'fallback-pepper');
 
 if (!defined('WAHA_BASE_URL')) define('WAHA_BASE_URL', $_ENV['WAHA_BASE_URL'] ?? '');
 if (!defined('WAHA_SESSION'))  define('WAHA_SESSION',  $_ENV['WAHA_SESSION']  ?? '');
