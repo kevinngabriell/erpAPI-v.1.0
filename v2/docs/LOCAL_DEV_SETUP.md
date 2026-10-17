@@ -50,21 +50,18 @@ disk. Pretty URLs like `/v2/account/login` aren't real files — only
 404s on every `v2` route before your code ever runs (you'll see PHP's own
 plain-HTML "Not Found" page, not this app's JSON 404).
 
-[`router.php`](../router.php) (repo root) fixes this: it serves real files
-as-is (legacy `/{module}/index.php` v1 endpoints, static assets) and falls
-back to `v2/index.php` for everything else, mirroring what nginx does in
-production/local for the two different route shapes.
+[`router.php`](../../router.php) (repo root) fixes this: it serves real
+static files as-is and falls back to `v2/index.php` for everything else,
+mirroring what nginx does in production for the v2 route shape.
 
 ## Why nginx is required too
 
-CORS is owned entirely by nginx, not PHP — see
-[`CORS_TROUBLESHOOTING.md`](../CORS_TROUBLESHOOTING.md). The local nginx
+CORS is owned entirely by nginx, not PHP. The local nginx
 config for this is at
 `/opt/homebrew/etc/nginx/servers/venken-api-local.conf` (loaded
 automatically via `include servers/*;` in `nginx.conf`). It:
 
 - Proxies `/venken-api/v2/{module}/...` → `127.0.0.1:8300/v2/{module}/...`
-- Proxies `/venken-api/{module}/index.php` → `127.0.0.1:8300/{module}/index.php` (legacy v1)
 - Strips any CORS headers PHP itself adds (`proxy_hide_header`) and adds its
   own single, consistent set — avoiding the "duplicate
   `Access-Control-Allow-*`" bug that breaks CORS in real browsers (curl
@@ -97,7 +94,7 @@ curl -i 'http://localhost:8888/venken-api/v2/account/login' \
 - **PHP dev server started without `router.php`** → every `/v2/...` route
   404s with PHP's own HTML error page (not this app's JSON 404).
 - **Wrong module name in the URL** — the URL segment is the `case` label in
-  [`v2/index.php`](../v2/index.php)'s switch statement, not the directory
+  [`v2/index.php`](../index.php)'s switch statement, not the directory
   name. E.g. `my-permissions` lives in the `auth/` directory on disk but is
   routed under the `account` module: `/v2/account/my-permissions`, not
   `/v2/auth/my-permissions`.
