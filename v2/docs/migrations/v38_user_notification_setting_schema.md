@@ -66,17 +66,22 @@ SELECT permission_id, permission_key, module, label FROM movira_core_dev.app_per
 
 ---
 
-## PROD — NOT yet applied
+## PROD — applied
 
-**Do not run this against production without Kage's sign-off first** — same review gate as `v21`/`v22`/`v23`. Mirrors the DEV block above exactly, scoped to prod schema names.
+Confirmed against prod's actual `.env` on **2026-09-14** (sign-off obtained): prod's real schema names are **not** `aluria_prod`/`movira_core_prod` as guessed below — prod shares `CORE_SCHEMA=movira_core_dev` with dev (same DB server, `100.98.160.119`), and `APP_SCHEMA=aluria` (no suffix).
+
+Read-only checks before writing anything:
+- `aluria.user_setting` **already existed**, structurally identical to the DEV table above (`DESCRIBE` matched column-for-column) and `utf8mb4_general_ci` throughout — 0 rows. No `CREATE TABLE` needed.
+- `movira_core_dev.app_permission` already had the `notification.user_setting.manage` key (`perm9d24f6b81ce307a5`, `app_id = appe16592dc7b88eab9`) — because `CORE_SCHEMA` is shared with dev, the DEV permission INSERT above already covered prod. No second INSERT needed.
+
+Only action taken: applied the WhatsApp opt-out for `usr_6aa0da60b8249` (company `cmp7738323d94503bbc`) via `setUserSetting()` + `insertAuditLog()` directly against `aluria.user_setting` / `aluria.audit_log`, mirroring exactly what `PUT notification-settings/whatsapp-opt-out/{user_id}` does. Verified `isWhatsAppEnabledForUser()` returns `false` post-write.
 
 ```sql
--- Replace aluria_prod / movira_core_prod below with the real prod schema
--- names from prod's .env (APP_SCHEMA / CORE_SCHEMA) before running. Re-run
--- the exact DEV SQL above with `aluria_dev` → `aluria_prod` and
--- `movira_core_dev` → `movira_core_prod`. Confirm prod's `app_permission`
--- APP_ID matches 'appe16592dc7b88eab9' before running the permission INSERT
--- (do not assume — verify, same caution as prior migrations).
+-- Original placeholder template (kept for reference — not what was run,
+-- since the table/permission already existed under prod's real schema names):
+-- Re-run the DEV SQL above with `aluria_dev` → `aluria_prod` and
+-- `movira_core_dev` → `movira_core_prod`, after confirming prod's real
+-- schema names from its own .env (do not assume — verify).
 ```
 
 ---

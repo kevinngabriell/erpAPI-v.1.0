@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
+require_once __DIR__ . '/../../helpers/permission.php';
 require_once __DIR__ . '/../../helpers/report_dates.php';
 require_once __DIR__ . '/../../helpers/excel_export.php';
 
@@ -18,7 +19,7 @@ function fetchSalesReportData($conn, $company_id, $date_from, $date_to) {
         WHERE si.company_id = '$company_id' AND si.deleted_at IS NULL
           AND si.invoice_date BETWEEN '$date_from' AND '$date_to'");
     $summary = mysqli_fetch_assoc($summary_result);
-    $summary['total_omset']    = (float)$summary['total_omset'];
+    $summary['total_omset']    = bcadd($summary['total_omset'], '0', 2);
     $summary['total_invoices'] = (int)$summary['total_invoices'];
 
     $trend_result = mysqli_query($conn, "SELECT DATE_FORMAT(si.invoice_date, '%Y-%m') AS ym,
@@ -27,9 +28,9 @@ function fetchSalesReportData($conn, $company_id, $date_from, $date_to) {
         JOIN " . APP_SCHEMA . ".sales_invoice_item sii ON sii.sales_invoice_id = si.id AND sii.deleted_at IS NULL
         WHERE si.company_id = '$company_id' AND si.deleted_at IS NULL
           AND si.invoice_date BETWEEN '$date_from' AND '$date_to'
-        GROUP BY ym ORDER BY ym ASC");
+        GROUP BY ym ORDER BY ym ASC LIMIT 100");
     $monthly_trend = mysqli_fetch_all($trend_result, MYSQLI_ASSOC);
-    foreach ($monthly_trend as &$row) $row['revenue'] = (float)$row['revenue'];
+    foreach ($monthly_trend as &$row) $row['revenue'] = bcadd($row['revenue'], '0', 2);
 
     $top_products_result = mysqli_query($conn, "SELECT sii.product_name,
             SUM(sii.quantity) AS quantity, SUM(sii.quantity * sii.unit_price) AS revenue
@@ -41,7 +42,7 @@ function fetchSalesReportData($conn, $company_id, $date_from, $date_to) {
     $top_products = mysqli_fetch_all($top_products_result, MYSQLI_ASSOC);
     foreach ($top_products as &$row) {
         $row['quantity'] = (float)$row['quantity'];
-        $row['revenue']  = (float)$row['revenue'];
+        $row['revenue']  = bcadd($row['revenue'], '0', 2);
     }
 
     $top_customers_result = mysqli_query($conn, "SELECT c.id AS customer_id, c.customer_name,
@@ -53,7 +54,7 @@ function fetchSalesReportData($conn, $company_id, $date_from, $date_to) {
           AND si.invoice_date BETWEEN '$date_from' AND '$date_to'
         GROUP BY c.id, c.customer_name ORDER BY total DESC LIMIT 10");
     $top_customers = mysqli_fetch_all($top_customers_result, MYSQLI_ASSOC);
-    foreach ($top_customers as &$row) $row['total'] = (float)$row['total'];
+    foreach ($top_customers as &$row) $row['total'] = bcadd($row['total'], '0', 2);
 
     return [
         'summary'       => $summary,
@@ -77,6 +78,7 @@ function getSalesReport($conn, $company_id, $params) {
 }
 
 function exportSalesReport($conn, $company_id, $params) {
+    // Export returns binary .xlsx content — bypasses jsonResponse()
     [$date_from, $date_to] = resolveReportDateRange($params);
     $date_from = mysqli_real_escape_string($conn, $date_from);
     $date_to   = mysqli_real_escape_string($conn, $date_to);
@@ -159,18 +161,25 @@ function exportSalesReport($conn, $company_id, $params) {
 $authUser   = requireAuth();
 $method     = $_SERVER['REQUEST_METHOD'];
 $company_id = $authUser['company_id'] ?? null;
+$app_role_id = $authUser['app_role_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
     exit;
 }
 if ($method !== 'GET') {
-    jsonResponse(405, 'Method Not Allowed');
+    methodNotAllowed(['GET']);
     exit;
 }
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+
+    if (!userHasPermission($conn, $app_role_id, 'reports.sales_report.view')) {
+        jsonResponse(403, 'You do not have permission to view this report');
+        return;
+    }
 
     if ($action === 'export') {
         exportSalesReport($conn, $company_id, $_GET);
@@ -178,5 +187,5 @@ try {
         getSalesReport($conn, $company_id, $_GET);
     }
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

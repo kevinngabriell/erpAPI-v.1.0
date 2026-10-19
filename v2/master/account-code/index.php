@@ -2,12 +2,14 @@
 
 require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
+require_once __DIR__ . '/../../helpers/permission.php';
 
 function getAllAccountCodes($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
+    $search = str_replace(['%', '_'], ['\%', '\_'], $search);
 
     $where = "ac.company_id = '$company_id' AND ac.deleted_at IS NULL";
     if ($search) {
@@ -30,25 +32,26 @@ function getAllAccountCodes($conn, $company_id, $params) {
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
-        $account_codes = mysqli_fetch_all($result, MYSQLI_ASSOC);
-        foreach ($account_codes as &$account_code) {
+        $data = mysqli_fetch_all($result, MYSQLI_ASSOC);
+        foreach ($data as &$account_code) {
             $account_code['is_active'] = (bool)(int)$account_code['is_active'];
             foreach (DEFAULT_ACCOUNT_FLAGS as $flag) {
                 $account_code[$flag] = (bool)(int)$account_code[$flag];
             }
         }
-        jsonResponse(200, 'Account codes found', [
-            'data'       => $account_codes,
-            'pagination' => [
-                'total'       => $total,
-                'page'        => $page,
-                'limit'       => $limit,
-                'total_pages' => (int)ceil($total / $limit),
-            ],
-        ]);
     } else {
-        jsonResponse(404, 'No account codes found');
+        $data = [];
     }
+
+    jsonResponse(200, 'Account codes found', [
+        'data'       => $data,
+        'pagination' => [
+            'total'       => $total,
+            'page'        => $page,
+            'limit'       => $limit,
+            'total_pages' => (int)ceil($total / $limit),
+        ],
+    ]);
 }
 
 const DEFAULT_ACCOUNT_FLAGS = ['is_default_receivable', 'is_default_payable', 'is_default_sales_revenue', 'is_default_purchase_expense'];
@@ -134,7 +137,7 @@ function createAccountCode($conn, $input, $username, $company_id) {
         }
         jsonResponse(201, 'Account code created successfully', ['account_code_id' => $account_code_id]);
     } else {
-        jsonResponse(500, 'Failed to create account code', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to create account code', safeDbError($conn));
     }
 }
 
@@ -257,7 +260,7 @@ function updateAccountCode($conn, $account_code_id, $input, $username, $company_
         }
         jsonResponse(200, 'Account code updated successfully');
     } else {
-        jsonResponse(500, 'Failed to update account code', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to update account code', safeDbError($conn));
     }
 }
 
@@ -275,16 +278,17 @@ function deleteAccountCode($conn, $account_code_id, $username, $company_id) {
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".account_code SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE id = '$account_code_id' AND company_id = '$company_id'")) {
         jsonResponse(200, 'Account code deleted successfully');
     } else {
-        jsonResponse(500, 'Failed to delete account code', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to delete account code', safeDbError($conn));
     }
 }
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
-$authUser   = requireAuth();
-$method     = $_SERVER['REQUEST_METHOD'];
-$company_id = $authUser['company_id'] ?? null;
-$username   = $authUser['user_id'] ?? null;
+$authUser    = requireAuth();
+$method      = $_SERVER['REQUEST_METHOD'];
+$company_id  = $authUser['company_id'] ?? null;
+$username    = $authUser['sub'] ?? $authUser['user_id'] ?? null;
+$app_role_id = $authUser['app_role_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
@@ -295,6 +299,8 @@ $account_code_id = !empty($action) ? $action : null;
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $username = mysqli_real_escape_string($conn, $username);
 
     if ($account_code_id) {
         switch ($method) {
@@ -302,14 +308,20 @@ try {
                 getDetailAccountCode($conn, $account_code_id, $company_id);
                 break;
             case 'PUT':
+                if (!userHasPermission($conn, $app_role_id, 'master.account_code.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 $input = json_decode(file_get_contents('php://input'), true) ?? [];
                 updateAccountCode($conn, $account_code_id, $input, $username, $company_id);
                 break;
             case 'DELETE':
+                if (!userHasPermission($conn, $app_role_id, 'master.account_code.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 deleteAccountCode($conn, $account_code_id, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'PUT', 'DELETE']);
         }
     } else {
         switch ($method) {
@@ -317,14 +329,17 @@ try {
                 getAllAccountCodes($conn, $company_id, $_GET);
                 break;
             case 'POST':
+                if (!userHasPermission($conn, $app_role_id, 'master.account_code.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 $input = json_decode(file_get_contents('php://input'), true) ?? [];
                 createAccountCode($conn, $input, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'POST']);
         }
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

@@ -2,12 +2,14 @@
 
 require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
+require_once __DIR__ . '/../../helpers/permission.php';
 
 function getAllBankAccounts($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
+    $search = str_replace(['%', '_'], ['\%', '\_'], $search);
 
     $where = "ba.company_id = '$company_id' AND ba.deleted_at IS NULL";
     if ($search) {
@@ -30,22 +32,23 @@ function getAllBankAccounts($conn, $company_id, $params) {
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
-        $bank_accounts = mysqli_fetch_all($result, MYSQLI_ASSOC);
-        foreach ($bank_accounts as &$bank_account) {
+        $data = mysqli_fetch_all($result, MYSQLI_ASSOC);
+        foreach ($data as &$bank_account) {
             $bank_account['is_primary'] = (bool)(int)$bank_account['is_primary'];
         }
-        jsonResponse(200, 'Bank accounts found', [
-            'data'       => $bank_accounts,
-            'pagination' => [
-                'total'       => $total,
-                'page'        => $page,
-                'limit'       => $limit,
-                'total_pages' => (int)ceil($total / $limit),
-            ],
-        ]);
     } else {
-        jsonResponse(404, 'No bank accounts found');
+        $data = [];
     }
+
+    jsonResponse(200, 'Bank accounts found', [
+        'data'       => $data,
+        'pagination' => [
+            'total'       => $total,
+            'page'        => $page,
+            'limit'       => $limit,
+            'total_pages' => (int)ceil($total / $limit),
+        ],
+    ]);
 }
 
 function createBankAccount($conn, $input, $username, $company_id) {
@@ -104,7 +107,7 @@ function createBankAccount($conn, $input, $username, $company_id) {
     if (mysqli_query($conn, $sql)) {
         jsonResponse(201, 'Bank account created successfully', ['bank_account_id' => $bank_account_id]);
     } else {
-        jsonResponse(500, 'Failed to create bank account', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to create bank account', safeDbError($conn));
     }
 }
 
@@ -209,7 +212,7 @@ function updateBankAccount($conn, $bank_account_id, $input, $username, $company_
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".bank_account SET " . implode(', ', $updates) . " WHERE id = '$bank_account_id' AND company_id = '$company_id'")) {
         jsonResponse(200, 'Bank account updated successfully');
     } else {
-        jsonResponse(500, 'Failed to update bank account', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to update bank account', safeDbError($conn));
     }
 }
 
@@ -227,16 +230,17 @@ function deleteBankAccount($conn, $bank_account_id, $username, $company_id) {
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".bank_account SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE id = '$bank_account_id' AND company_id = '$company_id'")) {
         jsonResponse(200, 'Bank account deleted successfully');
     } else {
-        jsonResponse(500, 'Failed to delete bank account', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to delete bank account', safeDbError($conn));
     }
 }
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
-$authUser   = requireAuth();
-$method     = $_SERVER['REQUEST_METHOD'];
-$company_id = $authUser['company_id'] ?? null;
-$username   = $authUser['user_id'] ?? null;
+$authUser    = requireAuth();
+$method      = $_SERVER['REQUEST_METHOD'];
+$company_id  = $authUser['company_id'] ?? null;
+$username    = $authUser['sub'] ?? $authUser['user_id'] ?? null;
+$app_role_id = $authUser['app_role_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
@@ -247,6 +251,8 @@ $bank_account_id = !empty($action) ? $action : null;
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $username = mysqli_real_escape_string($conn, $username);
 
     if ($bank_account_id) {
         switch ($method) {
@@ -254,14 +260,20 @@ try {
                 getDetailBankAccount($conn, $bank_account_id, $company_id);
                 break;
             case 'PUT':
+                if (!userHasPermission($conn, $app_role_id, 'master.bank_account.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 $input = json_decode(file_get_contents('php://input'), true) ?? [];
                 updateBankAccount($conn, $bank_account_id, $input, $username, $company_id);
                 break;
             case 'DELETE':
+                if (!userHasPermission($conn, $app_role_id, 'master.bank_account.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 deleteBankAccount($conn, $bank_account_id, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'PUT', 'DELETE']);
         }
     } else {
         switch ($method) {
@@ -269,14 +281,17 @@ try {
                 getAllBankAccounts($conn, $company_id, $_GET);
                 break;
             case 'POST':
+                if (!userHasPermission($conn, $app_role_id, 'master.bank_account.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 $input = json_decode(file_get_contents('php://input'), true) ?? [];
                 createBankAccount($conn, $input, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'POST']);
         }
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../connection/db.php';
 require_once __DIR__ . '/../../helpers/audit_log.php';
 require_once __DIR__ . '/../../helpers/excel_export.php';
 require_once __DIR__ . '/../../helpers/notification.php';
+require_once __DIR__ . '/../../helpers/permission.php';
 
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
@@ -46,9 +47,10 @@ function generateSalesSppbNumber($conn, $company_id) {
 
 function getAllSalesSppbs($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
+    $search = str_replace(['%', '_'], ['\%', '\_'], $search);
 
     $where = "ssp.company_id = '$company_id' AND ssp.deleted_at IS NULL";
     if ($search) {
@@ -102,7 +104,15 @@ function getAllSalesSppbs($conn, $company_id, $params) {
             ],
         ]);
     } else {
-        jsonResponse(404, 'No sales SPPBs found');
+        jsonResponse(200, 'No sales SPPBs found', [
+            'data'       => [],
+            'pagination' => [
+                'total'       => $total,
+                'page'        => $page,
+                'limit'       => $limit,
+                'total_pages' => (int)ceil($total / $limit),
+            ],
+        ]);
     }
 }
 
@@ -172,7 +182,7 @@ function createSalesSppb($conn, $input, $username, $company_id) {
             $send_to_address = mysqli_real_escape_string($conn, $item['send_to_address']);
             $send_date       = mysqli_real_escape_string($conn, $item['send_date']);
             $product_name    = mysqli_real_escape_string($conn, $item['product_name']);
-            $quantity        = (float)$item['quantity'];
+            $quantity        = mysqli_real_escape_string($conn, (string)$item['quantity']);
             $uom_id          = mysqli_real_escape_string($conn, $item['uom_id']);
             $description_sql = isset($item['description']) && trim($item['description']) !== '' ? "'" . mysqli_real_escape_string($conn, $item['description']) . "'" : 'NULL';
 
@@ -191,7 +201,7 @@ function createSalesSppb($conn, $input, $username, $company_id) {
         jsonResponse(201, 'Sales SPPB created successfully', ['sales_sppb_id' => $sales_sppb_id]);
     } catch (Exception $e) {
         $conn->rollback();
-        jsonResponse(500, 'Failed to create sales SPPB', ['error' => $e->getMessage()]);
+        jsonResponse(500, 'Failed to create sales SPPB', safeErrorResponse($e));
     }
 }
 
@@ -303,7 +313,7 @@ function updateSalesSppb($conn, $sales_sppb_id, $input, $username, $company_id) 
                 $send_to_address  = mysqli_real_escape_string($conn, $item['send_to_address']);
                 $send_date        = mysqli_real_escape_string($conn, $item['send_date']);
                 $product_name     = mysqli_real_escape_string($conn, $item['product_name']);
-                $quantity         = (float)$item['quantity'];
+                $quantity         = mysqli_real_escape_string($conn, (string)$item['quantity']);
                 $uom_id           = mysqli_real_escape_string($conn, $item['uom_id']);
                 $description_sql  = isset($item['description']) && trim($item['description']) !== '' ? "'" . mysqli_real_escape_string($conn, $item['description']) . "'" : 'NULL';
 
@@ -323,7 +333,7 @@ function updateSalesSppb($conn, $sales_sppb_id, $input, $username, $company_id) 
         jsonResponse(200, 'Sales SPPB updated successfully');
     } catch (Exception $e) {
         $conn->rollback();
-        jsonResponse(500, 'Failed to update sales SPPB', ['error' => $e->getMessage()]);
+        jsonResponse(500, 'Failed to update sales SPPB', safeErrorResponse($e));
     }
 }
 
@@ -338,15 +348,20 @@ function deleteSalesSppb($conn, $sales_sppb_id, $username, $company_id) {
 
     $now = date('Y-m-d H:i:s');
 
+    mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".sales_sppb_item
+        SET deleted_at = '$now', updated_by = '$username', updated_at = '$now'
+        WHERE sales_sppb_id = '$sales_sppb_id' AND deleted_at IS NULL");
+
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".sales_sppb SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE id = '$sales_sppb_id' AND company_id = '$company_id'")) {
         insertAuditLog($conn, $company_id, 'sales_sppb', $sales_sppb_id, 'deleted', $username);
         jsonResponse(200, 'Sales SPPB deleted successfully');
     } else {
-        jsonResponse(500, 'Failed to delete sales SPPB', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to delete sales SPPB', safeDbError($conn));
     }
 }
 
 function approveSalesSppb($conn, $sales_sppb_id, $input, $username, $company_id) {
+    $sales_sppb_id = mysqli_real_escape_string($conn, $sales_sppb_id);
     $check = mysqli_query($conn, "SELECT ssp.sppb_display_number, ssp.created_by, c.customer_name
             FROM " . APP_SCHEMA . ".sales_sppb ssp
             LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = ssp.customer_id
@@ -389,11 +404,12 @@ function approveSalesSppb($conn, $sales_sppb_id, $input, $username, $company_id)
 
         jsonResponse(200, 'Sales SPPB approved successfully');
     } else {
-        jsonResponse(500, 'Failed to approve sales SPPB', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to approve sales SPPB', safeDbError($conn));
     }
 }
 
 function rejectSalesSppb($conn, $sales_sppb_id, $input, $username, $company_id) {
+    $sales_sppb_id = mysqli_real_escape_string($conn, $sales_sppb_id);
     $check = mysqli_query($conn, "SELECT sppb_display_number, created_by FROM " . APP_SCHEMA . ".sales_sppb WHERE id = '$sales_sppb_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Sales SPPB not found');
@@ -431,11 +447,12 @@ function rejectSalesSppb($conn, $sales_sppb_id, $input, $username, $company_id) 
 
         jsonResponse(200, 'Sales SPPB rejected successfully');
     } else {
-        jsonResponse(500, 'Failed to reject sales SPPB', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to reject sales SPPB', safeDbError($conn));
     }
 }
 
 function reviseSalesSppb($conn, $sales_sppb_id, $input, $username, $company_id) {
+    $sales_sppb_id = mysqli_real_escape_string($conn, $sales_sppb_id);
     $check = mysqli_query($conn, "SELECT ss.status_name FROM " . APP_SCHEMA . ".sales_sppb ssp
             LEFT JOIN " . APP_SCHEMA . ".sales_status ss ON ss.id = ssp.status_id
             WHERE ssp.id = '$sales_sppb_id' AND ssp.company_id = '$company_id' AND ssp.deleted_at IS NULL LIMIT 1");
@@ -465,7 +482,7 @@ function reviseSalesSppb($conn, $sales_sppb_id, $input, $username, $company_id) 
         insertAuditLog($conn, $company_id, 'sales_sppb', $sales_sppb_id, 'revised', $username, $notes);
         jsonResponse(200, 'Sales SPPB revised successfully');
     } else {
-        jsonResponse(500, 'Failed to revise sales SPPB', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to revise sales SPPB', safeDbError($conn));
     }
 }
 
@@ -533,7 +550,7 @@ function exportSalesSppb($conn, $sales_sppb_id, $company_id) {
         $sheet->setCellValue("C$row", $item['send_to_address']);
         $sheet->setCellValue("D$row", formatIndonesianDate($item['send_date']));
         $sheet->setCellValue("E$row", $item['product_name']);
-        $sheet->setCellValue("F$row", number_format((float)$item['quantity'], 2));
+        $sheet->setCellValue("F$row", number_format((string)$item['quantity'], 2));
         $sheet->setCellValue("G$row", $item['uom_name']);
         $sheet->setCellValue("H$row", $item['description']);
 
@@ -572,7 +589,8 @@ function exportSalesSppb($conn, $sales_sppb_id, $company_id) {
 $authUser   = requireAuth();
 $method     = $_SERVER['REQUEST_METHOD'];
 $company_id = $authUser['company_id'] ?? null;
-$username   = $authUser['user_id'] ?? null;
+$username   = $authUser['sub'] ?? $authUser['user_id'] ?? null;
+$app_role_id = $authUser['app_role_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
@@ -584,13 +602,15 @@ $sub_action    = $parts[4] ?? '';
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $username = mysqli_real_escape_string($conn, $username);
 
     if ($sales_sppb_id === 'generate-number' && $sub_action === '') {
-        if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
+        if ($method !== 'GET') { methodNotAllowed(['GET']); }
         generateSalesSppbNumber($conn, $company_id);
 
     } elseif ($sales_sppb_id && $sub_action === 'export') {
-        if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
+        if ($method !== 'GET') { methodNotAllowed(['GET']); }
         exportSalesSppb($conn, $sales_sppb_id, $company_id);
 
     } elseif ($sales_sppb_id && $sub_action !== '') {
@@ -600,15 +620,24 @@ try {
 
         switch ($sub_action) {
             case 'approve':
-                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                if ($method !== 'PATCH') { methodNotAllowed(['PATCH']); }
+                if (!userHasPermission($conn, $app_role_id, 'sales_sppb.approve')) {
+                    jsonResponse(403, 'You do not have permission to approve sales SPPBs');
+                }
                 approveSalesSppb($conn, $sales_sppb_id, $input, $username, $company_id);
                 break;
             case 'reject':
-                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                if ($method !== 'PATCH') { methodNotAllowed(['PATCH']); }
+                if (!userHasPermission($conn, $app_role_id, 'sales_sppb.approve')) {
+                    jsonResponse(403, 'You do not have permission to reject sales SPPBs');
+                }
                 rejectSalesSppb($conn, $sales_sppb_id, $input, $username, $company_id);
                 break;
             case 'revise':
-                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                if ($method !== 'PATCH') { methodNotAllowed(['PATCH']); }
+                if (!userHasPermission($conn, $app_role_id, 'sales_sppb.approve')) {
+                    jsonResponse(403, 'You do not have permission to revise sales SPPBs');
+                }
                 reviseSalesSppb($conn, $sales_sppb_id, $input, $username, $company_id);
                 break;
             default:
@@ -628,7 +657,7 @@ try {
                 deleteSalesSppb($conn, $sales_sppb_id, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'PUT', 'DELETE']);
         }
     } else {
         switch ($method) {
@@ -640,10 +669,10 @@ try {
                 createSalesSppb($conn, $input, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'POST']);
         }
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

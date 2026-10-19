@@ -28,7 +28,7 @@ if (!$app_role_id) {
     exit;
 }
 if ($method !== 'GET') {
-    jsonResponse(405, 'Method Not Allowed');
+    methodNotAllowed(['GET']);
     exit;
 }
 if (!in_array($action, ANALYTICS_ACTIONS, true)) {
@@ -38,8 +38,9 @@ if (!in_array($action, ANALYTICS_ACTIONS, true)) {
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
 
-    validateAnalyticsWindowParams($_GET);
+    validateAnalyticsWindowParams($_GET) or jsonResponse(400, 'from/to must be YYYY-MM-DD format');
 
     if (!userHasPermission($conn, $app_role_id, "analytics.$action.view")) {
         jsonResponse(403, 'You do not have permission to view this analytics module');
@@ -65,5 +66,5 @@ try {
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

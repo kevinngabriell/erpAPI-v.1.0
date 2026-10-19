@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
+require_once __DIR__ . '/../../helpers/permission.php';
 require_once __DIR__ . '/../../helpers/report_dates.php';
 require_once __DIR__ . '/../../helpers/excel_export.php';
 
@@ -27,10 +28,11 @@ function fetchAccountBreakdown($conn, $company_id, $account_type, $date_from, $d
         WHERE ac.company_id = '$company_id' AND ac.deleted_at IS NULL AND ac.account_type = '$account_type'
         GROUP BY ac.id, ac.account_code, ac.account_code_name
         HAVING total != 0
-        ORDER BY ac.account_code ASC");
+        ORDER BY ac.account_code ASC
+        LIMIT 500");
 
     $rows = mysqli_fetch_all($result, MYSQLI_ASSOC);
-    foreach ($rows as &$row) $row['total'] = (float)$row['total'];
+    foreach ($rows as &$row) $row['total'] = bcadd($row['total'], '0', 2);
     return $rows;
 }
 
@@ -42,15 +44,17 @@ function getProfitLossReport($conn, $company_id, $params) {
     $revenue_by_account = fetchAccountBreakdown($conn, $company_id, 'revenue', $date_from, $date_to);
     $expense_by_account = fetchAccountBreakdown($conn, $company_id, 'expense', $date_from, $date_to);
 
-    $revenue_total = array_sum(array_column($revenue_by_account, 'total'));
-    $expense_total = array_sum(array_column($expense_by_account, 'total'));
+    $revenue_total = '0.00';
+    foreach ($revenue_by_account as $account) $revenue_total = bcadd($revenue_total, $account['total'], 2);
+    $expense_total = '0.00';
+    foreach ($expense_by_account as $account) $expense_total = bcadd($expense_total, $account['total'], 2);
 
     jsonResponse(200, 'Profit and loss report found', [
         'date_from'  => $date_from,
         'date_to'    => $date_to,
         'revenue'    => ['total' => $revenue_total, 'by_account' => $revenue_by_account],
         'expense'    => ['total' => $expense_total, 'by_account' => $expense_by_account],
-        'net_profit' => $revenue_total - $expense_total,
+        'net_profit' => bcsub($revenue_total, $expense_total, 2),
     ]);
 }
 
@@ -83,6 +87,7 @@ function writeAccountBreakdownSection($sheet, $row, $title, $accounts, $total) {
 }
 
 function exportProfitLossReport($conn, $company_id, $params) {
+    // Export returns binary .xlsx content — bypasses jsonResponse()
     [$date_from, $date_to] = resolveReportDateRange($params);
     $date_from = mysqli_real_escape_string($conn, $date_from);
     $date_to   = mysqli_real_escape_string($conn, $date_to);
@@ -90,9 +95,11 @@ function exportProfitLossReport($conn, $company_id, $params) {
     $revenue_by_account = fetchAccountBreakdown($conn, $company_id, 'revenue', $date_from, $date_to);
     $expense_by_account = fetchAccountBreakdown($conn, $company_id, 'expense', $date_from, $date_to);
 
-    $revenue_total = array_sum(array_column($revenue_by_account, 'total'));
-    $expense_total = array_sum(array_column($expense_by_account, 'total'));
-    $net_profit    = $revenue_total - $expense_total;
+    $revenue_total = '0.00';
+    foreach ($revenue_by_account as $account) $revenue_total = bcadd($revenue_total, $account['total'], 2);
+    $expense_total = '0.00';
+    foreach ($expense_by_account as $account) $expense_total = bcadd($expense_total, $account['total'], 2);
+    $net_profit    = bcsub($revenue_total, $expense_total, 2);
 
     $spreadsheet = new Spreadsheet();
     $sheet       = $spreadsheet->getActiveSheet();
@@ -127,18 +134,25 @@ function exportProfitLossReport($conn, $company_id, $params) {
 $authUser   = requireAuth();
 $method     = $_SERVER['REQUEST_METHOD'];
 $company_id = $authUser['company_id'] ?? null;
+$app_role_id = $authUser['app_role_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
     exit;
 }
 if ($method !== 'GET') {
-    jsonResponse(405, 'Method Not Allowed');
+    methodNotAllowed(['GET']);
     exit;
 }
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+
+    if (!userHasPermission($conn, $app_role_id, 'reports.profit_loss.view')) {
+        jsonResponse(403, 'You do not have permission to view this report');
+        return;
+    }
 
     if ($action === 'export') {
         exportProfitLossReport($conn, $company_id, $_GET);
@@ -146,5 +160,5 @@ try {
         getProfitLossReport($conn, $company_id, $_GET);
     }
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

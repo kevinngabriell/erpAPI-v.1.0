@@ -14,3 +14,6 @@ vendor/
 # PHP runtime logs
 error_log
 *.log
+
+# Runtime request logs
+v2/storage/logs/

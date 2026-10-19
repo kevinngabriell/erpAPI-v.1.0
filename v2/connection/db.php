@@ -15,7 +15,11 @@ function getConn(): mysqli {
     if ($instance->connect_error) {
         http_response_code(500);
         header('Content-Type: application/json');
-        echo json_encode(['success' => false, 'message' => 'Database connection failed']);
+        echo json_encode([
+            'status_code'    => 500,
+            'status_message' => 'Database connection failed',
+            'data'           => []
+        ]);
         exit;
     }
 

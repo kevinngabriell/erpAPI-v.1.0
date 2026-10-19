@@ -3,28 +3,11 @@ require_once __DIR__ . '/../general.php';
 require_once __DIR__ . '/../helpers/auth_response.php';
 require_once __DIR__ . '/../helpers/rate_limit.php';
 require_once __DIR__ . '/../helpers/password_policy.php';
+require_once __DIR__ . '/../helpers/auth_log.php';
 
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
 header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
-
-function writeRegisterLog($conn, string $action, ?string $user_id, string $username): void {
-    $ip     = substr(getUserIP(), 0, 45);
-    $ua     = substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 500);
-    $module = 'auth';
-    $now    = date('Y-m-d H:i:s');
-
-    $stmt = $conn->prepare(
-        "INSERT INTO " . CORE_SCHEMA . ".log
-            (action, module, description, actor_type, actor_username, resource_id, ip_address, user_agent, occurred_at, app_id)
-         VALUES (?, ?, ?, 'app', ?, ?, ?, ?, ?, '" . APP_ID . "')"
-    );
-    if ($stmt) {
-        $stmt->bind_param('ssssssss', $action, $module, $action, $username, $user_id, $ip, $ua, $now);
-        $stmt->execute();
-        $stmt->close();
-    }
-}
 
 function registerUser($conn, $input): void {
     // 1. Required field validation
@@ -86,7 +69,7 @@ function registerUser($conn, $input): void {
     // 5. IP rate limit — 10 per hour
     $ip = getUserIP();
     if (checkRateLimitByIP($conn, $ip, 'register', 10, 60)) {
-        writeRegisterLog($conn, 'register_failed', null, $email);
+        writeAuthLog($conn, 'register_failed', null, $email);
         authResponse(429, 'Too many registration attempts. Please try again later.', 'RATE_003');
         return;
     }
@@ -114,12 +97,12 @@ function registerUser($conn, $input): void {
     $stmt->close();
 
     if (!$company_row) {
-        writeRegisterLog($conn, 'register_failed', null, $email);
+        writeAuthLog($conn, 'register_failed', null, $email);
         authResponse(404, 'Company not found. Please check your company code.', 'REG_001');
         return;
     }
     if ($company_row['status'] !== 'active') {
-        writeRegisterLog($conn, 'register_failed', null, $email);
+        writeAuthLog($conn, 'register_failed', null, $email);
         authResponse(422, 'This company account is not active.', 'REG_002');
         return;
     }
@@ -139,7 +122,7 @@ function registerUser($conn, $input): void {
     $stmt->close();
 
     if ($dup) {
-        writeRegisterLog($conn, 'register_failed', null, $email);
+        writeAuthLog($conn, 'register_failed', null, $email);
         authResponse(409, 'An account with this email already exists.', 'REG_003');
         return;
     }
@@ -157,7 +140,7 @@ function registerUser($conn, $input): void {
     $stmt->close();
 
     if (!$otp_row) {
-        writeRegisterLog($conn, 'register_failed', null, $email);
+        writeAuthLog($conn, 'register_failed', null, $email);
         authResponse(400, 'Invalid or expired OTP code.', 'REG_004');
         return;
     }
@@ -174,7 +157,7 @@ function registerUser($conn, $input): void {
             $stmt->execute();
             $stmt->close();
         }
-        writeRegisterLog($conn, 'register_failed', null, $email);
+        writeAuthLog($conn, 'register_failed', null, $email);
         authResponse(400, 'Invalid or expired OTP code.', 'REG_004');
         return;
     }
@@ -265,13 +248,13 @@ function registerUser($conn, $input): void {
 
     } catch (Exception $e) {
         $conn->rollback();
-        writeRegisterLog($conn, 'register_failed', null, $email);
+        writeAuthLog($conn, 'register_failed', null, $email);
         authResponse(500, 'An unexpected error occurred. Please try again.');
         return;
     }
 
     // 13. Audit log
-    writeRegisterLog($conn, 'register_success', $user_id, $email);
+    writeAuthLog($conn, 'register_success', $user_id, $email);
 
     authResponse(201, 'Registration successful. Your account is pending approval by your company administrator.', null, [
         'user_id'        => $user_id,
@@ -287,15 +270,19 @@ try {
     $method = $_SERVER['REQUEST_METHOD'];
     $conn   = getConn();
 
+    validateJsonContentType();
+
     switch ($method) {
         case 'POST':
             $input = json_decode(file_get_contents('php://input'), true) ?? [];
             registerUser($conn, $input);
             break;
         default:
-            authResponse(405, 'Method not allowed');
+            methodNotAllowed(['POST']);
     }
 
 } catch (Exception $e) {
-    authResponse(500, 'An unexpected error occurred. Please try again.');
+    authResponse(500, 'An unexpected error occurred. Please try again. Reference ID: ' . requestId(), null,
+        safeErrorResponse($e)
+    );
 }

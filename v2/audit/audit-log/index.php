@@ -5,7 +5,7 @@ require_once __DIR__ . '/../../connection/db.php';
 
 function getAllAuditLogs($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
 
     $where = "al.company_id = '$company_id'";
@@ -44,7 +44,15 @@ function getAllAuditLogs($conn, $company_id, $params) {
             ],
         ]);
     } else {
-        jsonResponse(404, 'No audit logs found');
+        jsonResponse(200, 'No audit logs found', [
+            'data'       => [],
+            'pagination' => [
+                'total'       => $total,
+                'page'        => $page,
+                'limit'       => $limit,
+                'total_pages' => (int)ceil($total / $limit),
+            ],
+        ]);
     }
 }
 
@@ -82,6 +90,7 @@ $audit_log_id = !empty($action) ? $action : null;
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
 
     if ($audit_log_id) {
         switch ($method) {
@@ -89,7 +98,7 @@ try {
                 getDetailAuditLog($conn, $audit_log_id, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET']);
         }
     } else {
         switch ($method) {
@@ -97,10 +106,10 @@ try {
                 getAllAuditLogs($conn, $company_id, $_GET);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET']);
         }
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

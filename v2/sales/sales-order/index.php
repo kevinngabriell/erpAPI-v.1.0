@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../connection/db.php';
 require_once __DIR__ . '/../../helpers/audit_log.php';
 require_once __DIR__ . '/../../helpers/excel_export.php';
 require_once __DIR__ . '/../../helpers/notification.php';
+require_once __DIR__ . '/../../helpers/permission.php';
 
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
@@ -21,13 +22,13 @@ function calculateSalesOrderTotal($conn, $sales_order_id, $ppn_percentage, $ppn_
     $sales_order_id = mysqli_real_escape_string($conn, $sales_order_id);
     $result = mysqli_query($conn, "SELECT SUM(quantity * unit_price * kurs) AS subtotal
             FROM " . APP_SCHEMA . ".sales_order_item WHERE sales_order_id = '$sales_order_id' AND deleted_at IS NULL");
-    $subtotal = $result ? (float)(mysqli_fetch_assoc($result)['subtotal'] ?? 0) : 0;
+    $subtotal = $result ? (string)(mysqli_fetch_assoc($result)['subtotal'] ?? '0') : '0';
 
     $ppn_percentage = (float)$ppn_percentage;
     $is_11_12_method = $ppn_percentage === 12.0 && str_contains($ppn_name ?? '', '11/12');
     $tax_rate        = $is_11_12_method ? (11 / 12 * 0.12) : (in_array($ppn_percentage, [11.0, 12.0], true) ? $ppn_percentage / 100 : 0);
 
-    return $subtotal * (1 + $tax_rate);
+    return bcadd($subtotal, bcmul($subtotal, (string)$tax_rate, 2), 2);
 }
 
 function getCompanyCode($conn, $company_id) {
@@ -59,9 +60,10 @@ function generateSalesOrderNumber($conn, $company_id) {
 
 function getAllSalesOrders($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
+    $search = str_replace(['%', '_'], ['\%', '\_'], $search);
 
     $where = "so.company_id = '$company_id' AND so.deleted_at IS NULL";
     if ($search) {
@@ -111,7 +113,15 @@ function getAllSalesOrders($conn, $company_id, $params) {
             ],
         ]);
     } else {
-        jsonResponse(404, 'No sales orders found');
+        jsonResponse(200, 'No sales orders found', [
+            'data'       => [],
+            'pagination' => [
+                'total'       => $total,
+                'page'        => $page,
+                'limit'       => $limit,
+                'total_pages' => (int)ceil($total / $limit),
+            ],
+        ]);
     }
 }
 
@@ -178,11 +188,11 @@ function createSalesOrder($conn, $input, $username, $company_id) {
         foreach ($input['items'] as $item) {
             $item_id            = generateUUID();
             $product_name        = mysqli_real_escape_string($conn, $item['product_name']);
-            $quantity            = (float)$item['quantity'];
+            $quantity            = mysqli_real_escape_string($conn, (string)$item['quantity']);
             $uom_id              = mysqli_real_escape_string($conn, $item['uom_id']);
             $currency_id         = mysqli_real_escape_string($conn, $item['currency_id']);
-            $unit_price          = (float)$item['unit_price'];
-            $kurs                = (float)$item['kurs'];
+            $unit_price          = mysqli_real_escape_string($conn, (string)$item['unit_price']);
+            $kurs                = mysqli_real_escape_string($conn, (string)$item['kurs']);
             $purchase_order_id_sql = isset($item['purchase_order_id']) && trim($item['purchase_order_id']) !== '' ? "'" . mysqli_real_escape_string($conn, $item['purchase_order_id']) . "'" : 'NULL';
 
             $item_sql = "INSERT INTO " . APP_SCHEMA . ".sales_order_item
@@ -212,7 +222,7 @@ function createSalesOrder($conn, $input, $username, $company_id) {
         jsonResponse(201, 'Sales order created successfully', ['sales_order_id' => $sales_order_id]);
     } catch (Exception $e) {
         $conn->rollback();
-        jsonResponse(500, 'Failed to create sales order', ['error' => $e->getMessage()]);
+        jsonResponse(500, 'Failed to create sales order', safeErrorResponse($e));
     }
 }
 
@@ -292,7 +302,7 @@ function updateSalesOrder($conn, $sales_order_id, $input, $username, $company_id
         insertAuditLog($conn, $company_id, 'sales_order', $sales_order_id, 'updated', $username);
         jsonResponse(200, 'Sales order updated successfully');
     } else {
-        jsonResponse(500, 'Failed to update sales order', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to update sales order', safeDbError($conn));
     }
 }
 
@@ -307,15 +317,20 @@ function deleteSalesOrder($conn, $sales_order_id, $username, $company_id) {
 
     $now = date('Y-m-d H:i:s');
 
+    mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".sales_order_item
+        SET deleted_at = '$now', updated_by = '$username', updated_at = '$now'
+        WHERE sales_order_id = '$sales_order_id' AND deleted_at IS NULL");
+
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".sales_order SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE id = '$sales_order_id' AND company_id = '$company_id'")) {
         insertAuditLog($conn, $company_id, 'sales_order', $sales_order_id, 'deleted', $username);
         jsonResponse(200, 'Sales order deleted successfully');
     } else {
-        jsonResponse(500, 'Failed to delete sales order', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to delete sales order', safeDbError($conn));
     }
 }
 
 function approveSalesOrder($conn, $sales_order_id, $input, $username, $company_id) {
+    $sales_order_id = mysqli_real_escape_string($conn, $sales_order_id);
     $check = mysqli_query($conn, "SELECT so.so_display_number, so.created_by, c.customer_name, pt.ppn_percentage, pt.ppn_name
             FROM " . APP_SCHEMA . ".sales_order so
             LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = so.customer_id
@@ -362,11 +377,12 @@ function approveSalesOrder($conn, $sales_order_id, $input, $username, $company_i
 
         jsonResponse(200, 'Sales order approved successfully');
     } else {
-        jsonResponse(500, 'Failed to approve sales order', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to approve sales order', safeDbError($conn));
     }
 }
 
 function rejectSalesOrder($conn, $sales_order_id, $input, $username, $company_id) {
+    $sales_order_id = mysqli_real_escape_string($conn, $sales_order_id);
     $check = mysqli_query($conn, "SELECT so_display_number, created_by FROM " . APP_SCHEMA . ".sales_order WHERE id = '$sales_order_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Sales order not found');
@@ -404,11 +420,12 @@ function rejectSalesOrder($conn, $sales_order_id, $input, $username, $company_id
 
         jsonResponse(200, 'Sales order rejected successfully');
     } else {
-        jsonResponse(500, 'Failed to reject sales order', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to reject sales order', safeDbError($conn));
     }
 }
 
 function reviseSalesOrder($conn, $sales_order_id, $input, $username, $company_id) {
+    $sales_order_id = mysqli_real_escape_string($conn, $sales_order_id);
     $check = mysqli_query($conn, "SELECT ss.status_name FROM " . APP_SCHEMA . ".sales_order so
             LEFT JOIN " . APP_SCHEMA . ".sales_status ss ON ss.id = so.status_id
             WHERE so.id = '$sales_order_id' AND so.company_id = '$company_id' AND so.deleted_at IS NULL LIMIT 1");
@@ -438,7 +455,7 @@ function reviseSalesOrder($conn, $sales_order_id, $input, $username, $company_id
         insertAuditLog($conn, $company_id, 'sales_order', $sales_order_id, 'revised', $username, $notes);
         jsonResponse(200, 'Sales order revised successfully');
     } else {
-        jsonResponse(500, 'Failed to revise sales order', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to revise sales order', safeDbError($conn));
     }
 }
 
@@ -499,29 +516,29 @@ function exportSalesOrder($conn, $sales_order_id, $company_id) {
 
     $row        = 6;
     $no         = 1;
-    $total_dpp  = 0;
-    $total_ppn  = 0;
-    $ppn_percentage = (float)($sales_order['ppn_percentage'] ?? 0);
+    $total_dpp  = '0';
+    $total_ppn  = '0';
+    $ppn_percentage = (string)($sales_order['ppn_percentage'] ?? 0);
 
     foreach ($items as $item) {
-        $dpp = (float)$item['quantity'] * (float)$item['unit_price'];
-        $ppn = $ppn_percentage * $dpp / 100;
+        $dpp = bcmul((string)$item['quantity'], (string)$item['unit_price'], 2);
+        $ppn = bcdiv(bcmul($dpp, $ppn_percentage, 2), '100', 2);
 
         $sheet->setCellValue("A$row", $no);
         $sheet->setCellValue("B$row", $item['product_name']);
         $sheet->setCellValue("C$row", $item['quantity']);
         $sheet->setCellValue("D$row", $item['uom_name']);
         $sheet->setCellValue("E$row", $item['currency_name']);
-        $sheet->setCellValue("F$row", number_format((float)$item['unit_price'], 2));
+        $sheet->setCellValue("F$row", number_format((string)$item['unit_price'], 2));
         $sheet->setCellValue("G$row", number_format($dpp, 2));
-        $sheet->setCellValue("H$row", number_format((float)$item['kurs'], 2));
+        $sheet->setCellValue("H$row", number_format((string)$item['kurs'], 2));
         $sheet->setCellValue("I$row", number_format($dpp, 2));
         $sheet->setCellValue("J$row", number_format($ppn, 2));
 
         $sheet->getStyle("A$row:J$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
 
-        $total_dpp += $dpp;
-        $total_ppn += $ppn;
+        $total_dpp = bcadd($total_dpp, $dpp, 2);
+        $total_ppn = bcadd($total_ppn, $ppn, 2);
         $row++;
         $no++;
     }
@@ -543,7 +560,7 @@ function exportSalesOrder($conn, $sales_order_id, $company_id) {
     $row++;
 
     $sheet->mergeCells("I$row:J$row");
-    $sheet->setCellValue("I$row", number_format($total_dpp + $total_ppn, 2));
+    $sheet->setCellValue("I$row", number_format(bcadd($total_dpp, $total_ppn, 2), 2));
     $sheet->getStyle("A$row:J$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
     $row++;
 
@@ -579,7 +596,8 @@ function exportSalesOrder($conn, $sales_order_id, $company_id) {
 $authUser   = requireAuth();
 $method     = $_SERVER['REQUEST_METHOD'];
 $company_id = $authUser['company_id'] ?? null;
-$username   = $authUser['user_id'] ?? null;
+$username   = $authUser['sub'] ?? $authUser['user_id'] ?? null;
+$app_role_id = $authUser['app_role_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
@@ -591,16 +609,18 @@ $sub_action     = $parts[4] ?? '';
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $username = mysqli_real_escape_string($conn, $username);
 
     if ($sales_order_id === 'generate-number' && $sub_action === '') {
-        if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
+        if ($method !== 'GET') { methodNotAllowed(['GET']); }
         generateSalesOrderNumber($conn, $company_id);
 
     } elseif ($sales_order_id && $sub_action === 'items') {
         require __DIR__ . '/items.php';
 
     } elseif ($sales_order_id && $sub_action === 'export') {
-        if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
+        if ($method !== 'GET') { methodNotAllowed(['GET']); }
         exportSalesOrder($conn, $sales_order_id, $company_id);
 
     } elseif ($sales_order_id && $sub_action !== '') {
@@ -610,15 +630,24 @@ try {
 
         switch ($sub_action) {
             case 'approve':
-                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                if ($method !== 'PATCH') { methodNotAllowed(['PATCH']); }
+                if (!userHasPermission($conn, $app_role_id, 'sales_order.approve')) {
+                    jsonResponse(403, 'You do not have permission to approve sales orders');
+                }
                 approveSalesOrder($conn, $sales_order_id, $input, $username, $company_id);
                 break;
             case 'reject':
-                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                if ($method !== 'PATCH') { methodNotAllowed(['PATCH']); }
+                if (!userHasPermission($conn, $app_role_id, 'sales_order.approve')) {
+                    jsonResponse(403, 'You do not have permission to reject sales orders');
+                }
                 rejectSalesOrder($conn, $sales_order_id, $input, $username, $company_id);
                 break;
             case 'revise':
-                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                if ($method !== 'PATCH') { methodNotAllowed(['PATCH']); }
+                if (!userHasPermission($conn, $app_role_id, 'sales_order.approve')) {
+                    jsonResponse(403, 'You do not have permission to revise sales orders');
+                }
                 reviseSalesOrder($conn, $sales_order_id, $input, $username, $company_id);
                 break;
             default:
@@ -638,7 +667,7 @@ try {
                 deleteSalesOrder($conn, $sales_order_id, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'PUT', 'DELETE']);
         }
 
     } else {
@@ -651,10 +680,10 @@ try {
                 createSalesOrder($conn, $input, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'POST']);
         }
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

@@ -601,7 +601,7 @@ if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
 
 ```php
 $page  = max(1, (int)($params['page']  ?? 1));
-$limit = min(100, max(1, (int)($params['limit'] ?? 10)));
+$limit = min(15, max(1, (int)($params['limit'] ?? 15)));
 ```
 
 ### Optional nullable string — SQL NULL handling pattern
@@ -755,7 +755,7 @@ jsonResponse(200, 'Things found', [
 ```
 
 **Rules:**
-- Maximum `limit` is always capped at 100
+- Maximum `limit` is always capped at 15
 - Minimum `page` is always 1
 - `$where` is built as a string starting with the mandatory tenant filter (`company_id = '...'`)
 - The `WHERE $where` clause is shared between the data query and the count query
@@ -1256,7 +1256,7 @@ require_once __DIR__ . '/../connection/db.php';
 // --- GET ALL ---
 function getAll{Module}s($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
 

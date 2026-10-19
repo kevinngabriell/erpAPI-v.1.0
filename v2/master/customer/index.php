@@ -2,12 +2,14 @@
 
 require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
+require_once __DIR__ . '/../../helpers/permission.php';
 
 function getAllCustomers($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
+    $search = str_replace(['%', '_'], ['\%', '\_'], $search);
 
     $where = "c.company_id = '$company_id' AND c.deleted_at IS NULL";
     if ($search) {
@@ -15,14 +17,9 @@ function getAllCustomers($conn, $company_id, $params) {
     }
 
     $outstanding_join = "LEFT JOIN (
-            SELECT customer_id, SUM(outstanding) AS outstanding_amount
-            FROM (
-                SELECT customer_id, invoice_number, MAX(due_amount) - SUM(COALESCE(paid_amount, 0)) AS outstanding
-                FROM " . APP_SCHEMA . ".finance_payment
-                WHERE company_id = '$company_id' AND customer_id IS NOT NULL AND deleted_at IS NULL
-                GROUP BY customer_id, invoice_number
-                HAVING outstanding > 0
-            ) inv
+            SELECT customer_id, SUM(due_amount - COALESCE(paid_amount, 0)) AS outstanding_amount
+            FROM " . APP_SCHEMA . ".finance_payment
+            WHERE company_id = '$company_id' AND customer_id IS NOT NULL AND deleted_at IS NULL
             GROUP BY customer_id
         ) fpo ON fpo.customer_id = c.id";
 
@@ -40,24 +37,24 @@ function getAllCustomers($conn, $company_id, $params) {
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
-        $customers = mysqli_fetch_all($result, MYSQLI_ASSOC);
-        foreach ($customers as &$customer) {
-            $customer['outstanding_amount'] = (float)$customer['outstanding_amount'];
-            $customer['has_outstanding']    = $customer['outstanding_amount'] > 0;
+        $data = mysqli_fetch_all($result, MYSQLI_ASSOC);
+        foreach ($data as &$customer) {
+            $customer['outstanding_amount'] = bcadd($customer['outstanding_amount'], '0', 2);
+            $customer['has_outstanding']    = bccomp($customer['outstanding_amount'], '0', 2) > 0;
         }
-
-        jsonResponse(200, 'Customers found', [
-            'data'       => $customers,
-            'pagination' => [
-                'total'       => $total,
-                'page'        => $page,
-                'limit'       => $limit,
-                'total_pages' => (int)ceil($total / $limit),
-            ],
-        ]);
     } else {
-        jsonResponse(404, 'No customers found');
+        $data = [];
     }
+
+    jsonResponse(200, 'Customers found', [
+        'data'       => $data,
+        'pagination' => [
+            'total'       => $total,
+            'page'        => $page,
+            'limit'       => $limit,
+            'total_pages' => (int)ceil($total / $limit),
+        ],
+    ]);
 }
 
 function createCustomer($conn, $input, $username, $company_id) {
@@ -96,7 +93,7 @@ function createCustomer($conn, $input, $username, $company_id) {
         ? "'" . mysqli_real_escape_string($conn, trim($input['tax_invoice_address'])) . "'"
         : 'NULL';
     $credit_limit_sql = isset($input['credit_limit']) && $input['credit_limit'] !== ''
-        ? (float)$input['credit_limit']
+        ? bcadd($input['credit_limit'], '0', 2)
         : 'NULL';
 
     $dup = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".customer WHERE company_id = '$company_id' AND customer_name = '$customer_name' AND deleted_at IS NULL LIMIT 1");
@@ -115,7 +112,7 @@ function createCustomer($conn, $input, $username, $company_id) {
     if (mysqli_query($conn, $sql)) {
         jsonResponse(201, 'Customer created successfully', ['customer_id' => $customer_id]);
     } else {
-        jsonResponse(500, 'Failed to create customer', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to create customer', safeDbError($conn));
     }
 }
 
@@ -217,7 +214,7 @@ function updateCustomer($conn, $customer_id, $input, $username, $company_id) {
 
     if (array_key_exists('credit_limit', $input)) {
         $val = $input['credit_limit'] !== null && $input['credit_limit'] !== ''
-            ? (float)$input['credit_limit']
+            ? bcadd($input['credit_limit'], '0', 2)
             : 'NULL';
         $updates[] = "credit_limit = $val";
     }
@@ -234,7 +231,7 @@ function updateCustomer($conn, $customer_id, $input, $username, $company_id) {
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".customer SET " . implode(', ', $updates) . " WHERE id = '$customer_id' AND company_id = '$company_id'")) {
         jsonResponse(200, 'Customer updated successfully');
     } else {
-        jsonResponse(500, 'Failed to update customer', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to update customer', safeDbError($conn));
     }
 }
 
@@ -252,16 +249,17 @@ function deleteCustomer($conn, $customer_id, $username, $company_id) {
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".customer SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE id = '$customer_id' AND company_id = '$company_id'")) {
         jsonResponse(200, 'Customer deleted successfully');
     } else {
-        jsonResponse(500, 'Failed to delete customer', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to delete customer', safeDbError($conn));
     }
 }
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
-$authUser   = requireAuth();
-$method     = $_SERVER['REQUEST_METHOD'];
-$company_id = $authUser['company_id'] ?? null;
-$username   = $authUser['user_id'] ?? null;
+$authUser    = requireAuth();
+$method      = $_SERVER['REQUEST_METHOD'];
+$company_id  = $authUser['company_id'] ?? null;
+$username    = $authUser['sub'] ?? $authUser['user_id'] ?? null;
+$app_role_id = $authUser['app_role_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
@@ -272,6 +270,8 @@ $customer_id = !empty($action) ? $action : null;
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $username = mysqli_real_escape_string($conn, $username);
 
     if ($customer_id) {
         switch ($method) {
@@ -279,14 +279,20 @@ try {
                 getDetailCustomer($conn, $customer_id, $company_id);
                 break;
             case 'PUT':
+                if (!userHasPermission($conn, $app_role_id, 'master.customer.update')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 $input = json_decode(file_get_contents('php://input'), true) ?? [];
                 updateCustomer($conn, $customer_id, $input, $username, $company_id);
                 break;
             case 'DELETE':
+                if (!userHasPermission($conn, $app_role_id, 'master.customer.delete')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 deleteCustomer($conn, $customer_id, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'PUT', 'DELETE']);
         }
     } else {
         switch ($method) {
@@ -294,14 +300,17 @@ try {
                 getAllCustomers($conn, $company_id, $_GET);
                 break;
             case 'POST':
+                if (!userHasPermission($conn, $app_role_id, 'master.customer.create')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 $input = json_decode(file_get_contents('php://input'), true) ?? [];
                 createCustomer($conn, $input, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'POST']);
         }
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

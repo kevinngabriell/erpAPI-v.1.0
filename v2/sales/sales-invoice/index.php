@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../connection/db.php';
 require_once __DIR__ . '/../../helpers/audit_log.php';
 require_once __DIR__ . '/../../helpers/excel_export.php';
 require_once __DIR__ . '/../../helpers/notification.php';
+require_once __DIR__ . '/../../helpers/permission.php';
 require_once __DIR__ . '/../../helpers/finance_payment.php';
 require_once __DIR__ . '/../../helpers/general_journal.php';
 
@@ -50,7 +51,7 @@ function calculateSalesInvoiceTotal($conn, $sales_invoice_id) {
     $sales_invoice_id = mysqli_real_escape_string($conn, $sales_invoice_id);
     $result = mysqli_query($conn, "SELECT SUM(quantity * unit_price * (1 + tax / 100)) AS total_invoice
             FROM " . APP_SCHEMA . ".sales_invoice_item WHERE sales_invoice_id = '$sales_invoice_id' AND deleted_at IS NULL");
-    return $result ? (float)(mysqli_fetch_assoc($result)['total_invoice'] ?? 0) : 0;
+    return $result ? (string)(mysqli_fetch_assoc($result)['total_invoice'] ?? '0') : '0';
 }
 
 // Recognizes Piutang Usaha + Revenue in the General Journal when a sales invoice is
@@ -77,9 +78,10 @@ function postSalesInvoiceRecognition($conn, $company_id, $sales_invoice_id, $tot
 
 function getAllSalesInvoices($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
+    $search = str_replace(['%', '_'], ['\%', '\_'], $search);
 
     $where = "si.company_id = '$company_id' AND si.deleted_at IS NULL";
     if ($search) {
@@ -134,7 +136,15 @@ function getAllSalesInvoices($conn, $company_id, $params) {
             ],
         ]);
     } else {
-        jsonResponse(404, 'No sales invoices found');
+        jsonResponse(200, 'No sales invoices found', [
+            'data'       => [],
+            'pagination' => [
+                'total'       => $total,
+                'page'        => $page,
+                'limit'       => $limit,
+                'total_pages' => (int)ceil($total / $limit),
+            ],
+        ]);
     }
 }
 
@@ -221,9 +231,9 @@ function createSalesInvoice($conn, $input, $username, $company_id) {
         foreach ($input['items'] as $item) {
             $item_id      = generateUUID();
             $product_name = mysqli_real_escape_string($conn, $item['product_name']);
-            $quantity     = (float)$item['quantity'];
-            $unit_price   = (float)$item['unit_price'];
-            $tax          = isset($item['tax']) && $item['tax'] !== '' ? (float)$item['tax'] : 0;
+            $quantity     = mysqli_real_escape_string($conn, (string)$item['quantity']);
+            $unit_price   = mysqli_real_escape_string($conn, (string)$item['unit_price']);
+            $tax          = isset($item['tax']) && $item['tax'] !== '' ? mysqli_real_escape_string($conn, (string)$item['tax']) : '0';
 
             $item_sql = "INSERT INTO " . APP_SCHEMA . ".sales_invoice_item
                          (id, sales_invoice_id, product_name, quantity, unit_price, tax, created_by, created_at)
@@ -240,7 +250,7 @@ function createSalesInvoice($conn, $input, $username, $company_id) {
         jsonResponse(201, 'Sales invoice created successfully', ['sales_invoice_id' => $sales_invoice_id]);
     } catch (Exception $e) {
         $conn->rollback();
-        jsonResponse(500, 'Failed to create sales invoice', ['error' => $e->getMessage()]);
+        jsonResponse(500, 'Failed to create sales invoice', safeErrorResponse($e));
     }
 }
 
@@ -317,7 +327,7 @@ function updateSalesInvoice($conn, $sales_invoice_id, $input, $username, $compan
         insertAuditLog($conn, $company_id, 'sales_invoice', $sales_invoice_id, 'updated', $username);
         jsonResponse(200, 'Sales invoice updated successfully');
     } else {
-        jsonResponse(500, 'Failed to update sales invoice', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to update sales invoice', safeDbError($conn));
     }
 }
 
@@ -332,15 +342,20 @@ function deleteSalesInvoice($conn, $sales_invoice_id, $username, $company_id) {
 
     $now = date('Y-m-d H:i:s');
 
+    mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".sales_invoice_item
+        SET deleted_at = '$now', updated_by = '$username', updated_at = '$now'
+        WHERE sales_invoice_id = '$sales_invoice_id' AND deleted_at IS NULL");
+
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".sales_invoice SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE id = '$sales_invoice_id' AND company_id = '$company_id'")) {
         insertAuditLog($conn, $company_id, 'sales_invoice', $sales_invoice_id, 'deleted', $username);
         jsonResponse(200, 'Sales invoice deleted successfully');
     } else {
-        jsonResponse(500, 'Failed to delete sales invoice', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to delete sales invoice', safeDbError($conn));
     }
 }
 
 function approveSalesInvoice($conn, $sales_invoice_id, $input, $username, $company_id) {
+    $sales_invoice_id = mysqli_real_escape_string($conn, $sales_invoice_id);
     $check = mysqli_query($conn, "SELECT si.created_by, si.invoice_display_number, si.customer_id, c.customer_name, ss.status_name
             FROM " . APP_SCHEMA . ".sales_invoice si
             LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = si.customer_id
@@ -365,15 +380,22 @@ function approveSalesInvoice($conn, $sales_invoice_id, $input, $username, $compa
     $now   = date('Y-m-d H:i:s');
     $notes = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
 
-    if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".sales_invoice
-            SET status_id = '$status_id', approved_by = '$username', approved_at = '$now', updated_by = '$username', updated_at = '$now'
-            WHERE id = '$sales_invoice_id' AND company_id = '$company_id'")) {
+    $conn->begin_transaction();
+    try {
+        if (!mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".sales_invoice
+                SET status_id = '$status_id', approved_by = '$username', approved_at = '$now', updated_by = '$username', updated_at = '$now'
+                WHERE id = '$sales_invoice_id' AND company_id = '$company_id'")) {
+            throw new Exception(mysqli_error($conn));
+        }
         insertAuditLog($conn, $company_id, 'sales_invoice', $sales_invoice_id, 'approved', $username, $notes);
 
-        $approver_name = resolveDisplayName($conn, $username);
         $total_invoice = calculateSalesInvoiceTotal($conn, $sales_invoice_id);
         seedFinancePaymentBaseline($conn, $company_id, $sales_invoice['invoice_display_number'], $total_invoice, $sales_invoice['customer_id'], null, $username);
         postSalesInvoiceRecognition($conn, $company_id, $sales_invoice_id, $total_invoice, $now, $username);
+
+        $conn->commit();
+
+        $approver_name = resolveDisplayName($conn, $username);
         $detail_link   = rtrim(APPROVAL_BASE_URL, '/') . '/sales/sales-invoice/' . $sales_invoice_id;
 
         notify($conn, [
@@ -391,12 +413,16 @@ function approveSalesInvoice($conn, $sales_invoice_id, $input, $username, $compa
         ]);
 
         jsonResponse(200, 'Sales invoice approved successfully');
-    } else {
-        jsonResponse(500, 'Failed to approve sales invoice', ['error' => mysqli_error($conn)]);
+    } catch (Exception $e) {
+        $conn->rollback();
+        error_log('Sales invoice approval failed: ' . $e->getMessage());
+        jsonResponse(500, 'Failed to process approval');
+        return;
     }
 }
 
 function rejectSalesInvoice($conn, $sales_invoice_id, $input, $username, $company_id) {
+    $sales_invoice_id = mysqli_real_escape_string($conn, $sales_invoice_id);
     $check = mysqli_query($conn, "SELECT si.created_by, si.invoice_display_number, ss.status_name
             FROM " . APP_SCHEMA . ".sales_invoice si
             LEFT JOIN " . APP_SCHEMA . ".sales_status ss ON ss.id = si.status_id
@@ -441,11 +467,12 @@ function rejectSalesInvoice($conn, $sales_invoice_id, $input, $username, $compan
 
         jsonResponse(200, 'Sales invoice rejected successfully');
     } else {
-        jsonResponse(500, 'Failed to reject sales invoice', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to reject sales invoice', safeDbError($conn));
     }
 }
 
 function reviseSalesInvoice($conn, $sales_invoice_id, $input, $username, $company_id) {
+    $sales_invoice_id = mysqli_real_escape_string($conn, $sales_invoice_id);
     $check = mysqli_query($conn, "SELECT ss.status_name FROM " . APP_SCHEMA . ".sales_invoice si
             LEFT JOIN " . APP_SCHEMA . ".sales_status ss ON ss.id = si.status_id
             WHERE si.id = '$sales_invoice_id' AND si.company_id = '$company_id' AND si.deleted_at IS NULL LIMIT 1");
@@ -475,7 +502,7 @@ function reviseSalesInvoice($conn, $sales_invoice_id, $input, $username, $compan
         insertAuditLog($conn, $company_id, 'sales_invoice', $sales_invoice_id, 'revised', $username, $notes);
         jsonResponse(200, 'Sales invoice revised successfully');
     } else {
-        jsonResponse(500, 'Failed to revise sales invoice', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to revise sales invoice', safeDbError($conn));
     }
 }
 
@@ -527,13 +554,13 @@ function exportSalesInvoice($conn, $sales_invoice_id, $company_id) {
 
     $row          = 10;
     $no           = 1;
-    $total_amount = 0;
+    $total_amount = '0';
 
     foreach ($items as $item) {
-        $quantity   = (float)$item['quantity'];
-        $unit_price = (float)$item['unit_price'];
-        $tax        = (float)$item['tax'];
-        $subtotal   = $quantity * $unit_price * (1 + $tax / 100);
+        $quantity   = (string)$item['quantity'];
+        $unit_price = (string)$item['unit_price'];
+        $tax        = (string)$item['tax'];
+        $subtotal   = bcmul($quantity, bcmul($unit_price, bcadd('1', bcdiv($tax, '100', 4), 4), 4), 2);
 
         $sheet->setCellValue("A$row", $no);
         $sheet->setCellValue("B$row", $item['product_name']);
@@ -544,7 +571,7 @@ function exportSalesInvoice($conn, $sales_invoice_id, $company_id) {
 
         $sheet->getStyle("A$row:F$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
 
-        $total_amount += $subtotal;
+        $total_amount = bcadd($total_amount, $subtotal, 2);
         $row++;
         $no++;
     }
@@ -572,7 +599,8 @@ function exportSalesInvoice($conn, $sales_invoice_id, $company_id) {
 $authUser   = requireAuth();
 $method     = $_SERVER['REQUEST_METHOD'];
 $company_id = $authUser['company_id'] ?? null;
-$username   = $authUser['user_id'] ?? null;
+$username   = $authUser['sub'] ?? $authUser['user_id'] ?? null;
+$app_role_id = $authUser['app_role_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
@@ -584,13 +612,15 @@ $sub_action        = $parts[4] ?? '';
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $username = mysqli_real_escape_string($conn, $username);
 
     if ($sales_invoice_id === 'generate-number' && $sub_action === '') {
-        if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
+        if ($method !== 'GET') { methodNotAllowed(['GET']); }
         generateSalesInvoiceNumber($conn, $company_id);
 
     } elseif ($sales_invoice_id && $sub_action === 'export') {
-        if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
+        if ($method !== 'GET') { methodNotAllowed(['GET']); }
         exportSalesInvoice($conn, $sales_invoice_id, $company_id);
 
     } elseif ($sales_invoice_id && $sub_action !== '') {
@@ -600,15 +630,24 @@ try {
 
         switch ($sub_action) {
             case 'approve':
-                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                if ($method !== 'PATCH') { methodNotAllowed(['PATCH']); }
+                if (!userHasPermission($conn, $app_role_id, 'sales_invoice.approve')) {
+                    jsonResponse(403, 'You do not have permission to approve sales invoices');
+                }
                 approveSalesInvoice($conn, $sales_invoice_id, $input, $username, $company_id);
                 break;
             case 'reject':
-                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                if ($method !== 'PATCH') { methodNotAllowed(['PATCH']); }
+                if (!userHasPermission($conn, $app_role_id, 'sales_invoice.approve')) {
+                    jsonResponse(403, 'You do not have permission to reject sales invoices');
+                }
                 rejectSalesInvoice($conn, $sales_invoice_id, $input, $username, $company_id);
                 break;
             case 'revise':
-                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                if ($method !== 'PATCH') { methodNotAllowed(['PATCH']); }
+                if (!userHasPermission($conn, $app_role_id, 'sales_invoice.approve')) {
+                    jsonResponse(403, 'You do not have permission to revise sales invoices');
+                }
                 reviseSalesInvoice($conn, $sales_invoice_id, $input, $username, $company_id);
                 break;
             default:
@@ -628,7 +667,7 @@ try {
                 deleteSalesInvoice($conn, $sales_invoice_id, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'PUT', 'DELETE']);
         }
     } else {
         switch ($method) {
@@ -640,10 +679,10 @@ try {
                 createSalesInvoice($conn, $input, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'POST']);
         }
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

@@ -9,7 +9,7 @@ require_once __DIR__ . '/../../connection/db.php';
 
 function getAllGeneralJournalEntries($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
 
     $where = "gj.company_id = '$company_id' AND gj.deleted_at IS NULL";
@@ -41,7 +41,15 @@ function getAllGeneralJournalEntries($conn, $company_id, $params) {
             ],
         ]);
     } else {
-        jsonResponse(404, 'No general journal entries found');
+        jsonResponse(200, 'General journal entries found', [
+            'data'       => [],
+            'pagination' => [
+                'total'       => $total,
+                'page'        => $page,
+                'limit'       => $limit,
+                'total_pages' => (int)ceil($total / $limit),
+            ],
+        ]);
     }
 }
 
@@ -79,7 +87,7 @@ if (!$company_id) {
     exit;
 }
 if ($method !== 'GET') {
-    jsonResponse(405, 'Method Not Allowed');
+    methodNotAllowed(['GET']);
     exit;
 }
 
@@ -87,6 +95,7 @@ $general_journal_id = !empty($action) ? $action : null;
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
 
     if ($general_journal_id) {
         getDetailGeneralJournalEntry($conn, $general_journal_id, $company_id);
@@ -94,5 +103,5 @@ try {
         getAllGeneralJournalEntries($conn, $company_id, $_GET);
     }
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

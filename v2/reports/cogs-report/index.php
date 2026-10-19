@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
+require_once __DIR__ . '/../../helpers/permission.php';
 require_once __DIR__ . '/../../helpers/report_dates.php';
 require_once __DIR__ . '/../../helpers/excel_export.php';
 
@@ -11,7 +12,7 @@ use PhpOffice\PhpSpreadsheet\Style\Border;
 
 function getCogsReport($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
 
     [$date_from, $date_to] = resolveReportDateRange($params);
@@ -36,10 +37,10 @@ function getCogsReport($conn, $company_id, $params) {
     $data = mysqli_fetch_all($result, MYSQLI_ASSOC);
     foreach ($data as &$row) {
         $row['quantity_sold'] = (float)$row['quantity_sold'];
-        $row['revenue']       = (float)$row['revenue'];
-        $row['cogs']          = (float)$row['cogs'];
-        $row['gross_profit']  = $row['revenue'] - $row['cogs'];
-        $row['margin_percent'] = $row['revenue'] > 0 ? round($row['gross_profit'] / $row['revenue'] * 100, 2) : 0;
+        $row['revenue']       = bcadd($row['revenue'], '0', 2);
+        $row['cogs']          = bcadd($row['cogs'], '0', 2);
+        $row['gross_profit']  = bcsub($row['revenue'], $row['cogs'], 2);
+        $row['margin_percent'] = bccomp($row['revenue'], '0', 2) > 0 ? round((float)bcdiv($row['gross_profit'], $row['revenue'], 8) * 100, 2) : 0;
     }
 
     $summary_result = mysqli_query($conn, "SELECT
@@ -47,9 +48,9 @@ function getCogsReport($conn, $company_id, $params) {
             SUM(spi.landed_cost * spi.quantity) AS total_cogs
         FROM $from WHERE $where");
     $summary = mysqli_fetch_assoc($summary_result);
-    $total_revenue      = (float)($summary['total_revenue'] ?? 0);
-    $total_cogs         = (float)($summary['total_cogs'] ?? 0);
-    $total_gross_profit = $total_revenue - $total_cogs;
+    $total_revenue      = bcadd($summary['total_revenue'] ?? '0', '0', 2);
+    $total_cogs         = bcadd($summary['total_cogs'] ?? '0', '0', 2);
+    $total_gross_profit = bcsub($total_revenue, $total_cogs, 2);
 
     jsonResponse(200, 'COGS report found', [
         'date_from'  => $date_from,
@@ -65,12 +66,13 @@ function getCogsReport($conn, $company_id, $params) {
             'total_revenue'          => $total_revenue,
             'total_cogs'             => $total_cogs,
             'total_gross_profit'     => $total_gross_profit,
-            'overall_margin_percent' => $total_revenue > 0 ? round($total_gross_profit / $total_revenue * 100, 2) : 0,
+            'overall_margin_percent' => bccomp($total_revenue, '0', 2) > 0 ? round((float)bcdiv($total_gross_profit, $total_revenue, 8) * 100, 2) : 0,
         ],
     ]);
 }
 
 function exportCogsReport($conn, $company_id, $params) {
+    // Export returns binary .xlsx content — bypasses jsonResponse()
     [$date_from, $date_to] = resolveReportDateRange($params);
     $date_from = mysqli_real_escape_string($conn, $date_from);
     $date_to   = mysqli_real_escape_string($conn, $date_to);
@@ -107,15 +109,15 @@ function exportCogsReport($conn, $company_id, $params) {
 
     $row                = 5;
     $no                 = 1;
-    $total_revenue      = 0;
-    $total_cogs         = 0;
-    $total_gross_profit = 0;
+    $total_revenue      = '0.00';
+    $total_cogs         = '0.00';
+    $total_gross_profit = '0.00';
     foreach ($rows as $item) {
         $quantity_sold = (float)$item['quantity_sold'];
-        $revenue       = (float)$item['revenue'];
-        $cogs          = (float)$item['cogs'];
-        $gross_profit  = $revenue - $cogs;
-        $margin        = $revenue > 0 ? round($gross_profit / $revenue * 100, 2) : 0;
+        $revenue       = bcadd($item['revenue'], '0', 2);
+        $cogs          = bcadd($item['cogs'], '0', 2);
+        $gross_profit  = bcsub($revenue, $cogs, 2);
+        $margin        = bccomp($revenue, '0', 2) > 0 ? round((float)bcdiv($gross_profit, $revenue, 8) * 100, 2) : 0;
 
         $sheet->setCellValue("A$row", $no);
         $sheet->setCellValue("B$row", $item['product_name']);
@@ -126,14 +128,14 @@ function exportCogsReport($conn, $company_id, $params) {
         $sheet->setCellValue("G$row", $margin);
         $sheet->getStyle("A$row:G$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
 
-        $total_revenue      += $revenue;
-        $total_cogs         += $cogs;
-        $total_gross_profit += $gross_profit;
+        $total_revenue      = bcadd($total_revenue, $revenue, 2);
+        $total_cogs         = bcadd($total_cogs, $cogs, 2);
+        $total_gross_profit = bcadd($total_gross_profit, $gross_profit, 2);
         $row++;
         $no++;
     }
 
-    $overall_margin = $total_revenue > 0 ? round($total_gross_profit / $total_revenue * 100, 2) : 0;
+    $overall_margin = bccomp($total_revenue, '0', 2) > 0 ? round((float)bcdiv($total_gross_profit, $total_revenue, 8) * 100, 2) : 0;
 
     $sheet->setCellValue("B$row", 'TOTAL');
     $sheet->setCellValue("D$row", number_format($total_revenue, 2));
@@ -155,18 +157,25 @@ function exportCogsReport($conn, $company_id, $params) {
 $authUser   = requireAuth();
 $method     = $_SERVER['REQUEST_METHOD'];
 $company_id = $authUser['company_id'] ?? null;
+$app_role_id = $authUser['app_role_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
     exit;
 }
 if ($method !== 'GET') {
-    jsonResponse(405, 'Method Not Allowed');
+    methodNotAllowed(['GET']);
     exit;
 }
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+
+    if (!userHasPermission($conn, $app_role_id, 'reports.cogs_report.view')) {
+        jsonResponse(403, 'You do not have permission to view this report');
+        return;
+    }
 
     if ($action === 'export') {
         exportCogsReport($conn, $company_id, $_GET);
@@ -174,5 +183,5 @@ try {
         getCogsReport($conn, $company_id, $_GET);
     }
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

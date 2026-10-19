@@ -21,22 +21,18 @@ function getApprovalToken($conn, $token, $company_id, $username) {
             WHERE id = '$token' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Approval link not found');
-        return null;
     }
 
     $row = mysqli_fetch_assoc($result);
 
     if ($row['target_user_id'] !== $username) {
         jsonResponse(403, 'This approval link was not issued to your account');
-        return null;
     }
     if ($row['used_at'] !== null) {
         jsonResponse(409, 'This approval link has already been used');
-        return null;
     }
     if (strtotime($row['expires_at']) < time()) {
         jsonResponse(410, 'This approval link has expired');
-        return null;
     }
 
     return $row;
@@ -115,7 +111,6 @@ function getApprovalDocumentSummary($conn, $source_module, $source_document_id, 
 
 function viewApproval($conn, $token, $company_id, $username) {
     $token_row = getApprovalToken($conn, $token, $company_id, $username);
-    if (!$token_row) return;
 
     $document = getApprovalDocumentSummary($conn, $token_row['source_module'], $token_row['source_document_id'], $company_id);
     if (!$document) {
@@ -146,7 +141,6 @@ function viewApproval($conn, $token, $company_id, $username) {
 // identical to approving through the form, with zero duplicated logic.
 function executeApproval($conn, $token, $sub_action, $input, $company_id, $username) {
     $token_row = getApprovalToken($conn, $token, $company_id, $username);
-    if (!$token_row) return;
 
     $endpoint_segment = APPROVAL_MODULE_ENDPOINTS[$token_row['source_module']] ?? null;
     if (!$endpoint_segment) {
@@ -154,8 +148,7 @@ function executeApproval($conn, $token, $sub_action, $input, $company_id, $usern
         return;
     }
 
-    $scheme = (($_SERVER['HTTPS'] ?? '') === 'on') ? 'https' : 'http';
-    $url    = "$scheme://{$_SERVER['HTTP_HOST']}/api/v2/$endpoint_segment/{$token_row['source_document_id']}/$sub_action";
+    $url = "http://127.0.0.1/api/v2/$endpoint_segment/{$token_row['source_document_id']}/$sub_action";
 
     $ch = curl_init($url);
     curl_setopt_array($ch, [
@@ -189,7 +182,7 @@ function executeApproval($conn, $token, $sub_action, $input, $company_id, $usern
 $authUser   = requireAuth();
 $method     = $_SERVER['REQUEST_METHOD'];
 $company_id = $authUser['company_id'] ?? null;
-$username   = $authUser['user_id'] ?? null;
+$username   = $authUser['sub'] ?? $authUser['user_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
@@ -206,13 +199,15 @@ if (!$token) {
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $username = mysqli_real_escape_string($conn, $username);
 
     if ($sub_action === '') {
-        if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
+        if ($method !== 'GET') { methodNotAllowed(['GET']); }
         viewApproval($conn, $token, $company_id, $username);
 
     } elseif (in_array($sub_action, ['approve', 'reject'], true)) {
-        if ($method !== 'POST') { jsonResponse(405, 'Method Not Allowed'); }
+        if ($method !== 'PATCH') { methodNotAllowed(['PATCH']); }
         $input = json_decode(file_get_contents('php://input'), true) ?? [];
         executeApproval($conn, $token, $sub_action, $input, $company_id, $username);
 
@@ -221,5 +216,5 @@ try {
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

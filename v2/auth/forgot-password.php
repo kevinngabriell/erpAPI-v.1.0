@@ -3,28 +3,11 @@ require_once __DIR__ . '/../general.php';
 require_once __DIR__ . '/../helpers/auth_response.php';
 require_once __DIR__ . '/../helpers/rate_limit.php';
 require_once __DIR__ . '/../helpers/whatsapp.php';
+require_once __DIR__ . '/../helpers/auth_log.php';
 
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
 header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
-
-function writeForgotPasswordLog($conn, string $action, ?string $user_id, string $username): void {
-    $ip     = substr(getUserIP(), 0, 45);
-    $ua     = substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 500);
-    $module = 'auth';
-    $now    = date('Y-m-d H:i:s');
-
-    $stmt = $conn->prepare(
-        "INSERT INTO " . CORE_SCHEMA . ".log
-            (action, module, description, actor_type, actor_username, resource_id, ip_address, user_agent, occurred_at, app_id)
-         VALUES (?, ?, ?, 'app', ?, ?, ?, ?, ?, '" . APP_ID . "')"
-    );
-    if ($stmt) {
-        $stmt->bind_param('ssssssss', $action, $module, $action, $username, $user_id, $ip, $ua, $now);
-        $stmt->execute();
-        $stmt->close();
-    }
-}
 
 function requestPasswordReset($conn, $input): void {
     // 1. Required field validation
@@ -69,7 +52,7 @@ function requestPasswordReset($conn, $input): void {
     $stmt->close();
 
     if (!$user_row || empty($user_row['phone_number'])) {
-        writeForgotPasswordLog($conn, 'forgot_password_requested', null, $email);
+        writeAuthLog($conn, 'forgot_password_requested', null, $email);
         authResponse(200, $generic_message);
         return;
     }
@@ -110,7 +93,7 @@ function requestPasswordReset($conn, $input): void {
     }
 
     // 8. Audit log
-    writeForgotPasswordLog($conn, 'forgot_password_requested', $user_row['user_id'], $email);
+    writeAuthLog($conn, 'forgot_password_requested', $user_row['user_id'], $email);
 
     authResponse(200, $generic_message);
 }
@@ -119,17 +102,19 @@ try {
     $method = $_SERVER['REQUEST_METHOD'];
     $conn   = getConn();
 
+    validateJsonContentType();
+
     switch ($method) {
         case 'POST':
             $input = json_decode(file_get_contents('php://input'), true) ?? [];
             requestPasswordReset($conn, $input);
             break;
         default:
-            authResponse(405, 'Method not allowed');
+            methodNotAllowed(['POST']);
     }
 
-} catch (Throwable $e) {
-    authResponse(500, 'An unexpected error occurred. Please try again.', null,
-        APP_ENV === 'development' ? ['debug' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()] : null
+} catch (Exception $e) {
+    authResponse(500, 'An unexpected error occurred. Please try again. Reference ID: ' . requestId(), null,
+        safeErrorResponse($e)
     );
 }

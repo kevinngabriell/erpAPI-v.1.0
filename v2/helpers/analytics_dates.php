@@ -1,12 +1,12 @@
 <?php
 
-function validateAnalyticsWindowParams($params) {
+function validateAnalyticsWindowParams($params): bool {
     foreach (['from', 'to'] as $field) {
         if (isset($params[$field]) && trim($params[$field]) !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $params[$field])) {
-            jsonResponse(400, "$field must be YYYY-MM-DD format");
-            return;
+            return false;
         }
     }
+    return true;
 }
 
 function resolveAnalyticsRange($params, $default_from, $default_to) {

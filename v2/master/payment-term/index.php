@@ -2,12 +2,14 @@
 
 require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
+require_once __DIR__ . '/../../helpers/permission.php';
 
 function getAllPaymentTerms($conn, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
+    $search = str_replace(['%', '_'], ['\%', '\_'], $search);
 
     $where = "pt.deleted_at IS NULL";
     if ($search) {
@@ -21,23 +23,25 @@ function getAllPaymentTerms($conn, $params) {
     $result       = mysqli_query($conn, "SELECT pt.*,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
-            FROM $from WHERE $where ORDER BY pt.created_at DESC LIMIT $limit OFFSET $offset");
+            FROM $from WHERE $where ORDER BY pt.term_name ASC LIMIT $limit OFFSET $offset");
     $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".payment_term pt WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
-        jsonResponse(200, 'Payment terms found', [
-            'data'       => mysqli_fetch_all($result, MYSQLI_ASSOC),
-            'pagination' => [
-                'total'       => $total,
-                'page'        => $page,
-                'limit'       => $limit,
-                'total_pages' => (int)ceil($total / $limit),
-            ],
-        ]);
+        $data = mysqli_fetch_all($result, MYSQLI_ASSOC);
     } else {
-        jsonResponse(404, 'No payment terms found');
+        $data = [];
     }
+
+    jsonResponse(200, 'Payment terms found', [
+        'data'       => $data,
+        'pagination' => [
+            'total'       => $total,
+            'page'        => $page,
+            'limit'       => $limit,
+            'total_pages' => (int)ceil($total / $limit),
+        ],
+    ]);
 }
 
 function createPaymentTerm($conn, $input, $username) {
@@ -70,7 +74,7 @@ function createPaymentTerm($conn, $input, $username) {
     if (mysqli_query($conn, $sql)) {
         jsonResponse(201, 'Payment term created successfully', ['payment_term_id' => $payment_term_id]);
     } else {
-        jsonResponse(500, 'Failed to create payment term', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to create payment term', safeDbError($conn));
     }
 }
 
@@ -126,7 +130,7 @@ function updatePaymentTerm($conn, $payment_term_id, $input, $username) {
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".payment_term SET " . implode(', ', $updates) . " WHERE id = '$payment_term_id'")) {
         jsonResponse(200, 'Payment term updated successfully');
     } else {
-        jsonResponse(500, 'Failed to update payment term', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to update payment term', safeDbError($conn));
     }
 }
 
@@ -144,16 +148,17 @@ function deletePaymentTerm($conn, $payment_term_id, $username) {
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".payment_term SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE id = '$payment_term_id'")) {
         jsonResponse(200, 'Payment term deleted successfully');
     } else {
-        jsonResponse(500, 'Failed to delete payment term', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to delete payment term', safeDbError($conn));
     }
 }
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
-$authUser   = requireAuth();
-$method     = $_SERVER['REQUEST_METHOD'];
-$company_id = $authUser['company_id'] ?? null;
-$username   = $authUser['user_id'] ?? null;
+$authUser    = requireAuth();
+$method      = $_SERVER['REQUEST_METHOD'];
+$company_id  = $authUser['company_id'] ?? null;
+$username    = $authUser['sub'] ?? $authUser['user_id'] ?? null;
+$app_role_id = $authUser['app_role_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
@@ -164,6 +169,8 @@ $payment_term_id = !empty($action) ? $action : null;
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $username = mysqli_real_escape_string($conn, $username);
 
     if ($payment_term_id) {
         switch ($method) {
@@ -171,14 +178,20 @@ try {
                 getDetailPaymentTerm($conn, $payment_term_id);
                 break;
             case 'PUT':
+                if (!userHasPermission($conn, $app_role_id, 'master.payment_term.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 $input = json_decode(file_get_contents('php://input'), true) ?? [];
                 updatePaymentTerm($conn, $payment_term_id, $input, $username);
                 break;
             case 'DELETE':
+                if (!userHasPermission($conn, $app_role_id, 'master.payment_term.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 deletePaymentTerm($conn, $payment_term_id, $username);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'PUT', 'DELETE']);
         }
     } else {
         switch ($method) {
@@ -186,14 +199,17 @@ try {
                 getAllPaymentTerms($conn, $_GET);
                 break;
             case 'POST':
+                if (!userHasPermission($conn, $app_role_id, 'master.payment_term.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 $input = json_decode(file_get_contents('php://input'), true) ?? [];
                 createPaymentTerm($conn, $input, $username);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'POST']);
         }
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

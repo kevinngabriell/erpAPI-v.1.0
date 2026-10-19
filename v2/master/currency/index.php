@@ -2,12 +2,14 @@
 
 require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
+require_once __DIR__ . '/../../helpers/permission.php';
 
 function getAllCurrencies($conn, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
+    $search = str_replace(['%', '_'], ['\%', '\_'], $search);
 
     $where = "cur.deleted_at IS NULL";
     if ($search) {
@@ -26,18 +28,20 @@ function getAllCurrencies($conn, $params) {
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
-        jsonResponse(200, 'Currencies found', [
-            'data'       => mysqli_fetch_all($result, MYSQLI_ASSOC),
-            'pagination' => [
-                'total'       => $total,
-                'page'        => $page,
-                'limit'       => $limit,
-                'total_pages' => (int)ceil($total / $limit),
-            ],
-        ]);
+        $data = mysqli_fetch_all($result, MYSQLI_ASSOC);
     } else {
-        jsonResponse(404, 'No currencies found');
+        $data = [];
     }
+
+    jsonResponse(200, 'Currencies found', [
+        'data'       => $data,
+        'pagination' => [
+            'total'       => $total,
+            'page'        => $page,
+            'limit'       => $limit,
+            'total_pages' => (int)ceil($total / $limit),
+        ],
+    ]);
 }
 
 function createCurrency($conn, $input, $username) {
@@ -71,7 +75,7 @@ function createCurrency($conn, $input, $username) {
     if (mysqli_query($conn, $sql)) {
         jsonResponse(201, 'Currency created successfully', ['currency_id' => $currency_id]);
     } else {
-        jsonResponse(500, 'Failed to create currency', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to create currency', safeDbError($conn));
     }
 }
 
@@ -141,7 +145,7 @@ function updateCurrency($conn, $currency_id, $input, $username) {
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".currency SET " . implode(', ', $updates) . " WHERE id = '$currency_id'")) {
         jsonResponse(200, 'Currency updated successfully');
     } else {
-        jsonResponse(500, 'Failed to update currency', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to update currency', safeDbError($conn));
     }
 }
 
@@ -159,16 +163,17 @@ function deleteCurrency($conn, $currency_id, $username) {
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".currency SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE id = '$currency_id'")) {
         jsonResponse(200, 'Currency deleted successfully');
     } else {
-        jsonResponse(500, 'Failed to delete currency', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to delete currency', safeDbError($conn));
     }
 }
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
-$authUser   = requireAuth();
-$method     = $_SERVER['REQUEST_METHOD'];
-$company_id = $authUser['company_id'] ?? null;
-$username   = $authUser['user_id'] ?? null;
+$authUser    = requireAuth();
+$method      = $_SERVER['REQUEST_METHOD'];
+$company_id  = $authUser['company_id'] ?? null;
+$username    = $authUser['sub'] ?? $authUser['user_id'] ?? null;
+$app_role_id = $authUser['app_role_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
@@ -179,6 +184,8 @@ $currency_id = !empty($action) ? $action : null;
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $username = mysqli_real_escape_string($conn, $username);
 
     if ($currency_id) {
         switch ($method) {
@@ -186,14 +193,20 @@ try {
                 getDetailCurrency($conn, $currency_id);
                 break;
             case 'PUT':
+                if (!userHasPermission($conn, $app_role_id, 'master.currency.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 $input = json_decode(file_get_contents('php://input'), true) ?? [];
                 updateCurrency($conn, $currency_id, $input, $username);
                 break;
             case 'DELETE':
+                if (!userHasPermission($conn, $app_role_id, 'master.currency.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 deleteCurrency($conn, $currency_id, $username);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'PUT', 'DELETE']);
         }
     } else {
         switch ($method) {
@@ -201,14 +214,17 @@ try {
                 getAllCurrencies($conn, $_GET);
                 break;
             case 'POST':
+                if (!userHasPermission($conn, $app_role_id, 'master.currency.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 $input = json_decode(file_get_contents('php://input'), true) ?? [];
                 createCurrency($conn, $input, $username);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'POST']);
         }
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

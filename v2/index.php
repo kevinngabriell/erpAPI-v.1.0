@@ -32,6 +32,7 @@ switch ($module) {
             'forgot-password'  => 'forgot-password.php',
             'reset-password'   => 'reset-password.php',
             'my-permissions'   => 'my-permissions.php',
+            'sso-callback'     => 'sso-callback.php',
         ];
         $file = isset($actionMap[$action]) ? __DIR__ . '/auth/' . $actionMap[$action] : null;
         if (!$file) jsonResponse(404, 'Route not found');
@@ -44,6 +45,14 @@ switch ($module) {
 
     case 'profile':
         require __DIR__ . '/profile/index.php';
+        break;
+
+    case 'subscription':
+        if ($action === 'webhook') {
+            require __DIR__ . '/subscription/webhook.php';
+        } else {
+            require __DIR__ . '/subscription/index.php';
+        }
         break;
 
     // ── Master data — global lookups ────────────────────────────────────────

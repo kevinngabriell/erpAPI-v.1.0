@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../general.php';
 require_once __DIR__ . '/../helpers/auth_response.php';
+require_once __DIR__ . '/../helpers/permission.php';
 
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
@@ -108,11 +109,16 @@ try {
     $method   = $_SERVER['REQUEST_METHOD'];
 
     if ($method !== 'GET') {
-        authResponse(405, 'Method not allowed');
+        methodNotAllowed(['GET']);
         exit;
     }
 
     $conn       = getConn();
+    $app_role_id = $authUser['app_role_id'] ?? null;
+    if (!userHasPermission($conn, $app_role_id, 'auth.permission_roles.view')) {
+        authResponse(403, 'You do not have permission to view permission roles');
+        exit;
+    }
     $params     = $_GET;
     $sub_action = $parts[4] ?? '';
 
@@ -148,8 +154,8 @@ try {
         getRolesForPermission($conn, $permission_key);
     }
 
-} catch (Throwable $e) {
-    authResponse(500, 'An unexpected error occurred. Please try again.', null,
-        APP_ENV === 'development' ? ['debug' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()] : null
+} catch (Exception $e) {
+    authResponse(500, 'An unexpected error occurred. Please try again. Reference ID: ' . requestId(), null,
+        safeErrorResponse($e)
     );
 }

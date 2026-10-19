@@ -50,13 +50,14 @@ function postPurchaseInvoiceRecognition($conn, $company_id, $purchase_invoice_id
 
 function getAllPurchaseInvoices($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
+    $search = str_replace(['%', '_'], ['\%', '\_'], $search);
 
     $where = "pi.company_id = '$company_id' AND pi.deleted_at IS NULL";
     if ($search) {
-        $where .= " AND pi.invoice_display_number LIKE '%$search%'";
+        $where .= " AND pi.invoice_display_number LIKE '%$search%' ESCAPE '\\\\'";
     }
     if (isset($params['supplier_id']) && trim($params['supplier_id']) !== '') {
         $supplier_id = mysqli_real_escape_string($conn, $params['supplier_id']);
@@ -89,7 +90,7 @@ function getAllPurchaseInvoices($conn, $company_id, $params) {
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by,
             CONCAT(au.first_name, ' ', au.last_name) AS approved_by
             FROM $from WHERE $where ORDER BY pi.created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM $from WHERE $where");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".purchase_invoice pi WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -103,7 +104,15 @@ function getAllPurchaseInvoices($conn, $company_id, $params) {
             ],
         ]);
     } else {
-        jsonResponse(404, 'No purchase invoices found');
+        jsonResponse(200, 'Purchase invoices found', [
+            'data'       => [],
+            'pagination' => [
+                'total'       => $total,
+                'page'        => $page,
+                'limit'       => $limit,
+                'total_pages' => (int)ceil($total / $limit),
+            ],
+        ]);
     }
 }
 
@@ -157,7 +166,7 @@ function createPurchaseInvoice($conn, $input, $username, $company_id) {
     }
 
     $tax_invoice_number_sql = isset($input['tax_invoice_number']) && trim($input['tax_invoice_number']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['tax_invoice_number']) . "'" : 'NULL';
-    $kurs_sql               = isset($input['kurs']) && $input['kurs'] !== '' ? (float)$input['kurs'] : 'NULL';
+    $kurs_sql               = isset($input['kurs']) && $input['kurs'] !== '' ? mysqli_real_escape_string($conn, (string)$input['kurs']) : 'NULL';
     $term_id_sql            = isset($input['term_id']) && trim($input['term_id']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['term_id']) . "'" : 'NULL';
 
     $purchase_invoice_id = generateUUID();
@@ -178,11 +187,11 @@ function createPurchaseInvoice($conn, $input, $username, $company_id) {
         foreach ($input['items'] as $item) {
             $item_id        = generateUUID();
             $product_name   = mysqli_real_escape_string($conn, $item['product_name']);
-            $quantity       = (float)$item['quantity'];
-            $packaging_size = (float)$item['packaging_size'];
-            $unit_price     = (float)$item['unit_price'];
-            $vat            = isset($item['vat']) && $item['vat'] !== '' ? (float)$item['vat'] : 0;
-            $total          = isset($item['total']) && $item['total'] !== '' ? (float)$item['total'] : ($quantity * $unit_price) + $vat;
+            $quantity       = mysqli_real_escape_string($conn, (string)$item['quantity']);
+            $packaging_size = mysqli_real_escape_string($conn, (string)$item['packaging_size']);
+            $unit_price     = mysqli_real_escape_string($conn, (string)$item['unit_price']);
+            $vat            = isset($item['vat']) && $item['vat'] !== '' ? mysqli_real_escape_string($conn, (string)$item['vat']) : '0';
+            $total          = isset($item['total']) && $item['total'] !== '' ? mysqli_real_escape_string($conn, (string)$item['total']) : bcadd(bcmul($quantity, $unit_price, 2), $vat, 2);
 
             $item_sql = "INSERT INTO " . APP_SCHEMA . ".purchase_invoice_item
                          (id, purchase_invoice_id, product_name, quantity, packaging_size, unit_price, vat, total, created_by, created_at)
@@ -211,7 +220,7 @@ function createPurchaseInvoice($conn, $input, $username, $company_id) {
         jsonResponse(201, 'Purchase invoice created successfully', ['purchase_invoice_id' => $purchase_invoice_id]);
     } catch (Exception $e) {
         $conn->rollback();
-        jsonResponse(500, 'Failed to create purchase invoice', ['error' => $e->getMessage()]);
+        jsonResponse(500, 'Failed to create purchase invoice', safeErrorResponse($e));
     }
 }
 
@@ -279,7 +288,7 @@ function updatePurchaseInvoice($conn, $purchase_invoice_id, $input, $username, $
     }
 
     if (isset($input['kurs']) && $input['kurs'] !== '') {
-        $updates[] = "kurs = " . (float)$input['kurs'];
+        $updates[] = "kurs = " . mysqli_real_escape_string($conn, (string)$input['kurs']);
     }
 
     if (empty($updates)) {
@@ -294,7 +303,7 @@ function updatePurchaseInvoice($conn, $purchase_invoice_id, $input, $username, $
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".purchase_invoice SET " . implode(', ', $updates) . " WHERE id = '$purchase_invoice_id' AND company_id = '$company_id'")) {
         jsonResponse(200, 'Purchase invoice updated successfully');
     } else {
-        jsonResponse(500, 'Failed to update purchase invoice', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to update purchase invoice', safeDbError($conn));
     }
 }
 
@@ -309,14 +318,21 @@ function deletePurchaseInvoice($conn, $purchase_invoice_id, $username, $company_
 
     $now = date('Y-m-d H:i:s');
 
-    if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".purchase_invoice SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE id = '$purchase_invoice_id' AND company_id = '$company_id'")) {
+    mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".purchase_invoice_item 
+        SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' 
+        WHERE purchase_invoice_id = '$purchase_invoice_id' AND deleted_at IS NULL");
+
+    if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".purchase_invoice 
+        SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' 
+        WHERE id = '$purchase_invoice_id' AND company_id = '$company_id'")) {
         jsonResponse(200, 'Purchase invoice deleted successfully');
     } else {
-        jsonResponse(500, 'Failed to delete purchase invoice', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to delete purchase invoice', safeDbError($conn));
     }
 }
 
 function approvePurchaseInvoice($conn, $purchase_invoice_id, $input, $username, $company_id) {
+    $purchase_invoice_id = mysqli_real_escape_string($conn, $purchase_invoice_id);
     $check = mysqli_query($conn, "SELECT pi.invoice_display_number, pi.supplier_id, pi.created_by, ps.status_name
             FROM " . APP_SCHEMA . ".purchase_invoice pi
             LEFT JOIN " . APP_SCHEMA . ".purchase_status ps ON ps.id = pi.status_id
@@ -340,35 +356,46 @@ function approvePurchaseInvoice($conn, $purchase_invoice_id, $input, $username, 
     $now   = date('Y-m-d H:i:s');
     $notes = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
 
-    if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".purchase_invoice
-            SET status_id = '$status_id', approved_by = '$username', approved_at = '$now', updated_by = '$username', updated_at = '$now'
-            WHERE id = '$purchase_invoice_id' AND company_id = '$company_id'")) {
-        insertAuditLog($conn, $company_id, 'purchase_invoice', $purchase_invoice_id, 'approved', $username, $notes);
-        invalidateApprovalTokens($conn, 'purchase_invoice', $purchase_invoice_id);
+    $conn->begin_transaction();
+    try {
+        if (!mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".purchase_invoice
+                SET status_id = '$status_id', approved_by = '$username', approved_at = '$now', updated_by = '$username', updated_at = '$now'
+                WHERE id = '$purchase_invoice_id' AND company_id = '$company_id'")) {
+            throw new Exception(mysqli_error($conn));
+        }
 
         $total_invoice = calculatePurchaseInvoiceTotal($conn, $purchase_invoice_id);
         seedFinancePaymentBaseline($conn, $company_id, $purchase_invoice['invoice_display_number'], $total_invoice, null, $purchase_invoice['supplier_id'], $username);
         postPurchaseInvoiceRecognition($conn, $company_id, $purchase_invoice_id, $total_invoice, $now, $username);
 
-        $approver_name = resolveDisplayName($conn, $username);
-        notify($conn, [
-            'company_id'         => $company_id,
-            'type'               => 'approval_approved',
-            'source_module'      => 'purchase_invoice',
-            'source_document_id' => $purchase_invoice_id,
-            'title'              => 'Purchase Invoice Disetujui',
-            'body'               => "Dokumen Purchase Invoice *{$purchase_invoice['invoice_display_number']}* telah *disetujui* oleh $approver_name.",
-            'created_by'         => $username,
-            'recipients'         => [$purchase_invoice['created_by']],
-        ]);
-
-        jsonResponse(200, 'Purchase invoice approved successfully');
-    } else {
-        jsonResponse(500, 'Failed to approve purchase invoice', ['error' => mysqli_error($conn)]);
+        $conn->commit();
+    } catch (Exception $e) {
+        $conn->rollback();
+        error_log('Purchase invoice approval failed: ' . $e->getMessage());
+        jsonResponse(500, 'Failed to process approval');
+        return;
     }
+
+    insertAuditLog($conn, $company_id, 'purchase_invoice', $purchase_invoice_id, 'approved', $username, $notes);
+    invalidateApprovalTokens($conn, 'purchase_invoice', $purchase_invoice_id);
+
+    $approver_name = resolveDisplayName($conn, $username);
+    notify($conn, [
+        'company_id'         => $company_id,
+        'type'               => 'approval_approved',
+        'source_module'      => 'purchase_invoice',
+        'source_document_id' => $purchase_invoice_id,
+        'title'              => 'Purchase Invoice Disetujui',
+        'body'               => "Dokumen Purchase Invoice *{$purchase_invoice['invoice_display_number']}* telah *disetujui* oleh $approver_name.",
+        'created_by'         => $username,
+        'recipients'         => [$purchase_invoice['created_by']],
+    ]);
+
+    jsonResponse(200, 'Purchase invoice approved successfully');
 }
 
 function rejectPurchaseInvoice($conn, $purchase_invoice_id, $input, $username, $company_id) {
+    $purchase_invoice_id = mysqli_real_escape_string($conn, $purchase_invoice_id);
     $check = mysqli_query($conn, "SELECT pi.invoice_display_number, pi.created_by, ps.status_name
             FROM " . APP_SCHEMA . ".purchase_invoice pi
             LEFT JOIN " . APP_SCHEMA . ".purchase_status ps ON ps.id = pi.status_id
@@ -413,11 +440,12 @@ function rejectPurchaseInvoice($conn, $purchase_invoice_id, $input, $username, $
 
         jsonResponse(200, 'Purchase invoice rejected successfully');
     } else {
-        jsonResponse(500, 'Failed to reject purchase invoice', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to reject purchase invoice', safeDbError($conn));
     }
 }
 
 function revisePurchaseInvoice($conn, $purchase_invoice_id, $input, $username, $company_id) {
+    $purchase_invoice_id = mysqli_real_escape_string($conn, $purchase_invoice_id);
     $check = mysqli_query($conn, "SELECT ps.status_name FROM " . APP_SCHEMA . ".purchase_invoice pi
             LEFT JOIN " . APP_SCHEMA . ".purchase_status ps ON ps.id = pi.status_id
             WHERE pi.id = '$purchase_invoice_id' AND pi.company_id = '$company_id' AND pi.deleted_at IS NULL LIMIT 1");
@@ -447,7 +475,7 @@ function revisePurchaseInvoice($conn, $purchase_invoice_id, $input, $username, $
         insertAuditLog($conn, $company_id, 'purchase_invoice', $purchase_invoice_id, 'revised', $username, $notes);
         jsonResponse(200, 'Purchase invoice revised successfully');
     } else {
-        jsonResponse(500, 'Failed to revise purchase invoice', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to revise purchase invoice', safeDbError($conn));
     }
 }
 
@@ -545,7 +573,7 @@ function exportPurchaseInvoice($conn, $purchase_invoice_id, $company_id) {
 $authUser   = requireAuth();
 $method     = $_SERVER['REQUEST_METHOD'];
 $company_id = $authUser['company_id'] ?? null;
-$username   = $authUser['user_id'] ?? null;
+$username   = $authUser['sub'] ?? $authUser['user_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
@@ -557,12 +585,14 @@ $sub_action           = $parts[4] ?? '';
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $username = mysqli_real_escape_string($conn, $username);
 
     if ($purchase_invoice_id && $sub_action === 'items') {
         require __DIR__ . '/items.php';
 
     } elseif ($purchase_invoice_id && $sub_action === 'export') {
-        if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
+        if ($method !== 'GET') { methodNotAllowed(['GET']); }
         exportPurchaseInvoice($conn, $purchase_invoice_id, $company_id);
 
     } elseif ($purchase_invoice_id && $sub_action !== '') {
@@ -572,15 +602,15 @@ try {
 
         switch ($sub_action) {
             case 'approve':
-                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                if ($method !== 'PATCH') { methodNotAllowed(['PATCH']); }
                 approvePurchaseInvoice($conn, $purchase_invoice_id, $input, $username, $company_id);
                 break;
             case 'reject':
-                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                if ($method !== 'PATCH') { methodNotAllowed(['PATCH']); }
                 rejectPurchaseInvoice($conn, $purchase_invoice_id, $input, $username, $company_id);
                 break;
             case 'revise':
-                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                if ($method !== 'PATCH') { methodNotAllowed(['PATCH']); }
                 revisePurchaseInvoice($conn, $purchase_invoice_id, $input, $username, $company_id);
                 break;
             default:
@@ -600,7 +630,7 @@ try {
                 deletePurchaseInvoice($conn, $purchase_invoice_id, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'PUT', 'DELETE']);
         }
     } else {
         switch ($method) {
@@ -612,10 +642,10 @@ try {
                 createPurchaseInvoice($conn, $input, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'POST']);
         }
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

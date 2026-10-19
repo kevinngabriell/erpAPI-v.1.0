@@ -16,13 +16,13 @@ function buildFinanceRevenueCogs($conn, $company_id, $date_from, $date_to) {
           AND sp.created_at BETWEEN '$date_from 00:00:00' AND '$date_to 23:59:59'");
 
     $row = mysqli_fetch_assoc($result);
-    return ['revenue' => (float)$row['revenue'], 'cogs' => (float)$row['cogs']];
+    return ['revenue' => bcadd($row['revenue'], '0', 2), 'cogs' => bcadd($row['cogs'], '0', 2)];
 }
 
 function buildFinanceSummary($conn, $company_id, $ytd_from, $ytd_to) {
     $totals               = buildFinanceRevenueCogs($conn, $company_id, $ytd_from, $ytd_to);
-    $gross_profit          = $totals['revenue'] - $totals['cogs'];
-    $gross_margin_percent = $totals['revenue'] > 0 ? round($gross_profit / $totals['revenue'] * 100, 2) : 0;
+    $gross_profit          = bcsub($totals['revenue'], $totals['cogs'], 2);
+    $gross_margin_percent = bccomp($totals['revenue'], '0', 2) > 0 ? round((float)bcdiv($gross_profit, $totals['revenue'], 8) * 100, 2) : 0;
 
     return [
         'revenue'              => $totals['revenue'],
@@ -35,7 +35,7 @@ function buildFinanceSummary($conn, $company_id, $ytd_from, $ytd_to) {
 function buildFinanceMonthly($conn, $company_id, $monthly_from, $monthly_to) {
     $months = [];
     foreach (buildAnalyticsMonthBuckets($monthly_from, $monthly_to) as $ym) {
-        $months[$ym] = ['month' => $ym, 'revenue' => 0, 'cogs' => 0, 'net_profit' => 0];
+        $months[$ym] = ['month' => $ym, 'revenue' => '0.00', 'cogs' => '0.00', 'net_profit' => '0.00'];
     }
 
     $result = mysqli_query($conn, "SELECT DATE_FORMAT(sp.created_at, '%Y-%m') AS ym,
@@ -45,14 +45,14 @@ function buildFinanceMonthly($conn, $company_id, $monthly_from, $monthly_to) {
         JOIN " . APP_SCHEMA . ".sales_profit_item spi ON spi.sales_profit_id = sp.id AND spi.deleted_at IS NULL
         WHERE sp.company_id = '$company_id' AND sp.deleted_at IS NULL
           AND sp.created_at BETWEEN '$monthly_from 00:00:00' AND '$monthly_to 23:59:59'
-        GROUP BY ym");
+        GROUP BY ym LIMIT 100");
     while ($row = mysqli_fetch_assoc($result)) {
         if (isset($months[$row['ym']])) {
-            $revenue = (float)$row['revenue'];
-            $cogs    = (float)$row['cogs'];
+            $revenue = bcadd($row['revenue'], '0', 2);
+            $cogs    = bcadd($row['cogs'], '0', 2);
             $months[$row['ym']]['revenue']    = $revenue;
             $months[$row['ym']]['cogs']       = $cogs;
-            $months[$row['ym']]['net_profit'] = $revenue - $cogs;
+            $months[$row['ym']]['net_profit'] = bcsub($revenue, $cogs, 2);
         }
     }
 
@@ -75,7 +75,7 @@ function buildFinanceTopDebtors($conn, $company_id) {
         GROUP BY partner_name ORDER BY outstanding DESC LIMIT 10");
 
     $rows = mysqli_fetch_all($result, MYSQLI_ASSOC);
-    foreach ($rows as &$row) $row['outstanding'] = (float)$row['outstanding'];
+    foreach ($rows as &$row) $row['outstanding'] = bcadd($row['outstanding'], '0', 2);
 
     return $rows;
 }
@@ -93,7 +93,7 @@ function buildFinanceTopCreditors($conn, $company_id) {
         GROUP BY partner_name ORDER BY outstanding DESC LIMIT 10");
 
     $rows = mysqli_fetch_all($result, MYSQLI_ASSOC);
-    foreach ($rows as &$row) $row['outstanding'] = (float)$row['outstanding'];
+    foreach ($rows as &$row) $row['outstanding'] = bcadd($row['outstanding'], '0', 2);
 
     return $rows;
 }

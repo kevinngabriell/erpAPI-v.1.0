@@ -13,7 +13,7 @@ function getAllCompanySettingDetails($conn, $setting_menu_id, $company_id, $para
     }
 
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
 
     $setting_menu_id = mysqli_real_escape_string($conn, $setting_menu_id);
@@ -31,24 +31,25 @@ function getAllCompanySettingDetails($conn, $setting_menu_id, $company_id, $para
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
-        $company_setting_details = mysqli_fetch_all($result, MYSQLI_ASSOC);
-        foreach ($company_setting_details as &$company_setting_detail) {
+        $data = mysqli_fetch_all($result, MYSQLI_ASSOC);
+        foreach ($data as &$company_setting_detail) {
             $company_setting_detail['is_tab']     = (bool)(int)$company_setting_detail['is_tab'];
             $company_setting_detail['is_data']    = (bool)(int)$company_setting_detail['is_data'];
             $company_setting_detail['is_can_new'] = (bool)(int)$company_setting_detail['is_can_new'];
         }
-        jsonResponse(200, 'Company setting details found', [
-            'data'       => $company_setting_details,
-            'pagination' => [
-                'total'       => $total,
-                'page'        => $page,
-                'limit'       => $limit,
-                'total_pages' => (int)ceil($total / $limit),
-            ],
-        ]);
     } else {
-        jsonResponse(404, 'No company setting details found');
+        $data = [];
     }
+
+    jsonResponse(200, 'Company setting details found', [
+        'data'       => $data,
+        'pagination' => [
+            'total'       => $total,
+            'page'        => $page,
+            'limit'       => $limit,
+            'total_pages' => (int)ceil($total / $limit),
+        ],
+    ]);
 }
 
 function createCompanySettingDetail($conn, $setting_menu_id, $input, $username, $company_id) {
@@ -83,7 +84,7 @@ function createCompanySettingDetail($conn, $setting_menu_id, $input, $username, 
     if (mysqli_query($conn, $sql)) {
         jsonResponse(201, 'Company setting detail created successfully', ['company_setting_detail_id' => $company_setting_detail_id]);
     } else {
-        jsonResponse(500, 'Failed to create company setting detail', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to create company setting detail', safeDbError($conn));
     }
 }
 
@@ -171,7 +172,7 @@ function updateCompanySettingDetail($conn, $setting_menu_id, $company_setting_de
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".company_setting_detail SET " . implode(', ', $updates) . " WHERE id = '$company_setting_detail_id' AND setting_menu_id = '$setting_menu_id'")) {
         jsonResponse(200, 'Company setting detail updated successfully');
     } else {
-        jsonResponse(500, 'Failed to update company setting detail', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to update company setting detail', safeDbError($conn));
     }
 }
 
@@ -195,7 +196,7 @@ function deleteCompanySettingDetail($conn, $setting_menu_id, $company_setting_de
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".company_setting_detail SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE id = '$company_setting_detail_id' AND setting_menu_id = '$setting_menu_id'")) {
         jsonResponse(200, 'Company setting detail deleted successfully');
     } else {
-        jsonResponse(500, 'Failed to delete company setting detail', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to delete company setting detail', safeDbError($conn));
     }
 }
 
@@ -211,14 +212,20 @@ if ($company_setting_detail_id) {
             getDetailCompanySettingDetail($conn, $company_setting_menu_id, $company_setting_detail_id, $company_id);
             break;
         case 'PUT':
+            if (!userHasPermission($conn, $app_role_id, 'master.company_setting.manage')) {
+                jsonResponse(403, 'You do not have permission to manage this master data');
+            }
             $input = json_decode(file_get_contents('php://input'), true) ?? [];
             updateCompanySettingDetail($conn, $company_setting_menu_id, $company_setting_detail_id, $input, $username, $company_id);
             break;
         case 'DELETE':
+            if (!userHasPermission($conn, $app_role_id, 'master.company_setting.manage')) {
+                jsonResponse(403, 'You do not have permission to manage this master data');
+            }
             deleteCompanySettingDetail($conn, $company_setting_menu_id, $company_setting_detail_id, $username, $company_id);
             break;
         default:
-            jsonResponse(405, 'Method Not Allowed');
+            methodNotAllowed(['GET', 'PUT', 'DELETE']);
     }
 } else {
     switch ($method) {
@@ -226,10 +233,13 @@ if ($company_setting_detail_id) {
             getAllCompanySettingDetails($conn, $company_setting_menu_id, $company_id, $_GET);
             break;
         case 'POST':
+            if (!userHasPermission($conn, $app_role_id, 'master.company_setting.manage')) {
+                jsonResponse(403, 'You do not have permission to manage this master data');
+            }
             $input = json_decode(file_get_contents('php://input'), true) ?? [];
             createCompanySettingDetail($conn, $company_setting_menu_id, $input, $username, $company_id);
             break;
         default:
-            jsonResponse(405, 'Method Not Allowed');
+            methodNotAllowed(['GET', 'POST']);
     }
 }

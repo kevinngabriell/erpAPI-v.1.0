@@ -9,15 +9,15 @@ function buildSalesSummary($conn, $company_id, $ytd_from, $ytd_to) {
         WHERE si.company_id = '$company_id' AND si.deleted_at IS NULL
           AND si.invoice_date BETWEEN '$ytd_from' AND '$ytd_to'");
     $row               = mysqli_fetch_assoc($result);
-    $total_sales_ytd   = (float)$row['revenue'];
+    $total_sales_ytd   = bcadd($row['revenue'], '0', 2);
     $order_count       = (int)$row['order_count'];
-    $avg_order_value   = $order_count > 0 ? round($total_sales_ytd / $order_count, 2) : 0;
+    $avg_order_value   = $order_count > 0 ? bcdiv($total_sales_ytd, (string)$order_count, 2) : '0.00';
 
     $target_year   = (int)date('Y', strtotime($ytd_to));
     $target_result = mysqli_query($conn, "SELECT target_value FROM " . APP_SCHEMA . ".sales_target
         WHERE company_id = '$company_id' AND target_year = $target_year AND deleted_at IS NULL LIMIT 1");
     $target_row    = $target_result ? mysqli_fetch_assoc($target_result) : null;
-    $target_sales  = $target_row ? (float)$target_row['target_value'] : 0;
+    $target_sales  = $target_row ? bcadd($target_row['target_value'], '0', 2) : '0.00';
 
     return [
         'total_sales_ytd' => $total_sales_ytd,
@@ -29,7 +29,7 @@ function buildSalesSummary($conn, $company_id, $ytd_from, $ytd_to) {
 function buildSalesMonthly($conn, $company_id, $monthly_from, $monthly_to) {
     $months = [];
     foreach (buildAnalyticsMonthBuckets($monthly_from, $monthly_to) as $ym) {
-        $months[$ym] = ['month' => $ym, 'total_sales' => 0];
+        $months[$ym] = ['month' => $ym, 'total_sales' => '0.00'];
     }
 
     $result = mysqli_query($conn, "SELECT DATE_FORMAT(si.invoice_date, '%Y-%m') AS ym,
@@ -38,9 +38,9 @@ function buildSalesMonthly($conn, $company_id, $monthly_from, $monthly_to) {
         JOIN " . APP_SCHEMA . ".sales_invoice_item sii ON sii.sales_invoice_id = si.id AND sii.deleted_at IS NULL
         WHERE si.company_id = '$company_id' AND si.deleted_at IS NULL
           AND si.invoice_date BETWEEN '$monthly_from' AND '$monthly_to'
-        GROUP BY ym");
+        GROUP BY ym LIMIT 100");
     while ($row = mysqli_fetch_assoc($result)) {
-        if (isset($months[$row['ym']])) $months[$row['ym']]['total_sales'] = (float)$row['total'];
+        if (isset($months[$row['ym']])) $months[$row['ym']]['total_sales'] = bcadd($row['total'], '0', 2);
     }
 
     return array_values($months);
@@ -56,7 +56,7 @@ function buildSalesTopProducts($conn, $company_id, $default_from, $default_to) {
         GROUP BY sii.product_name ORDER BY total_sales DESC LIMIT 10");
 
     $rows = mysqli_fetch_all($result, MYSQLI_ASSOC);
-    foreach ($rows as &$row) $row['total_sales'] = (float)$row['total_sales'];
+    foreach ($rows as &$row) $row['total_sales'] = bcadd($row['total_sales'], '0', 2);
 
     return $rows;
 }

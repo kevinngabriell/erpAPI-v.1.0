@@ -2,12 +2,14 @@
 
 require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
+require_once __DIR__ . '/../../helpers/permission.php';
 
 function getAllCompanySettingMenus($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
+    $search = str_replace(['%', '_'], ['\%', '\_'], $search);
 
     $where = "csm.company_id = '$company_id' AND csm.deleted_at IS NULL";
     if ($search) {
@@ -18,7 +20,7 @@ function getAllCompanySettingMenus($conn, $company_id, $params) {
             LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = csm.created_by
             LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = csm.updated_by";
 
-    $result       = mysqli_query($conn, "SELECT csm.*,
+    $result       = mysqli_query($conn, "SELECT csm.id, csm.company_id, csm.setting_name, csm.setting_caption, csm.created_by, csm.created_at, csm.updated_by, csm.updated_at,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
             FROM $from WHERE $where ORDER BY csm.created_at DESC LIMIT $limit OFFSET $offset");
@@ -26,24 +28,20 @@ function getAllCompanySettingMenus($conn, $company_id, $params) {
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
-        $company_setting_menus = mysqli_fetch_all($result, MYSQLI_ASSOC);
-        foreach ($company_setting_menus as &$company_setting_menu) {
-            $company_setting_menu['setting_image'] = $company_setting_menu['setting_image'] !== null
-                ? base64_encode($company_setting_menu['setting_image'])
-                : null;
-        }
-        jsonResponse(200, 'Company setting menus found', [
-            'data'       => $company_setting_menus,
-            'pagination' => [
-                'total'       => $total,
-                'page'        => $page,
-                'limit'       => $limit,
-                'total_pages' => (int)ceil($total / $limit),
-            ],
-        ]);
+        $data = mysqli_fetch_all($result, MYSQLI_ASSOC);
     } else {
-        jsonResponse(404, 'No company setting menus found');
+        $data = [];
     }
+
+    jsonResponse(200, 'Company setting menus found', [
+        'data'       => $data,
+        'pagination' => [
+            'total'       => $total,
+            'page'        => $page,
+            'limit'       => $limit,
+            'total_pages' => (int)ceil($total / $limit),
+        ],
+    ]);
 }
 
 function createCompanySettingMenu($conn, $input, $username, $company_id) {
@@ -78,7 +76,7 @@ function createCompanySettingMenu($conn, $input, $username, $company_id) {
          VALUES (?, ?, ?, ?, " . $setting_caption_sql . ", ?, ?)"
     );
     if (!$stmt) {
-        jsonResponse(500, 'Failed to create company setting menu', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to create company setting menu', safeDbError($conn));
         return;
     }
 
@@ -88,9 +86,8 @@ function createCompanySettingMenu($conn, $input, $username, $company_id) {
         $stmt->close();
         jsonResponse(201, 'Company setting menu created successfully', ['company_setting_menu_id' => $company_setting_menu_id]);
     } else {
-        $error = $stmt->error;
         $stmt->close();
-        jsonResponse(500, 'Failed to create company setting menu', ['error' => $error]);
+        jsonResponse(500, 'Failed to create company setting menu', safeDbError($conn));
     }
 }
 
@@ -159,7 +156,7 @@ function updateCompanySettingMenu($conn, $company_setting_menu_id, $input, $user
              WHERE id = ? AND company_id = ?"
         );
         if (!$stmt) {
-            jsonResponse(500, 'Failed to update company setting menu', ['error' => mysqli_error($conn)]);
+            jsonResponse(500, 'Failed to update company setting menu', safeDbError($conn));
             return;
         }
 
@@ -169,9 +166,8 @@ function updateCompanySettingMenu($conn, $company_setting_menu_id, $input, $user
             $stmt->close();
             jsonResponse(200, 'Company setting menu updated successfully');
         } else {
-            $error = $stmt->error;
             $stmt->close();
-            jsonResponse(500, 'Failed to update company setting menu', ['error' => $error]);
+            jsonResponse(500, 'Failed to update company setting menu', safeDbError($conn));
         }
         return;
     }
@@ -202,7 +198,7 @@ function updateCompanySettingMenu($conn, $company_setting_menu_id, $input, $user
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".company_setting_menu SET " . implode(', ', $updates) . " WHERE id = '$company_setting_menu_id' AND company_id = '$company_id'")) {
         jsonResponse(200, 'Company setting menu updated successfully');
     } else {
-        jsonResponse(500, 'Failed to update company setting menu', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to update company setting menu', safeDbError($conn));
     }
 }
 
@@ -220,16 +216,17 @@ function deleteCompanySettingMenu($conn, $company_setting_menu_id, $username, $c
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".company_setting_menu SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE id = '$company_setting_menu_id' AND company_id = '$company_id'")) {
         jsonResponse(200, 'Company setting menu deleted successfully');
     } else {
-        jsonResponse(500, 'Failed to delete company setting menu', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to delete company setting menu', safeDbError($conn));
     }
 }
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
-$authUser   = requireAuth();
-$method     = $_SERVER['REQUEST_METHOD'];
-$company_id = $authUser['company_id'] ?? null;
-$username   = $authUser['user_id'] ?? null;
+$authUser    = requireAuth();
+$method      = $_SERVER['REQUEST_METHOD'];
+$company_id  = $authUser['company_id'] ?? null;
+$username    = $authUser['sub'] ?? $authUser['user_id'] ?? null;
+$app_role_id = $authUser['app_role_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
@@ -241,6 +238,8 @@ $sub_action              = $parts[4] ?? '';
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $username = mysqli_real_escape_string($conn, $username);
 
     if ($company_setting_menu_id && $sub_action === 'details') {
         require __DIR__ . '/details.php';
@@ -250,14 +249,20 @@ try {
                 getDetailCompanySettingMenu($conn, $company_setting_menu_id, $company_id);
                 break;
             case 'PUT':
+                if (!userHasPermission($conn, $app_role_id, 'master.company_setting.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 $input = json_decode(file_get_contents('php://input'), true) ?? [];
                 updateCompanySettingMenu($conn, $company_setting_menu_id, $input, $username, $company_id);
                 break;
             case 'DELETE':
+                if (!userHasPermission($conn, $app_role_id, 'master.company_setting.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 deleteCompanySettingMenu($conn, $company_setting_menu_id, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'PUT', 'DELETE']);
         }
     } else {
         switch ($method) {
@@ -265,14 +270,17 @@ try {
                 getAllCompanySettingMenus($conn, $company_id, $_GET);
                 break;
             case 'POST':
+                if (!userHasPermission($conn, $app_role_id, 'master.company_setting.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 $input = json_decode(file_get_contents('php://input'), true) ?? [];
                 createCompanySettingMenu($conn, $input, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'POST']);
         }
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

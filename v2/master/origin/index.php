@@ -2,12 +2,14 @@
 
 require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
+require_once __DIR__ . '/../../helpers/permission.php';
 
 function getAllOrigins($conn, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
+    $search = str_replace(['%', '_'], ['\%', '\_'], $search);
 
     $where = "o.deleted_at IS NULL";
     if ($search) {
@@ -31,23 +33,24 @@ function getAllOrigins($conn, $params) {
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
-        $origins = mysqli_fetch_all($result, MYSQLI_ASSOC);
-        foreach ($origins as &$origin) {
+        $data = mysqli_fetch_all($result, MYSQLI_ASSOC);
+        foreach ($data as &$origin) {
             $origin['is_free_trade'] = (bool)(int)$origin['is_free_trade'];
             unset($origin['region_id']);
         }
-        jsonResponse(200, 'Origins found', [
-            'data'       => $origins,
-            'pagination' => [
-                'total'       => $total,
-                'page'        => $page,
-                'limit'       => $limit,
-                'total_pages' => (int)ceil($total / $limit),
-            ],
-        ]);
     } else {
-        jsonResponse(404, 'No origins found');
+        $data = [];
     }
+
+    jsonResponse(200, 'Origins found', [
+        'data'       => $data,
+        'pagination' => [
+            'total'       => $total,
+            'page'        => $page,
+            'limit'       => $limit,
+            'total_pages' => (int)ceil($total / $limit),
+        ],
+    ]);
 }
 
 function createOrigin($conn, $input, $username) {
@@ -84,7 +87,7 @@ function createOrigin($conn, $input, $username) {
     if (mysqli_query($conn, $sql)) {
         jsonResponse(201, 'Origin created successfully', ['origin_id' => $origin_id]);
     } else {
-        jsonResponse(500, 'Failed to create origin', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to create origin', safeDbError($conn));
     }
 }
 
@@ -155,7 +158,7 @@ function updateOrigin($conn, $origin_id, $input, $username) {
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".origin SET " . implode(', ', $updates) . " WHERE id = '$origin_id'")) {
         jsonResponse(200, 'Origin updated successfully');
     } else {
-        jsonResponse(500, 'Failed to update origin', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to update origin', safeDbError($conn));
     }
 }
 
@@ -173,16 +176,17 @@ function deleteOrigin($conn, $origin_id, $username) {
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".origin SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE id = '$origin_id'")) {
         jsonResponse(200, 'Origin deleted successfully');
     } else {
-        jsonResponse(500, 'Failed to delete origin', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to delete origin', safeDbError($conn));
     }
 }
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
-$authUser   = requireAuth();
-$method     = $_SERVER['REQUEST_METHOD'];
-$company_id = $authUser['company_id'] ?? null;
-$username   = $authUser['user_id'] ?? null;
+$authUser    = requireAuth();
+$method      = $_SERVER['REQUEST_METHOD'];
+$company_id  = $authUser['company_id'] ?? null;
+$username    = $authUser['sub'] ?? $authUser['user_id'] ?? null;
+$app_role_id = $authUser['app_role_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
@@ -193,6 +197,8 @@ $origin_id = !empty($action) ? $action : null;
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $username = mysqli_real_escape_string($conn, $username);
 
     if ($origin_id) {
         switch ($method) {
@@ -200,14 +206,20 @@ try {
                 getDetailOrigin($conn, $origin_id);
                 break;
             case 'PUT':
+                if (!userHasPermission($conn, $app_role_id, 'master.origin.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 $input = json_decode(file_get_contents('php://input'), true) ?? [];
                 updateOrigin($conn, $origin_id, $input, $username);
                 break;
             case 'DELETE':
+                if (!userHasPermission($conn, $app_role_id, 'master.origin.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 deleteOrigin($conn, $origin_id, $username);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'PUT', 'DELETE']);
         }
     } else {
         switch ($method) {
@@ -215,14 +227,17 @@ try {
                 getAllOrigins($conn, $_GET);
                 break;
             case 'POST':
+                if (!userHasPermission($conn, $app_role_id, 'master.origin.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 $input = json_decode(file_get_contents('php://input'), true) ?? [];
                 createOrigin($conn, $input, $username);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'POST']);
         }
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

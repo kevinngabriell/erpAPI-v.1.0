@@ -2,10 +2,11 @@
 
 require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
+require_once __DIR__ . '/../../helpers/permission.php';
 
 function getAllSalesTargets($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
 
     $where = "st.company_id = '$company_id' AND st.deleted_at IS NULL";
@@ -26,18 +27,20 @@ function getAllSalesTargets($conn, $company_id, $params) {
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
-        jsonResponse(200, 'Sales targets found', [
-            'data'       => mysqli_fetch_all($result, MYSQLI_ASSOC),
-            'pagination' => [
-                'total'       => $total,
-                'page'        => $page,
-                'limit'       => $limit,
-                'total_pages' => (int)ceil($total / $limit),
-            ],
-        ]);
+        $data = mysqli_fetch_all($result, MYSQLI_ASSOC);
     } else {
-        jsonResponse(404, 'No sales targets found');
+        $data = [];
     }
+
+    jsonResponse(200, 'Sales targets found', [
+        'data'       => $data,
+        'pagination' => [
+            'total'       => $total,
+            'page'        => $page,
+            'limit'       => $limit,
+            'total_pages' => (int)ceil($total / $limit),
+        ],
+    ]);
 }
 
 function createSalesTarget($conn, $input, $username, $company_id) {
@@ -72,7 +75,7 @@ function createSalesTarget($conn, $input, $username, $company_id) {
     if (mysqli_query($conn, $sql)) {
         jsonResponse(201, 'Sales target created successfully', ['sales_target_id' => $sales_target_id]);
     } else {
-        jsonResponse(500, 'Failed to create sales target', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to create sales target', safeDbError($conn));
     }
 }
 
@@ -136,7 +139,7 @@ function updateSalesTarget($conn, $sales_target_id, $input, $username, $company_
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".sales_target SET " . implode(', ', $updates) . " WHERE id = '$sales_target_id' AND company_id = '$company_id'")) {
         jsonResponse(200, 'Sales target updated successfully');
     } else {
-        jsonResponse(500, 'Failed to update sales target', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to update sales target', safeDbError($conn));
     }
 }
 
@@ -154,16 +157,17 @@ function deleteSalesTarget($conn, $sales_target_id, $username, $company_id) {
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".sales_target SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE id = '$sales_target_id' AND company_id = '$company_id'")) {
         jsonResponse(200, 'Sales target deleted successfully');
     } else {
-        jsonResponse(500, 'Failed to delete sales target', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to delete sales target', safeDbError($conn));
     }
 }
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
-$authUser   = requireAuth();
-$method     = $_SERVER['REQUEST_METHOD'];
-$company_id = $authUser['company_id'] ?? null;
-$username   = $authUser['user_id'] ?? null;
+$authUser    = requireAuth();
+$method      = $_SERVER['REQUEST_METHOD'];
+$company_id  = $authUser['company_id'] ?? null;
+$username    = $authUser['sub'] ?? $authUser['user_id'] ?? null;
+$app_role_id = $authUser['app_role_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
@@ -174,6 +178,8 @@ $sales_target_id = !empty($action) ? $action : null;
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $username = mysqli_real_escape_string($conn, $username);
 
     if ($sales_target_id) {
         switch ($method) {
@@ -181,14 +187,20 @@ try {
                 getDetailSalesTarget($conn, $sales_target_id, $company_id);
                 break;
             case 'PUT':
+                if (!userHasPermission($conn, $app_role_id, 'master.sales_target.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 $input = json_decode(file_get_contents('php://input'), true) ?? [];
                 updateSalesTarget($conn, $sales_target_id, $input, $username, $company_id);
                 break;
             case 'DELETE':
+                if (!userHasPermission($conn, $app_role_id, 'master.sales_target.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 deleteSalesTarget($conn, $sales_target_id, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'PUT', 'DELETE']);
         }
     } else {
         switch ($method) {
@@ -196,14 +208,17 @@ try {
                 getAllSalesTargets($conn, $company_id, $_GET);
                 break;
             case 'POST':
+                if (!userHasPermission($conn, $app_role_id, 'master.sales_target.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 $input = json_decode(file_get_contents('php://input'), true) ?? [];
                 createSalesTarget($conn, $input, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'POST']);
         }
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

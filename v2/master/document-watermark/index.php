@@ -2,10 +2,11 @@
 
 require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
+require_once __DIR__ . '/../../helpers/permission.php';
 
 function getAllDocumentWatermarks($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
 
     $where = "dw.company_id = '$company_id' AND dw.deleted_at IS NULL";
@@ -14,7 +15,7 @@ function getAllDocumentWatermarks($conn, $company_id, $params) {
             LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = dw.created_by
             LEFT JOIN " . CORE_SCHEMA . ".app_user uu ON uu.user_id COLLATE utf8mb4_general_ci = dw.updated_by";
 
-    $result       = mysqli_query($conn, "SELECT dw.*,
+    $result       = mysqli_query($conn, "SELECT dw.id, dw.company_id, dw.watermark_name, dw.created_by, dw.created_at, dw.updated_by, dw.updated_at,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
             FROM $from WHERE $where ORDER BY dw.created_at DESC LIMIT $limit OFFSET $offset");
@@ -22,22 +23,20 @@ function getAllDocumentWatermarks($conn, $company_id, $params) {
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
-        $document_watermarks = mysqli_fetch_all($result, MYSQLI_ASSOC);
-        foreach ($document_watermarks as &$document_watermark) {
-            $document_watermark['watermark'] = base64_encode($document_watermark['watermark']);
-        }
-        jsonResponse(200, 'Document watermarks found', [
-            'data'       => $document_watermarks,
-            'pagination' => [
-                'total'       => $total,
-                'page'        => $page,
-                'limit'       => $limit,
-                'total_pages' => (int)ceil($total / $limit),
-            ],
-        ]);
+        $data = mysqli_fetch_all($result, MYSQLI_ASSOC);
     } else {
-        jsonResponse(404, 'No document watermarks found');
+        $data = [];
     }
+
+    jsonResponse(200, 'Document watermarks found', [
+        'data'       => $data,
+        'pagination' => [
+            'total'       => $total,
+            'page'        => $page,
+            'limit'       => $limit,
+            'total_pages' => (int)ceil($total / $limit),
+        ],
+    ]);
 }
 
 function createDocumentWatermark($conn, $input, $username, $company_id) {
@@ -62,7 +61,7 @@ function createDocumentWatermark($conn, $input, $username, $company_id) {
         "INSERT INTO " . APP_SCHEMA . ".document_watermark (id, company_id, watermark, created_by, created_at) VALUES (?, ?, ?, ?, ?)"
     );
     if (!$stmt) {
-        jsonResponse(500, 'Failed to create document watermark', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to create document watermark', safeDbError($conn));
         return;
     }
 
@@ -74,9 +73,8 @@ function createDocumentWatermark($conn, $input, $username, $company_id) {
         $stmt->close();
         jsonResponse(201, 'Document watermark created successfully', ['document_watermark_id' => $document_watermark_id]);
     } else {
-        $error = $stmt->error;
         $stmt->close();
-        jsonResponse(500, 'Failed to create document watermark', ['error' => $error]);
+        jsonResponse(500, 'Failed to create document watermark', safeDbError($conn));
     }
 }
 
@@ -127,7 +125,7 @@ function updateDocumentWatermark($conn, $document_watermark_id, $input, $usernam
         "UPDATE " . APP_SCHEMA . ".document_watermark SET watermark = ?, updated_by = ?, updated_at = ? WHERE id = ? AND company_id = ?"
     );
     if (!$stmt) {
-        jsonResponse(500, 'Failed to update document watermark', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to update document watermark', safeDbError($conn));
         return;
     }
 
@@ -139,9 +137,8 @@ function updateDocumentWatermark($conn, $document_watermark_id, $input, $usernam
         $stmt->close();
         jsonResponse(200, 'Document watermark updated successfully');
     } else {
-        $error = $stmt->error;
         $stmt->close();
-        jsonResponse(500, 'Failed to update document watermark', ['error' => $error]);
+        jsonResponse(500, 'Failed to update document watermark', safeDbError($conn));
     }
 }
 
@@ -159,16 +156,17 @@ function deleteDocumentWatermark($conn, $document_watermark_id, $username, $comp
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".document_watermark SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE id = '$document_watermark_id' AND company_id = '$company_id'")) {
         jsonResponse(200, 'Document watermark deleted successfully');
     } else {
-        jsonResponse(500, 'Failed to delete document watermark', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to delete document watermark', safeDbError($conn));
     }
 }
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
-$authUser   = requireAuth();
-$method     = $_SERVER['REQUEST_METHOD'];
-$company_id = $authUser['company_id'] ?? null;
-$username   = $authUser['user_id'] ?? null;
+$authUser    = requireAuth();
+$method      = $_SERVER['REQUEST_METHOD'];
+$company_id  = $authUser['company_id'] ?? null;
+$username    = $authUser['sub'] ?? $authUser['user_id'] ?? null;
+$app_role_id = $authUser['app_role_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
@@ -179,6 +177,8 @@ $document_watermark_id = !empty($action) ? $action : null;
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $username = mysqli_real_escape_string($conn, $username);
 
     if ($document_watermark_id) {
         switch ($method) {
@@ -186,14 +186,20 @@ try {
                 getDetailDocumentWatermark($conn, $document_watermark_id, $company_id);
                 break;
             case 'PUT':
+                if (!userHasPermission($conn, $app_role_id, 'master.document_watermark.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 $input = json_decode(file_get_contents('php://input'), true) ?? [];
                 updateDocumentWatermark($conn, $document_watermark_id, $input, $username, $company_id);
                 break;
             case 'DELETE':
+                if (!userHasPermission($conn, $app_role_id, 'master.document_watermark.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 deleteDocumentWatermark($conn, $document_watermark_id, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'PUT', 'DELETE']);
         }
     } else {
         switch ($method) {
@@ -201,14 +207,17 @@ try {
                 getAllDocumentWatermarks($conn, $company_id, $_GET);
                 break;
             case 'POST':
+                if (!userHasPermission($conn, $app_role_id, 'master.document_watermark.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 $input = json_decode(file_get_contents('php://input'), true) ?? [];
                 createDocumentWatermark($conn, $input, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'POST']);
         }
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

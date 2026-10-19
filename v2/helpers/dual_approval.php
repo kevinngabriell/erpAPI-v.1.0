@@ -1,11 +1,23 @@
 <?php
 require_once __DIR__ . '/permission.php';
+require_once __DIR__ . '/../config.php';
 
-// Shared Owner + Treasury 2-signer gate for any table carrying the standard
-// transaction_status/approved_by_owner_*/approved_by_treasury_* columns.
+const DUAL_APPROVAL_ALLOWED_TABLES = [
+    APP_SCHEMA . '.finance_transaction',
+    APP_SCHEMA . '.finance_payment',
+];
+
+function validateDualApprovalTable($table): void {
+    if (!in_array($table, DUAL_APPROVAL_ALLOWED_TABLES, true)) {
+        throw new Exception("Invalid table: $table");
+    }
+}
 
 function applyDualApproval($conn, $table, $entity_id, $company_id, $username, $app_role_id) {
-    $entity_id = mysqli_real_escape_string($conn, $entity_id);
+    validateDualApprovalTable($table);
+    $entity_id   = mysqli_real_escape_string($conn, $entity_id);
+    $company_id  = mysqli_real_escape_string($conn, $company_id);
+    $username    = mysqli_real_escape_string($conn, $username);
 
     $check = mysqli_query($conn, "SELECT transaction_status, approved_by_owner_id, approved_by_treasury_id
             FROM $table WHERE id = '$entity_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
@@ -46,14 +58,18 @@ function applyDualApproval($conn, $table, $entity_id, $company_id, $username, $a
             WHERE id = '$entity_id' AND company_id = '$company_id'");
 
     if (!$updated) {
-        return ['code' => 500, 'message' => 'Failed to approve record', 'error' => mysqli_error($conn)];
+        error_log('Dual approval failed: ' . mysqli_error($conn));
+        return ['code' => 500, 'message' => 'Failed to approve record'];
     }
 
     return ['code' => 200, 'message' => 'Approved successfully', 'slot' => $slot, 'transaction_status' => $transaction_status];
 }
 
 function rejectDualApproval($conn, $table, $entity_id, $company_id, $username, $app_role_id) {
-    $entity_id = mysqli_real_escape_string($conn, $entity_id);
+    validateDualApprovalTable($table);
+    $entity_id   = mysqli_real_escape_string($conn, $entity_id);
+    $company_id  = mysqli_real_escape_string($conn, $company_id);
+    $username    = mysqli_real_escape_string($conn, $username);
 
     $check = mysqli_query($conn, "SELECT transaction_status FROM $table WHERE id = '$entity_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
     if (!$check || mysqli_num_rows($check) === 0) {
@@ -75,7 +91,8 @@ function rejectDualApproval($conn, $table, $entity_id, $company_id, $username, $
             WHERE id = '$entity_id' AND company_id = '$company_id'");
 
     if (!$updated) {
-        return ['code' => 500, 'message' => 'Failed to reject record', 'error' => mysqli_error($conn)];
+        error_log('Dual approval reject failed: ' . mysqli_error($conn));
+        return ['code' => 500, 'message' => 'Failed to reject record'];
     }
 
     return ['code' => 200, 'message' => 'Rejected successfully'];

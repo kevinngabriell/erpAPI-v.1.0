@@ -3,28 +3,11 @@ require_once __DIR__ . '/../general.php';
 require_once __DIR__ . '/../helpers/auth_response.php';
 require_once __DIR__ . '/../helpers/rate_limit.php';
 require_once __DIR__ . '/../helpers/password_policy.php';
+require_once __DIR__ . '/../helpers/auth_log.php';
 
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
 header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
-
-function writeResetPasswordLog($conn, string $action, ?string $user_id, string $username): void {
-    $ip     = substr(getUserIP(), 0, 45);
-    $ua     = substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 500);
-    $module = 'auth';
-    $now    = date('Y-m-d H:i:s');
-
-    $stmt = $conn->prepare(
-        "INSERT INTO " . CORE_SCHEMA . ".log
-            (action, module, description, actor_type, actor_username, resource_id, ip_address, user_agent, occurred_at, app_id)
-         VALUES (?, ?, ?, 'app', ?, ?, ?, ?, ?, '" . APP_ID . "')"
-    );
-    if ($stmt) {
-        $stmt->bind_param('ssssssss', $action, $module, $action, $username, $user_id, $ip, $ua, $now);
-        $stmt->execute();
-        $stmt->close();
-    }
-}
 
 function resetPassword($conn, $input): void {
     // 1. Required field validation
@@ -70,7 +53,7 @@ function resetPassword($conn, $input): void {
     $stmt->close();
 
     if (!$user_row) {
-        writeResetPasswordLog($conn, 'reset_password_failed', null, $email);
+        writeAuthLog($conn, 'reset_password_failed', null, $email);
         authResponse(400, 'Invalid or expired OTP code.', 'PWD_002');
         return;
     }
@@ -89,7 +72,7 @@ function resetPassword($conn, $input): void {
     $stmt->close();
 
     if (!$otp_row) {
-        writeResetPasswordLog($conn, 'reset_password_failed', $user_row['user_id'], $email);
+        writeAuthLog($conn, 'reset_password_failed', $user_row['user_id'], $email);
         authResponse(400, 'Invalid or expired OTP code.', 'PWD_002');
         return;
     }
@@ -105,7 +88,7 @@ function resetPassword($conn, $input): void {
         $stmt->execute();
         $stmt->close();
 
-        writeResetPasswordLog($conn, 'reset_password_failed', $user_row['user_id'], $email);
+        writeAuthLog($conn, 'reset_password_failed', $user_row['user_id'], $email);
         authResponse(400, 'Invalid or expired OTP code.', 'PWD_002');
         return;
     }
@@ -150,13 +133,13 @@ function resetPassword($conn, $input): void {
 
     } catch (Exception $e) {
         $conn->rollback();
-        writeResetPasswordLog($conn, 'reset_password_failed', $user_row['user_id'], $email);
+        writeAuthLog($conn, 'reset_password_failed', $user_row['user_id'], $email);
         authResponse(500, 'An unexpected error occurred. Please try again.');
         return;
     }
 
     // 8. Audit log
-    writeResetPasswordLog($conn, 'reset_password_success', $user_row['user_id'], $email);
+    writeAuthLog($conn, 'reset_password_success', $user_row['user_id'], $email);
 
     authResponse(200, 'Password reset successful. Please log in with your new password.');
 }
@@ -165,17 +148,19 @@ try {
     $method = $_SERVER['REQUEST_METHOD'];
     $conn   = getConn();
 
+    validateJsonContentType();
+
     switch ($method) {
         case 'POST':
             $input = json_decode(file_get_contents('php://input'), true) ?? [];
             resetPassword($conn, $input);
             break;
         default:
-            authResponse(405, 'Method not allowed');
+            methodNotAllowed(['POST']);
     }
 
-} catch (Throwable $e) {
-    authResponse(500, 'An unexpected error occurred. Please try again.', null,
-        APP_ENV === 'development' ? ['debug' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()] : null
+} catch (Exception $e) {
+    authResponse(500, 'An unexpected error occurred. Please try again. Reference ID: ' . requestId(), null,
+        safeErrorResponse($e)
     );
 }
