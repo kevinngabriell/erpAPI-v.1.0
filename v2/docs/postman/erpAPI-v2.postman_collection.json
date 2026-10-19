@@ -1,6 +1,6 @@
 {
   "info": {
-    "_postman_id": "1415568f-b72c-4b4d-ad75-69ad76445cc1",
+    "_postman_id": "6d5c59a2-b352-4763-940c-2a6190e2f397",
     "name": "Aluria ERP API v2",
     "description": "Complete Postman collection for the Aluria/Venken ERP v2 API (erpAPI-v.1.0/v2) — generated from docs/api/*.md. Every request includes at least one saved example response taken directly from the source documentation (200/201 success plus the documented 400/401/403/404/405/409/410/429/500 failure cases where applicable). \n\n## Getting started\n1. Select (or duplicate) the **Aluria ERP v2 - Local** environment and set `base_url` to your running instance (default assumes `php -S localhost:8000 router.php` from the project root, which the repo's router.php supports directly — adjust to your actual host, e.g. an nginx vhost proxying `/api/v2/...` or `/venken-api/v2/...`).\n2. Set `email` / `password` in the environment to a real account, then run **Auth → Login**. Its Tests script automatically saves the returned JWT into `access_token`, `company_id`, and `user_id`.\n3. Every other request in this collection inherits Bearer auth from the collection level (`Authorization: Bearer {{access_token}}`) — no per-request auth setup needed. The 6 public account/permission endpoints (login, send-otp, register, forgot-password, reset-password) are explicitly marked \"No Auth\".\n4. Path parameters (`:customer_id`, `:id`, etc.) are pre-filled with realistic example values taken from the docs — edit them per-request (Postman's \"Path Variables\" tab under each request's URL) once you have real IDs from your own data.\n\n## Response shape\nEvery endpoint returns `{ status_code, status_message, data }` (see CODE_STANDARDS.md). Auth/account endpoints additionally return an `error_code` on failures, for frontend localisation.\n\nSource: v2/docs/api/*.md (52 module docs) plus v2/auth/{forgot-password,reset-password}.php and v2/finance/general-journal/index.php read directly (undocumented in docs/api at generation time).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
@@ -24977,7 +24977,7 @@
             },
             {
               "name": "Document Watermark (/document-watermark)",
-              "description": "Company-scoped. watermark stored as BLOB, transmitted base64-encoded both ways. PUT requires watermark to be present and non-empty — no partial-update path (unlike most modules).",
+              "description": "Company-scoped. List is metadata only (no image) — GET /{id} returns the base64 image. POST requires watermark_name + watermark; PUT accepts either or both (rename without re-uploading). Writes need master.document_watermark.manage.",
               "item": [
                 {
                   "name": "List Document Watermarks",
@@ -25051,7 +25051,7 @@
                         }
                       ],
                       "cookie": [],
-                      "body": "{\n  \"status_code\": 200,\n  \"status_message\": \"Document watermarks found\",\n  \"data\": {\n    \"data\": [\n      {\n        \"id\": \"a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d\",\n        \"company_id\": \"b2c3d4e5-f6a7-4b5c-9d0e-1f2a3b4c5d6e\",\n        \"watermark\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...\",\n        \"created_by\": \"Budi Santoso\",\n        \"created_at\": \"2026-06-27 10:00:00\",\n        \"updated_by\": null,\n        \"updated_at\": null,\n        \"deleted_at\": null\n      }\n    ],\n    \"pagination\": {\n      \"total\": 42,\n      \"page\": 1,\n      \"limit\": 10,\n      \"total_pages\": 5\n    }\n  }\n}"
+                      "body": "{\n  \"status_code\": 200,\n  \"status_message\": \"Document watermarks found\",\n  \"data\": {\n    \"data\": [\n      {\n        \"id\": \"a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d\",\n        \"company_id\": \"b2c3d4e5-f6a7-4b5c-9d0e-1f2a3b4c5d6e\",\n        \"watermark_name\": \"Company Logo\",\n        \"created_by\": \"Budi Santoso\",\n        \"created_at\": \"2026-06-27 10:00:00\",\n        \"updated_by\": null,\n        \"updated_at\": null,\n        \"deleted_at\": null\n      }\n    ],\n    \"pagination\": {\n      \"total\": 42,\n      \"page\": 1,\n      \"limit\": 10,\n      \"total_pages\": 5\n    }\n  }\n}"
                     },
                     {
                       "name": "404 Not Found",
@@ -25163,7 +25163,7 @@
                     "description": "Create a new document watermark.",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"watermark\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...\"\n}",
+                      "raw": "{\n  \"watermark_name\": \"Company Logo\",\n  \"watermark\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...\"\n}",
                       "options": {
                         "raw": {
                           "language": "json"
@@ -25195,7 +25195,7 @@
                         },
                         "body": {
                           "mode": "raw",
-                          "raw": "{\n  \"watermark\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...\"\n}",
+                          "raw": "{\n  \"watermark_name\": \"Company Logo\",\n  \"watermark\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...\"\n}",
                           "options": {
                             "raw": {
                               "language": "json"
@@ -25238,7 +25238,50 @@
                         },
                         "body": {
                           "mode": "raw",
-                          "raw": "{\n  \"watermark\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...\"\n}",
+                          "raw": "{\n  \"watermark_name\": \"Company Logo\",\n  \"watermark\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...\"\n}",
+                          "options": {
+                            "raw": {
+                              "language": "json"
+                            }
+                          }
+                        }
+                      },
+                      "status": "Bad Request",
+                      "code": 400,
+                      "_postman_previewlanguage": "json",
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/json"
+                        }
+                      ],
+                      "cookie": [],
+                      "body": "{\n  \"status_code\": 400,\n  \"status_message\": \"watermark_name is required\",\n  \"data\": []\n}"
+                    },
+                    {
+                      "name": "400 Bad Request",
+                      "originalRequest": {
+                        "method": "POST",
+                        "header": [
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          }
+                        ],
+                        "url": {
+                          "raw": "{{base_url}}/document-watermark",
+                          "host": [
+                            "{{base_url}}"
+                          ],
+                          "path": [
+                            "document-watermark"
+                          ],
+                          "query": [],
+                          "variable": []
+                        },
+                        "body": {
+                          "mode": "raw",
+                          "raw": "{\n  \"watermark_name\": \"Company Logo\",\n  \"watermark\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...\"\n}",
                           "options": {
                             "raw": {
                               "language": "json"
@@ -25281,7 +25324,50 @@
                         },
                         "body": {
                           "mode": "raw",
-                          "raw": "{\n  \"watermark\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...\"\n}",
+                          "raw": "{\n  \"watermark_name\": \"Company Logo\",\n  \"watermark\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...\"\n}",
+                          "options": {
+                            "raw": {
+                              "language": "json"
+                            }
+                          }
+                        }
+                      },
+                      "status": "Bad Request",
+                      "code": 400,
+                      "_postman_previewlanguage": "json",
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/json"
+                        }
+                      ],
+                      "cookie": [],
+                      "body": "{\n  \"status_code\": 400,\n  \"status_message\": \"watermark_name must be 255 characters or fewer\",\n  \"data\": []\n}"
+                    },
+                    {
+                      "name": "400 Bad Request",
+                      "originalRequest": {
+                        "method": "POST",
+                        "header": [
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          }
+                        ],
+                        "url": {
+                          "raw": "{{base_url}}/document-watermark",
+                          "host": [
+                            "{{base_url}}"
+                          ],
+                          "path": [
+                            "document-watermark"
+                          ],
+                          "query": [],
+                          "variable": []
+                        },
+                        "body": {
+                          "mode": "raw",
+                          "raw": "{\n  \"watermark_name\": \"Company Logo\",\n  \"watermark\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...\"\n}",
                           "options": {
                             "raw": {
                               "language": "json"
@@ -25363,7 +25449,7 @@
                         }
                       ],
                       "cookie": [],
-                      "body": "{\n  \"status_code\": 200,\n  \"status_message\": \"Document watermark found\",\n  \"data\": {\n    \"id\": \"a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d\",\n    \"company_id\": \"b2c3d4e5-f6a7-4b5c-9d0e-1f2a3b4c5d6e\",\n    \"watermark\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...\",\n    \"created_by\": \"Budi Santoso\",\n    \"created_at\": \"2026-06-27 10:00:00\",\n    \"updated_by\": null,\n    \"updated_at\": null,\n    \"deleted_at\": null\n  }\n}"
+                      "body": "{\n  \"status_code\": 200,\n  \"status_message\": \"Document watermark found\",\n  \"data\": {\n    \"id\": \"a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d\",\n    \"company_id\": \"b2c3d4e5-f6a7-4b5c-9d0e-1f2a3b4c5d6e\",\n    \"watermark_name\": \"Company Logo\",\n    \"created_by\": \"Budi Santoso\",\n    \"created_at\": \"2026-06-27 10:00:00\",\n    \"updated_by\": null,\n    \"updated_at\": null,\n    \"deleted_at\": null\n  }\n}"
                     },
                     {
                       "name": "404 Not Found",
@@ -25434,7 +25520,7 @@
                     "description": "Update a document watermark. Only send the fields you want to change.",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"watermark\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...\"\n}",
+                      "raw": "{\n  \"watermark_name\": \"Company Logo\",\n  \"watermark\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...\"\n}",
                       "options": {
                         "raw": {
                           "language": "json"
@@ -25473,7 +25559,7 @@
                         },
                         "body": {
                           "mode": "raw",
-                          "raw": "{\n  \"watermark\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...\"\n}",
+                          "raw": "{\n  \"watermark_name\": \"Company Logo\",\n  \"watermark\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...\"\n}",
                           "options": {
                             "raw": {
                               "language": "json"
@@ -25523,7 +25609,7 @@
                         },
                         "body": {
                           "mode": "raw",
-                          "raw": "{\n  \"watermark\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...\"\n}",
+                          "raw": "{\n  \"watermark_name\": \"Company Logo\",\n  \"watermark\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...\"\n}",
                           "options": {
                             "raw": {
                               "language": "json"
@@ -25573,7 +25659,107 @@
                         },
                         "body": {
                           "mode": "raw",
-                          "raw": "{\n  \"watermark\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...\"\n}",
+                          "raw": "{\n  \"watermark_name\": \"Company Logo\",\n  \"watermark\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...\"\n}",
+                          "options": {
+                            "raw": {
+                              "language": "json"
+                            }
+                          }
+                        }
+                      },
+                      "status": "Bad Request",
+                      "code": 400,
+                      "_postman_previewlanguage": "json",
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/json"
+                        }
+                      ],
+                      "cookie": [],
+                      "body": "{\n  \"status_code\": 400,\n  \"status_message\": \"watermark_name cannot be empty\",\n  \"data\": []\n}"
+                    },
+                    {
+                      "name": "400 Bad Request",
+                      "originalRequest": {
+                        "method": "PUT",
+                        "header": [
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          }
+                        ],
+                        "url": {
+                          "raw": "{{base_url}}/document-watermark/:document_watermark_id",
+                          "host": [
+                            "{{base_url}}"
+                          ],
+                          "path": [
+                            "document-watermark",
+                            ":document_watermark_id"
+                          ],
+                          "query": [],
+                          "variable": [
+                            {
+                              "key": "document_watermark_id",
+                              "value": "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",
+                              "description": ""
+                            }
+                          ]
+                        },
+                        "body": {
+                          "mode": "raw",
+                          "raw": "{\n  \"watermark_name\": \"Company Logo\",\n  \"watermark\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...\"\n}",
+                          "options": {
+                            "raw": {
+                              "language": "json"
+                            }
+                          }
+                        }
+                      },
+                      "status": "Bad Request",
+                      "code": 400,
+                      "_postman_previewlanguage": "json",
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/json"
+                        }
+                      ],
+                      "cookie": [],
+                      "body": "{\n  \"status_code\": 400,\n  \"status_message\": \"watermark_name must be 255 characters or fewer\",\n  \"data\": []\n}"
+                    },
+                    {
+                      "name": "400 Bad Request",
+                      "originalRequest": {
+                        "method": "PUT",
+                        "header": [
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          }
+                        ],
+                        "url": {
+                          "raw": "{{base_url}}/document-watermark/:document_watermark_id",
+                          "host": [
+                            "{{base_url}}"
+                          ],
+                          "path": [
+                            "document-watermark",
+                            ":document_watermark_id"
+                          ],
+                          "query": [],
+                          "variable": [
+                            {
+                              "key": "document_watermark_id",
+                              "value": "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",
+                              "description": ""
+                            }
+                          ]
+                        },
+                        "body": {
+                          "mode": "raw",
+                          "raw": "{\n  \"watermark_name\": \"Company Logo\",\n  \"watermark\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...\"\n}",
                           "options": {
                             "raw": {
                               "language": "json"
@@ -25623,7 +25809,7 @@
                         },
                         "body": {
                           "mode": "raw",
-                          "raw": "{\n  \"watermark\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...\"\n}",
+                          "raw": "{\n  \"watermark_name\": \"Company Logo\",\n  \"watermark\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...\"\n}",
                           "options": {
                             "raw": {
                               "language": "json"

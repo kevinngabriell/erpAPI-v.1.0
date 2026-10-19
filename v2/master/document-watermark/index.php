@@ -19,14 +19,14 @@ function getAllDocumentWatermarks($conn, $company_id, $params) {
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
             FROM $from WHERE $where ORDER BY dw.created_at DESC LIMIT $limit OFFSET $offset");
+    if (!$result) {
+        jsonResponse(500, 'Failed to load document watermarks', safeDbError($conn));
+        return;
+    }
     $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".document_watermark dw WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
-    if ($result && mysqli_num_rows($result) > 0) {
-        $data = mysqli_fetch_all($result, MYSQLI_ASSOC);
-    } else {
-        $data = [];
-    }
+    $data = mysqli_fetch_all($result, MYSQLI_ASSOC);
 
     jsonResponse(200, 'Document watermarks found', [
         'data'       => $data,
@@ -40,12 +40,18 @@ function getAllDocumentWatermarks($conn, $company_id, $params) {
 }
 
 function createDocumentWatermark($conn, $input, $username, $company_id) {
-    $required = ['watermark'];
+    $required = ['watermark_name', 'watermark'];
     foreach ($required as $field) {
-        if (!isset($input[$field]) || is_string($input[$field]) && trim($input[$field]) === '') {
+        if (!isset($input[$field]) || trim((string)$input[$field]) === '') {
             jsonResponse(400, "$field is required");
             return;
         }
+    }
+
+    $watermark_name = trim((string)$input['watermark_name']);
+    if (mb_strlen($watermark_name) > 255) {
+        jsonResponse(400, 'watermark_name must be 255 characters or fewer');
+        return;
     }
 
     $watermark = base64_decode($input['watermark'], true);
@@ -58,7 +64,7 @@ function createDocumentWatermark($conn, $input, $username, $company_id) {
     $now                   = date('Y-m-d H:i:s');
 
     $stmt = $conn->prepare(
-        "INSERT INTO " . APP_SCHEMA . ".document_watermark (id, company_id, watermark, created_by, created_at) VALUES (?, ?, ?, ?, ?)"
+        "INSERT INTO " . APP_SCHEMA . ".document_watermark (id, company_id, watermark_name, watermark, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)"
     );
     if (!$stmt) {
         jsonResponse(500, 'Failed to create document watermark', safeDbError($conn));
@@ -66,8 +72,8 @@ function createDocumentWatermark($conn, $input, $username, $company_id) {
     }
 
     $null = null;
-    $stmt->bind_param('sssss', $document_watermark_id, $company_id, $null, $username, $now);
-    $stmt->send_long_data(2, $watermark);
+    $stmt->bind_param('sssbss', $document_watermark_id, $company_id, $watermark_name, $null, $username, $now);
+    $stmt->send_long_data(3, $watermark);
 
     if ($stmt->execute()) {
         $stmt->close();
@@ -102,36 +108,72 @@ function getDetailDocumentWatermark($conn, $document_watermark_id, $company_id) 
 function updateDocumentWatermark($conn, $document_watermark_id, $input, $username, $company_id) {
     $document_watermark_id = mysqli_real_escape_string($conn, $document_watermark_id);
 
+    $updates         = [];
+    $values          = [];
+    $watermark       = null;
+    $watermark_index = null;
+
+    if (isset($input['watermark_name'])) {
+        $watermark_name = trim((string)$input['watermark_name']);
+        if ($watermark_name === '') {
+            jsonResponse(400, 'watermark_name cannot be empty');
+            return;
+        }
+        if (mb_strlen($watermark_name) > 255) {
+            jsonResponse(400, 'watermark_name must be 255 characters or fewer');
+            return;
+        }
+        $updates[] = 'watermark_name = ?';
+        $values[]  = $watermark_name;
+    }
+
+    if (isset($input['watermark']) && trim((string)$input['watermark']) !== '') {
+        $watermark = base64_decode($input['watermark'], true);
+        if ($watermark === false) {
+            jsonResponse(400, 'watermark must be a valid base64 encoded string');
+            return;
+        }
+        $updates[]       = 'watermark = ?';
+        $watermark_index = count($values);
+        $values[]        = null;
+    }
+
+    if (empty($updates)) {
+        jsonResponse(400, 'No fields provided for update');
+        return;
+    }
+
     $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".document_watermark WHERE id = '$document_watermark_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Document watermark not found');
         return;
     }
 
-    if (!isset($input['watermark']) || trim((string)$input['watermark']) === '') {
-        jsonResponse(400, 'No fields provided for update');
-        return;
-    }
-
-    $watermark = base64_decode($input['watermark'], true);
-    if ($watermark === false) {
-        jsonResponse(400, 'watermark must be a valid base64 encoded string');
-        return;
-    }
-
     $now = date('Y-m-d H:i:s');
 
+    $updates[] = 'updated_by = ?';
+    $values[]  = $username;
+    $updates[] = 'updated_at = ?';
+    $values[]  = $now;
+    $values[]  = $document_watermark_id;
+    $values[]  = $company_id;
+
     $stmt = $conn->prepare(
-        "UPDATE " . APP_SCHEMA . ".document_watermark SET watermark = ?, updated_by = ?, updated_at = ? WHERE id = ? AND company_id = ?"
+        "UPDATE " . APP_SCHEMA . ".document_watermark SET " . implode(', ', $updates) . " WHERE id = ? AND company_id = ?"
     );
     if (!$stmt) {
         jsonResponse(500, 'Failed to update document watermark', safeDbError($conn));
         return;
     }
 
-    $null = null;
-    $stmt->bind_param('sssss', $null, $username, $now, $document_watermark_id, $company_id);
-    $stmt->send_long_data(0, $watermark);
+    $types = str_repeat('s', count($values));
+    if ($watermark_index !== null) {
+        $types[$watermark_index] = 'b';
+    }
+    $stmt->bind_param($types, ...$values);
+    if ($watermark_index !== null) {
+        $stmt->send_long_data($watermark_index, $watermark);
+    }
 
     if ($stmt->execute()) {
         $stmt->close();

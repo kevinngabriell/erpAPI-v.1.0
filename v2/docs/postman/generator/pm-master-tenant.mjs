@@ -170,25 +170,25 @@ export const masterTenantFolders = [];
   }));
 }
 
-// document-watermark (base64, no duplicate check) ---------------------------
+// document-watermark (named, base64, no duplicate check) ---------------------
 {
-  const row = { id: ID, company_id: COMPANY_ID, watermark: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...', ...BY };
+  const row = { id: ID, company_id: COMPANY_ID, watermark_name: 'Company Logo', ...BY };
   masterTenantFolders.push(crudModule({
     path: 'document-watermark', displayName: 'Document Watermark', idParam: 'document_watermark_id', idExample: ID,
     searchParam: null,
     listRow: row,
-    createBody: { watermark: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...' },
+    createBody: { watermark_name: 'Company Logo', watermark: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...' },
     createdField: 'document_watermark_id', createdIdExample: ID,
-    extraCreate400: ['watermark must be a valid base64 encoded string'],
-    extraUpdate400: ['watermark must be a valid base64 encoded string'],
+    extraCreate400: ['watermark is required', 'watermark_name must be 255 characters or fewer', 'watermark must be a valid base64 encoded string'],
+    extraUpdate400: ['watermark_name cannot be empty', 'watermark_name must be 255 characters or fewer', 'watermark must be a valid base64 encoded string'],
     messages: {
       listFound: 'Document watermarks found', listEmpty: 'No document watermarks found', itemFound: 'Document watermark found',
       itemNotFound: 'Document watermark not found', created: 'Document watermark created successfully',
-      requiredMessage: 'watermark is required', duplicate: null,
+      requiredMessage: 'watermark_name is required', duplicate: null,
       updated: 'Document watermark updated successfully', noFields: 'No fields provided for update',
       deleted: 'Document watermark deleted successfully',
     },
-    notes: 'Company-scoped. watermark stored as BLOB, transmitted base64-encoded both ways. PUT requires watermark to be present and non-empty — no partial-update path (unlike most modules).',
+    notes: 'Company-scoped. List is metadata only (no image) — GET /{id} returns the base64 image. POST requires watermark_name + watermark; PUT accepts either or both (rename without re-uploading). Writes need master.document_watermark.manage.',
   }));
 }
 

@@ -7,6 +7,24 @@ Intended audience: frontend developers.
 
 ---
 
+## [2026-10-19 21:30:15 WIB] — Document watermark: names, working create/list
+
+### Added
+- `watermark_name` on `document-watermark` — **required** on `POST` (1–255 chars, trimmed), optional on `PUT`, returned by list and detail. New column added in `v45_document_watermark_name.md` (applied to `aluria_dev`, **not yet to prod `aluria`**).
+- `PUT /api/v2/document-watermark/{id}` now accepts `watermark_name` and/or `watermark` — rename without re-uploading the image.
+- Permission keys `master.document_watermark.manage` and `master.salary_category.manage` added to the catalog (`v46_watermark_salary_category_permission_seed.md`). **Not assigned to any role** — writes on both modules return `403` until a role is granted them.
+
+### Fixed
+- `GET /api/v2/document-watermark` always returned an empty list: it selected a `watermark_name` column that didn't exist, and the failed query was turned into `data: []`. It now returns the rows, and a failed query returns `500` with `error_id` instead of an empty list.
+- `POST` (and image replacement on `PUT`) always failed with `500 Column 'watermark' cannot be null` — the image was bound as a string parameter, so `send_long_data()` never reached MySQL. It's now bound as a blob.
+
+### Notes for frontend
+- The list is metadata only (no image) — fetch `GET /{id}` per watermark to preview.
+- Pre-existing watermarks have `watermark_name: null`; show a fallback label.
+- Page size default and max is 15.
+
+---
+
 ## [2026-08-13 12:55:00 WIB] — Profile module (new, self-service)
 
 ### Added
