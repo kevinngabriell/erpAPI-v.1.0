@@ -124,6 +124,9 @@ switch ($module) {
     case 'document-watermark':
         require __DIR__ . '/master/document-watermark/index.php';
         break;
+    case 'document-signature':
+        require __DIR__ . '/master/document-signature/index.php';
+        break;
     case 'company-setting-menu':
         $sub_action = $parts[4] ?? '';
         if ($sub_action === 'details') {

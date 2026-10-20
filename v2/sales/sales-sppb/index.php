@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../connection/db.php';
 require_once __DIR__ . '/../../helpers/audit_log.php';
 require_once __DIR__ . '/../../helpers/excel_export.php';
 require_once __DIR__ . '/../../helpers/notification.php';
+require_once __DIR__ . '/../../helpers/pagination.php';
 require_once __DIR__ . '/../../helpers/permission.php';
 
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
@@ -46,9 +47,7 @@ function generateSalesSppbNumber($conn, $company_id) {
 }
 
 function getAllSalesSppbs($conn, $company_id, $params) {
-    $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
-    $offset = ($page - 1) * $limit;
+    $paging = resolveListPaging($params);
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
     $search = str_replace(['%', '_'], ['\%', '\_'], $search);
 
@@ -89,29 +88,19 @@ function getAllSalesSppbs($conn, $company_id, $params) {
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by,
             CONCAT(au.first_name, ' ', au.last_name) AS approved_by
-            FROM $from WHERE $where ORDER BY ssp.created_at DESC LIMIT $limit OFFSET $offset");
+            FROM $from WHERE $where ORDER BY ssp.created_at DESC" . sqlLimitClause($paging));
     $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM $from WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
         jsonResponse(200, 'Sales SPPBs found', [
             'data'       => mysqli_fetch_all($result, MYSQLI_ASSOC),
-            'pagination' => [
-                'total'       => $total,
-                'page'        => $page,
-                'limit'       => $limit,
-                'total_pages' => (int)ceil($total / $limit),
-            ],
+            'pagination' => buildPagination($paging, $total),
         ]);
     } else {
         jsonResponse(200, 'No sales SPPBs found', [
             'data'       => [],
-            'pagination' => [
-                'total'       => $total,
-                'page'        => $page,
-                'limit'       => $limit,
-                'total_pages' => (int)ceil($total / $limit),
-            ],
+            'pagination' => buildPagination($paging, $total),
         ]);
     }
 }
@@ -573,9 +562,10 @@ function exportSalesSppb($conn, $sales_sppb_id, $company_id) {
     $sheet->setCellValue("C$row", ($sales_sppb['created_by_name'] ?? '-') . ' pada ' . $sales_sppb['created_at']);
     $sheet->setCellValue("E$row", ($sales_sppb['approved_by_name'] ?? '-') . ' pada ' . ($sales_sppb['approved_at'] ?? '-'));
     $row += 3;
-    $sheet->setCellValue("A$row", '( ADMIN SALES )');
-    $sheet->setCellValue("C$row", '( TUKAR FAKTUR )');
-    $sheet->setCellValue("E$row", '( SULANTO )    ( IRENE )');
+    $signatures = getDocumentSignatures($conn, $company_id, 'sales_sppb');
+    $sheet->setCellValue("A$row", $signatures['created']);
+    $sheet->setCellValue("C$row", $signatures['acknowledged']);
+    $sheet->setCellValue("E$row", $signatures['approved']);
 
     foreach (range('A', 'J') as $col) {
         $sheet->getColumnDimension($col)->setAutoSize(true);

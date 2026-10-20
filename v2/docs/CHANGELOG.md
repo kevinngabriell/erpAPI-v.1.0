@@ -7,6 +7,17 @@ Intended audience: frontend developers.
 
 ---
 
+## [2026-10-20 WIB] — Per-company export signers; `limit=all` on sales lists
+
+### Added
+- `GET /document-signature`, `PUT /document-signature/{document_type}` — configurable signer names for the Sales Order / SPPB / Sales Profit `.xlsx` exports (permission `master.document_signature.manage`). See [document-signature.md](api/document-signature.md).
+- `limit=all` on `GET /sales-order`, `/sales-sppb`, `/sales-delivery`, `/sales-invoice`, `/sales-profit` (list exports). Other limits remain capped at 15.
+
+### Changed
+- Sales Order / SPPB / Sales Profit exports no longer print the hardcoded Venken signers; they read `document_signature` (Venken companies are seeded with the previous values). Requires migration v49.
+
+---
+
 ## [2026-10-20 WIB] — Document watermark: object-storage images
 
 ### Added
