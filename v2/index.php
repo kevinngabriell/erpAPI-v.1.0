@@ -115,6 +115,9 @@ switch ($module) {
     case 'product':
         require __DIR__ . '/master/product/index.php';
         break;
+    case 'files':
+        require __DIR__ . '/files/index.php';
+        break;
     case 'document-center':
         require __DIR__ . '/master/document-center/index.php';
         break;
