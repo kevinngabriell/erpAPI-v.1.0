@@ -3,6 +3,7 @@
 require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
 require_once __DIR__ . '/../../helpers/audit_log.php';
+require_once __DIR__ . '/../../helpers/pagination.php';
 require_once __DIR__ . '/../../helpers/notification.php';
 require_once __DIR__ . '/../../helpers/excel_export.php';
 require_once __DIR__ . '/../../helpers/word_export.php';
@@ -74,6 +75,21 @@ function generatePurchaseOrderNumber($conn, $company_id, $params) {
     jsonResponse(200, 'Purchase order number generated successfully', ['po_display_number' => $po_display_number]);
 }
 
+// Delivery address shown on Purchase Order (Local) — the authenticated company's own address,
+// not a per-PO field.
+function getDeliveryAddress($conn, $company_id) {
+    $result = mysqli_query($conn, "SELECT company_name, company_address FROM " . CORE_SCHEMA . ".app_company WHERE company_id = '$company_id' LIMIT 1");
+    $row    = $result ? mysqli_fetch_assoc($result) : null;
+    if (!$row) {
+        jsonResponse(404, 'Company not found');
+        return;
+    }
+    jsonResponse(200, 'Delivery address retrieved', [
+        'company_name'     => $row['company_name'] ?? '',
+        'delivery_address' => $row['company_address'] ?? '',
+    ]);
+}
+
 function getShippingMarksDefault($conn, $company_id) {
     $shipping_marks_default = getCompanySetting($conn, $company_id, PURCHASE_ORDER_SHIPPING_MARKS_KEY, '');
     jsonResponse(200, 'Shipping marks default retrieved', ['shipping_marks_default' => $shipping_marks_default]);
@@ -93,9 +109,7 @@ function updateShippingMarksDefault($conn, $input, $username, $company_id) {
 }
 
 function getAllPurchaseOrders($conn, $company_id, $params) {
-    $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
-    $offset = ($page - 1) * $limit;
+    $paging = resolveListPaging($params);
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
     $search = str_replace(['%', '_'], ['\%', '\_'], $search);
 
@@ -143,29 +157,19 @@ function getAllPurchaseOrders($conn, $company_id, $params) {
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by,
             CONCAT(au.first_name, ' ', au.last_name) AS approved_by
-            FROM $from WHERE $where ORDER BY po.created_at DESC LIMIT $limit OFFSET $offset");
+            FROM $from WHERE $where ORDER BY po.created_at DESC " . sqlLimitClause($paging));
     $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".purchase_order po WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
         jsonResponse(200, 'Purchase orders found', [
             'data'       => mysqli_fetch_all($result, MYSQLI_ASSOC),
-            'pagination' => [
-                'total'       => $total,
-                'page'        => $page,
-                'limit'       => $limit,
-                'total_pages' => (int)ceil($total / $limit),
-            ],
+            'pagination' => buildPagination($paging, $total),
         ]);
     } else {
         jsonResponse(200, 'Purchase orders found', [
             'data'       => [],
-            'pagination' => [
-                'total'       => $total,
-                'page'        => $page,
-                'limit'       => $limit,
-                'total_pages' => (int)ceil($total / $limit),
-            ],
+            'pagination' => buildPagination($paging, $total),
         ]);
     }
 }
@@ -556,9 +560,12 @@ function exportPurchaseOrder($conn, $purchase_order_id, $company_id) {
             LEFT JOIN " . APP_SCHEMA . ".payment_method pm ON pm.id = po.payment_method_id
             LEFT JOIN " . APP_SCHEMA . ".origin o ON o.id = po.origin_id
             LEFT JOIN " . APP_SCHEMA . ".purchase_type pty ON pty.id = po.type_id
-            LEFT JOIN " . APP_SCHEMA . ".ppn_type ppn ON ppn.id = po.ppn_type_id";
+            LEFT JOIN " . APP_SCHEMA . ".ppn_type ppn ON ppn.id = po.ppn_type_id
+            LEFT JOIN " . APP_SCHEMA . ".currency cur ON cur.id = po.currency_id
+            LEFT JOIN " . CORE_SCHEMA . ".app_company co ON co.company_id = po.company_id";
     $result = mysqli_query($conn, "SELECT po.*, s.supplier_name, s.supplier_address, s.supplier_pic_name,
-            pt.term_name, pm.method_name, o.origin_name, pty.type_name, ppn.ppn_percentage
+            pt.term_name, pm.method_name, o.origin_name, pty.type_name, ppn.ppn_percentage, cur.currency_code,
+            co.company_name, co.company_address
             FROM $from WHERE po.id = '$purchase_order_id' AND po.company_id = '$company_id' AND po.deleted_at IS NULL LIMIT 1");
     if (!$result || mysqli_num_rows($result) === 0) {
         jsonResponse(404, 'Purchase order not found');
@@ -568,16 +575,27 @@ function exportPurchaseOrder($conn, $purchase_order_id, $company_id) {
 
     $items_result = mysqli_query($conn, "SELECT product_name, quantity, packaging_size, unit_price
             FROM " . APP_SCHEMA . ".purchase_order_item
-            WHERE purchase_order_id = '$purchase_order_id' AND deleted_at IS NULL ORDER BY created_at ASC LIMIT 5");
+            WHERE purchase_order_id = '$purchase_order_id' AND deleted_at IS NULL ORDER BY created_at ASC");
     $items = $items_result ? mysqli_fetch_all($items_result, MYSQLI_ASSOC) : [];
 
     $type_name = strtolower($purchase_order['type_name'] ?? '');
-    if (str_contains($type_name, 'import')) {
-        exportPurchaseOrderImport($purchase_order, $items);
-    } elseif (str_contains($type_name, 'local')) {
-        exportPurchaseOrderLocal($purchase_order, $items);
-    } else {
+    $is_import = str_contains($type_name, 'import');
+    $is_local  = str_contains($type_name, 'local');
+
+    if (!$is_import && !$is_local) {
         jsonResponse(400, 'Export template is not configured for purchase type "' . ($purchase_order['type_name'] ?? '-') . '"');
+        return;
+    }
+
+    // The bundled .docx templates carry PT Venken's letterhead, signer, invoice-under and
+    // delivery address, so only that company may use them; everyone else gets a generic
+    // document built from their own company profile.
+    if (stripos($purchase_order['company_name'] ?? '', 'venken') === false) {
+        exportPurchaseOrderGeneric($purchase_order, $items, $is_import);
+    } elseif ($is_import) {
+        exportPurchaseOrderImport($purchase_order, $items);
+    } else {
+        exportPurchaseOrderLocal($purchase_order, $items);
     }
 }
 
@@ -599,6 +617,90 @@ function fillPurchaseOrderItemPlaceholders(TemplateProcessor $template, array $i
     }
 
     return $grand_total;
+}
+
+function exportPurchaseOrderGeneric($purchase_order, $items, bool $is_import) {
+    $document = new \PhpOffice\PhpWord\PhpWord();
+    $section  = $document->addSection();
+
+    $section->addText($purchase_order['company_name'] ?? '', ['bold' => true, 'size' => 14], ['alignment' => 'center']);
+    if (!empty($purchase_order['company_address'])) {
+        $section->addText($purchase_order['company_address'], ['size' => 9], ['alignment' => 'center']);
+    }
+    $section->addTextBreak();
+    $section->addText('PURCHASE ORDER', ['bold' => true, 'size' => 14], ['alignment' => 'center']);
+    $section->addTextBreak();
+
+    $info_rows = [
+        ['To :', $purchase_order['supplier_name'] ?? '-', 'No :', $purchase_order['po_display_number'] ?? '-'],
+        ['Address :', $purchase_order['supplier_address'] ?? '-', 'Date :', formatIndonesianDate($purchase_order['po_date'] ?? null)],
+        ['Attn :', $purchase_order['supplier_pic_name'] ?? '-', 'Payment :', $purchase_order['method_name'] ?? '-'],
+    ];
+    if ($is_import) {
+        $info_rows[] = ['Term :', $purchase_order['term_name'] ?? '-', 'Origin :', $purchase_order['origin_name'] ?? '-'];
+        $info_rows[] = ['Shipment :', $purchase_order['shipment_method'] ?? '-', 'Shipping Marks :', $purchase_order['shipping_marks'] ?? '-'];
+    } else {
+        $info_rows[] = ['Delivery :', formatIndonesianDate($purchase_order['eta_date'] ?? $purchase_order['po_date'] ?? null), 'Delivery Address :', $purchase_order['company_address'] ?? '-'];
+    }
+
+    $info_table = $section->addTable(['cellMargin' => 80]);
+    foreach ($info_rows as $row) {
+        $info_table->addRow();
+        $info_table->addCell(1800)->addText($row[0]);
+        $info_table->addCell(3500)->addText($row[1]);
+        $info_table->addCell(2000)->addText($row[2]);
+        $info_table->addCell(3500)->addText($row[3]);
+    }
+    $section->addTextBreak();
+
+    $currency     = $purchase_order['currency_code'] ?: ($is_import ? 'USD' : 'IDR');
+    $border_style = ['borderSize' => 6, 'borderColor' => '000000'];
+    $item_table   = $section->addTable($border_style);
+    $item_table->addRow();
+    foreach (['NO', 'PRODUCT', 'QUANTITY (Kg)', 'PACKING SIZE (Kg)', "UNIT PRICE ($currency)", "TOTAL ($currency)"] as $header) {
+        $item_table->addCell(1600, $border_style)->addText($header, ['bold' => true], ['alignment' => 'center']);
+    }
+
+    $grand_total = 0;
+    foreach ($items as $i => $item) {
+        $item_total   = (float)$item['quantity'] * (float)$item['unit_price'];
+        $grand_total += $item_total;
+        $item_table->addRow();
+        $item_table->addCell(1600, $border_style)->addText((string)($i + 1), [], ['alignment' => 'center']);
+        $item_table->addCell(1600, $border_style)->addText($item['product_name'] ?? '');
+        $item_table->addCell(1600, $border_style)->addText(number_format((float)$item['quantity'], 0), [], ['alignment' => 'center']);
+        $item_table->addCell(1600, $border_style)->addText((string)$item['packaging_size'], [], ['alignment' => 'center']);
+        $item_table->addCell(1600, $border_style)->addText(number_format((float)$item['unit_price'], 2), [], ['alignment' => 'right']);
+        $item_table->addCell(1600, $border_style)->addText(number_format($item_total, 2), [], ['alignment' => 'right']);
+    }
+
+    $add_total_row = function ($label, $value, $bold = false) use ($item_table, $border_style) {
+        $item_table->addRow();
+        $item_table->addCell(8000, $border_style + ['gridSpan' => 5])->addText($label, ['bold' => $bold], ['alignment' => 'right']);
+        $item_table->addCell(1600, $border_style)->addText(number_format($value, 2), ['bold' => $bold], ['alignment' => 'right']);
+    };
+
+    $ppn_percentage = (float)($purchase_order['ppn_percentage'] ?? 0);
+    if (!$is_import && $ppn_percentage != 0) {
+        $tax = $grand_total * ($ppn_percentage / 100);
+        $add_total_row('Subtotal', $grand_total);
+        $add_total_row('VAT ' . rtrim(rtrim(number_format($ppn_percentage, 2), '0'), '.') . ' %', $tax);
+        $add_total_row('TOTAL', $grand_total + $tax, true);
+    } else {
+        $add_total_row('TOTAL', $grand_total, true);
+    }
+
+    if (!empty($purchase_order['remarks'])) {
+        $section->addTextBreak();
+        $section->addText('Remarks : ' . $purchase_order['remarks']);
+    }
+
+    $section->addTextBreak(2);
+    $section->addText('Sincerely Yours,');
+    $section->addTextBreak(3);
+    $section->addText('( ____________________ )');
+
+    streamDocx($document, ($is_import ? 'POImport-' : 'POLocal-') . sanitizeFilename($purchase_order['po_display_number']) . '.docx');
 }
 
 function exportPurchaseOrderImport($purchase_order, $items) {
@@ -670,6 +772,10 @@ try {
     if ($purchase_order_id === 'generate-number' && $sub_action === '') {
         if ($method !== 'GET') { methodNotAllowed(['GET']); }
         generatePurchaseOrderNumber($conn, $company_id, $_GET);
+
+    } elseif ($purchase_order_id === 'settings' && $sub_action === 'delivery-address') {
+        if ($method !== 'GET') { methodNotAllowed(['GET']); }
+        getDeliveryAddress($conn, $company_id);
 
     } elseif ($purchase_order_id === 'settings' && $sub_action === 'shipping-marks-default') {
         switch ($method) {

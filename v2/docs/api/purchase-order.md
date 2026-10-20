@@ -11,6 +11,7 @@
 | Method | Path | Description |
 |--------|------|-------------|
 | GET    | `/api/v2/purchase-order/generate-number` | Generate the next `po_display_number` for the given purchase type |
+| GET    | `/api/v2/purchase-order/settings/delivery-address` | Get the authenticated company's name and address (delivery address shown on Purchase Order Local) |
 | GET    | `/api/v2/purchase-order/settings/shipping-marks-default` | Get the authenticated company's default "Shipping Marks" template text |
 | PUT    | `/api/v2/purchase-order/settings/shipping-marks-default` | Set the authenticated company's default "Shipping Marks" template text |
 | GET    | `/api/v2/purchase-order` | List all purchase orders (paginated) |
@@ -95,6 +96,16 @@ A purchase type with no `number_format` configured (e.g. a newly created type) c
 
 ---
 
+### GET `/api/v2/purchase-order/settings/delivery-address`
+
+Returns the authenticated company's own name and address (`app_company.company_name` / `company_address`). The Purchase Order (Local) form shows it as the read-only "Delivery Address". `delivery_address` is `""` if the company has no address on file.
+
+```json
+{ "status_code": 200, "status_message": "Delivery address retrieved", "data": { "company_name": "PT Maju Bersama", "delivery_address": "Jl. ..." } }
+```
+
+---
+
 ### GET `/api/v2/purchase-order/settings/shipping-marks-default`
 
 Get the authenticated company's default "Shipping Marks" template text — the prefill text a client should use to seed the free-text `shipping_marks` field on `POST /api/v2/purchase-order` (e.g. on the New Purchase Order (Import) form). This is a per-company setting, not a purchase-order field.
@@ -158,7 +169,7 @@ List all purchase orders belonging to the authenticated company.
 | Parameter   | Type   | Required | Default | Description |
 |-------------|--------|----------|---------|-------------|
 | page        | int    | No       | 1       | Page number |
-| limit       | int    | No       | 10      | Items per page (max 100) |
+| limit       | int/string | No | 15 | Items per page (max 15), or `all` to return every matching row (used by list exports) |
 | search      | string | No       | —       | Search on `po_display_number` |
 | status_id   | string | No       | —       | Filter by `status_id` |
 | supplier_id | string | No       | —       | Filter by `supplier_id` |
@@ -919,3 +930,5 @@ Soft-deletes the purchase order item (sets `deleted_at`) — it will no longer a
 - **`POST` (create) and `PATCH .../approve`/`.../reject` now trigger notifications** — in-app + WhatsApp to the users holding `notification.purchase_order.approver` on create, and to the order's creator on approve/reject. This is a side effect only; it does not change this endpoint's own request/response shape. See `notification.md`.
 - **`GET .../export` reuses the legacy v1 Word templates** (`v2/purchase/purchase-order/templates/template.docx` for Import, `local_template.docx` for Local), rendered via `PhpOffice\PhpWord\TemplateProcessor` with its macro delimiters reconfigured to the templates' original `{placeholder}` syntax (PhpWord's own default is `${placeholder}`). Since `purchase_type` is now a free-form, per-company table rather than two fixed system types, template selection matches on `type_name` containing `"import"`/`"local"` (case-insensitive) rather than a hardcoded type ID; a type that matches neither returns `400`.
 - **`settings/shipping-marks-default` is not a purchase order record** — it is stored in the generic per-company `company_setting` key/value table (same mechanism `notification-settings`'s `working-days` endpoint uses), under the key `purchase_order.shipping_marks_default`. It has no `id` of its own and does not appear in `GET /api/v2/purchase-order` or any purchase order's detail response. `PUT` updates write an `audit_log` row (`module: company_setting`, `reference_id: purchase_order.shipping_marks_default`, action `updated`).
+
+- **`GET .../export` template per company** — the bundled `.docx` templates carry PT Venken's letterhead, signer, invoice-under and delivery address, so they are used only when `app_company.company_name` contains "venken". Any other company gets a generic `PhpWord` document (company name/address header, all items, delivery address = company address for Local).
