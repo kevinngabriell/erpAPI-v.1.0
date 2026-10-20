@@ -45,6 +45,7 @@ _(No `search` parameter exists for this module.)_
         "id": "b2021da7-d673-45ba-9728-03f257534084",
         "company_id": "cmp0fcd1b1c010aa508",
         "watermark_name": "Company Logo",
+        "file_key": null,
         "created_by": "Budi Santoso",
         "created_at": "2026-10-19 21:20:00",
         "updated_by": null,
@@ -78,7 +79,8 @@ Create a new document watermark.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | watermark_name | string | Yes | Display name, trimmed, 1–255 characters. |
-| watermark | string (base64) | Yes | Image bytes, base64-encoded, no `data:` prefix. Rejected with 400 if not valid base64. |
+| watermark | string (base64) | One of `watermark` / `file_key` | Legacy inline image, base64-encoded, no `data:` prefix. Rejected with 400 if not valid base64. |
+| file_key | string | One of `watermark` / `file_key` | Object-storage key from `POST /api/v2/files` (must start with the caller's `company_id/`). Preferred for new uploads. |
 
 #### Response `201 Created`
 
@@ -128,6 +130,7 @@ Get a single document watermark, including its image.
     "company_id": "cmp0fcd1b1c010aa508",
     "watermark_name": "Company Logo",
     "watermark": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB...",
+    "file_key": null,
     "created_by": "Budi Santoso",
     "created_at": "2026-10-19 21:20:00",
     "updated_by": "Budi Santoso",
@@ -137,7 +140,7 @@ Get a single document watermark, including its image.
 }
 ```
 
-`watermark` is the stored image, base64-encoded (no MIME type is stored — detect it from the bytes if needed).
+`watermark` is the stored inline image, base64-encoded (no MIME type is stored — detect it from the bytes if needed). It is `null` when the image lives in object storage; then `file_key` is set and `GET /api/v2/files?key=<file_key>` returns a pre-signed URL.
 
 #### Response `404 Not Found`
 
@@ -167,7 +170,8 @@ Rename a watermark, replace its image, or both. Send only what you want to chang
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | watermark_name | string | No | New name, trimmed, 1–255 characters. Cannot be cleared to empty. |
-| watermark | string (base64) | No | New image, base64-encoded. An empty string is treated as "not sent". |
+| watermark | string (base64) | No | New inline image, base64-encoded. An empty string is treated as "not sent". Clears `file_key`. |
+| file_key | string | No | New object-storage key. Clears the inline image. |
 
 At least one of the two must be provided.
 

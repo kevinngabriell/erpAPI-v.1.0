@@ -7,6 +7,19 @@ Intended audience: frontend developers.
 
 ---
 
+## [2026-10-20 WIB] — Document watermark: object-storage images
+
+### Added
+- `document-watermark` accepts `file_key` (a key returned by `POST /api/v2/files`) on `POST` and `PUT` instead of the inline base64 `watermark`. On `POST` exactly one of `watermark` / `file_key` is required. The key must belong to the caller's company (`400` otherwise).
+- `file_key` is returned by the list and detail endpoints. Use `GET /api/v2/files?key=` for a pre-signed preview/download URL.
+- Migration `v48_document_watermark_file_key.md` (**not yet applied** to `aluria_dev` / `aluria`).
+
+### Notes for frontend
+- Legacy rows keep `file_key: null` and their inline `watermark`; detail returns `watermark: null` for object-storage rows.
+- Setting `file_key` on `PUT` clears the inline image and vice versa.
+
+---
+
 ## [2026-10-19 21:30:15 WIB] — Document watermark: names, working create/list
 
 ### Added
