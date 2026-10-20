@@ -562,7 +562,7 @@ function exportPurchaseOrder($conn, $purchase_order_id, $company_id) {
             LEFT JOIN " . APP_SCHEMA . ".purchase_type pty ON pty.id = po.type_id
             LEFT JOIN " . APP_SCHEMA . ".ppn_type ppn ON ppn.id = po.ppn_type_id
             LEFT JOIN " . APP_SCHEMA . ".currency cur ON cur.id = po.currency_id
-            LEFT JOIN " . CORE_SCHEMA . ".app_company co ON co.company_id = po.company_id";
+            LEFT JOIN " . CORE_SCHEMA . ".app_company co ON co.company_id COLLATE utf8mb4_general_ci = po.company_id";
     $result = mysqli_query($conn, "SELECT po.*, s.supplier_name, s.supplier_address, s.supplier_pic_name,
             pt.term_name, pm.method_name, o.origin_name, pty.type_name, ppn.ppn_percentage, cur.currency_code,
             co.company_name, co.company_address
