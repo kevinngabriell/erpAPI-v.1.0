@@ -115,7 +115,9 @@ function getAllPurchaseOrders($conn, $company_id, $params) {
 
     $where = "po.company_id = '$company_id' AND po.deleted_at IS NULL";
     if ($search) {
-        $where .= " AND po.po_display_number LIKE '%$search%' ESCAPE '\\\\'";
+        $where .= " AND (po.po_display_number LIKE '%$search%' ESCAPE '\\\\'
+                      OR s.supplier_name LIKE '%$search%' ESCAPE '\\\\'
+                      OR o.origin_name LIKE '%$search%' ESCAPE '\\\\')";
     }
     if (isset($params['status_id']) && trim($params['status_id']) !== '') {
         $status_id = mysqli_real_escape_string($conn, $params['status_id']);
@@ -158,7 +160,7 @@ function getAllPurchaseOrders($conn, $company_id, $params) {
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by,
             CONCAT(au.first_name, ' ', au.last_name) AS approved_by
             FROM $from WHERE $where ORDER BY po.created_at DESC " . sqlLimitClause($paging));
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".purchase_order po WHERE $where");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM $from WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
