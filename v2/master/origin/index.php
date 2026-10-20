@@ -109,7 +109,8 @@ function getDetailOrigin($conn, $origin_id) {
 
     $origin = mysqli_fetch_assoc($result);
     $origin['is_free_trade'] = (bool)(int)$origin['is_free_trade'];
-    unset($origin['region_id']);
+    // region_id stays in the detail response (the list omits it) so an edit form
+    // can preselect the region without a second lookup.
 
     jsonResponse(200, 'Origin found', $origin);
 }
