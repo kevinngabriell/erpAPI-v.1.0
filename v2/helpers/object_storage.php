@@ -77,11 +77,15 @@ function s3Request(string $method, string $key, string $payload = '', array $ext
 }
 
 function s3PutObject(string $key, string $content, string $contentType): void {
-    [$code, $body] = s3Request('PUT', $key, $content, ['content-type' => $contentType]);
-    if ($code < 200 || $code >= 300) {
-        error_log("S3 PUT $key failed ($code): $body");
-        throw new RuntimeException('Failed to upload file to object storage');
+    // Cloudeka's gateway intermittently returns 5xx under load; a retry usually succeeds.
+    for ($attempt = 1; $attempt <= 3; $attempt++) {
+        [$code, $body] = s3Request('PUT', $key, $content, ['content-type' => $contentType]);
+        if ($code >= 200 && $code < 300) return;
+        error_log("S3 PUT $key failed ($code, attempt $attempt): $body");
+        if ($code < 500) break;
+        if ($attempt < 3) usleep(500000 * $attempt);
     }
+    throw new RuntimeException("Failed to upload file to object storage (HTTP $code)");
 }
 
 function s3DeleteObject(string $key): void {
