@@ -191,10 +191,16 @@ switch ($module) {
     case 'reorder-point':
         require __DIR__ . '/warehouse/reorder-point/index.php';
         break;
+    case 'stock-report':
+        require __DIR__ . '/warehouse/stock-report/index.php';
+        break;
 
     // ── HR ───────────────────────────────────────────────────────────────────
     case 'salary-transaction':
         require __DIR__ . '/hr/salary-transaction/index.php';
+        break;
+    case 'employee':
+        require __DIR__ . '/hr/employee/index.php';
         break;
 
     // ── Audit ────────────────────────────────────────────────────────────────

@@ -7,6 +7,15 @@ Intended audience: frontend developers.
 
 ---
 
+## [2026-10-21 WIB] — Stock report (weekly / monthly / yearly); employee directory
+
+### Added
+- `GET /employee` and `GET /employee/{user_id}` — read-only employee directory: `app_user` rows for this app and the caller's company, with role (`role_name`), position (`position_name`), `employee_profile` HR fields, and a status/role summary. See [employee.md](api/employee.md).
+- `GET /stock-report` and `GET /stock-report/export` (`.xlsx`) — per-product opening balance, in, out, closing balance and per-day / per-month movement for `period=weekly|monthly|yearly`. Replaces the v1 `warehouse/weeklyreport.php`, `exportmonthlyreport.php` and `exportyearlyreport.php`, which no longer exist. See [stock-report.md](api/stock-report.md).
+- Migration `v52_legacy_warehouse_movement_direction.md` (**not yet applied** to `aluria_dev` / `aluria`). It restores the `stock_in` / `stock_out` type of movements that the v1 migration imported as positive `adjustment`s. Until it is applied, the stock report shows negative opening balances for migrated products.
+
+---
+
 ## [2026-10-20 WIB] — Per-company export signers; `limit=all` on sales lists
 
 ### Added
