@@ -3,28 +3,11 @@ require_once __DIR__ . '/../general.php';
 require_once __DIR__ . '/../helpers/auth_response.php';
 require_once __DIR__ . '/../helpers/rate_limit.php';
 require_once __DIR__ . '/../helpers/password_policy.php';
+require_once __DIR__ . '/../helpers/auth_log.php';
 
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
 header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
-
-function writeRegisterLog($conn, string $action, ?string $user_id, string $username): void {
-    $log_id = generateUUID();
-    $ip     = substr(getUserIP(), 0, 45);
-    $ua     = substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 500);
-    $module = 'auth';
-    $now    = date('Y-m-d H:i:s');
-
-    $stmt = $conn->prepare(
-        "INSERT INTO " . CORE_SCHEMA . ".log (id, action, ip_address, module, resource_id, `timestamp`, user_agent, username)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-    );
-    if ($stmt) {
-        $stmt->bind_param('ssssssss', $log_id, $action, $ip, $module, $user_id, $now, $ua, $username);
-        $stmt->execute();
-        $stmt->close();
-    }
-}
 
 function registerUser($conn, $input): void {
     // 1. Required field validation
@@ -86,7 +69,7 @@ function registerUser($conn, $input): void {
     // 5. IP rate limit — 10 per hour
     $ip = getUserIP();
     if (checkRateLimitByIP($conn, $ip, 'register', 10, 60)) {
-        writeRegisterLog($conn, 'register_failed', null, $email);
+        writeAuthLog($conn, 'register_failed', null, $email);
         authResponse(429, 'Too many registration attempts. Please try again later.', 'RATE_003');
         return;
     }
@@ -114,12 +97,12 @@ function registerUser($conn, $input): void {
     $stmt->close();
 
     if (!$company_row) {
-        writeRegisterLog($conn, 'register_failed', null, $email);
+        writeAuthLog($conn, 'register_failed', null, $email);
         authResponse(404, 'Company not found. Please check your company code.', 'REG_001');
         return;
     }
     if ($company_row['status'] !== 'active') {
-        writeRegisterLog($conn, 'register_failed', null, $email);
+        writeAuthLog($conn, 'register_failed', null, $email);
         authResponse(422, 'This company account is not active.', 'REG_002');
         return;
     }
@@ -139,16 +122,16 @@ function registerUser($conn, $input): void {
     $stmt->close();
 
     if ($dup) {
-        writeRegisterLog($conn, 'register_failed', null, $email);
+        writeAuthLog($conn, 'register_failed', null, $email);
         authResponse(409, 'An account with this email already exists.', 'REG_003');
         return;
     }
 
     // 9. Validate OTP
     $stmt = $conn->prepare(
-        "SELECT otp_id, otp_code, attempt_count
+        "SELECT otp_id, otp_hash, attempt_count
          FROM " . CORE_SCHEMA . ".otp_codes
-         WHERE identifier = ? AND purpose = 'register' AND is_used = 0 AND expire_at > NOW()
+         WHERE identifier = ? AND purpose = 'register' AND used_at IS NULL AND expire_at > NOW()
          LIMIT 1"
     );
     $stmt->bind_param('s', $email);
@@ -157,7 +140,7 @@ function registerUser($conn, $input): void {
     $stmt->close();
 
     if (!$otp_row) {
-        writeRegisterLog($conn, 'register_failed', null, $email);
+        writeAuthLog($conn, 'register_failed', null, $email);
         authResponse(400, 'Invalid or expired OTP code.', 'REG_004');
         return;
     }
@@ -165,7 +148,7 @@ function registerUser($conn, $input): void {
         authResponse(429, 'Too many OTP attempts. Request a new code.', 'REG_005');
         return;
     }
-    if ($otp_row['otp_code'] !== $otp_code) {
+    if ($otp_row['otp_hash'] !== hash_hmac('sha256', $otp_code, OTP_PEPPER)) {
         $stmt = $conn->prepare(
             "UPDATE " . CORE_SCHEMA . ".otp_codes SET attempt_count = attempt_count + 1 WHERE otp_id = ?"
         );
@@ -174,7 +157,7 @@ function registerUser($conn, $input): void {
             $stmt->execute();
             $stmt->close();
         }
-        writeRegisterLog($conn, 'register_failed', null, $email);
+        writeAuthLog($conn, 'register_failed', null, $email);
         authResponse(400, 'Invalid or expired OTP code.', 'REG_004');
         return;
     }
@@ -255,7 +238,7 @@ function registerUser($conn, $input): void {
 
         // Mark OTP as used
         $stmt = $conn->prepare(
-            "UPDATE " . CORE_SCHEMA . ".otp_codes SET is_used = 1, used_at = ? WHERE otp_id = ?"
+            "UPDATE " . CORE_SCHEMA . ".otp_codes SET used_at = ? WHERE otp_id = ?"
         );
         $stmt->bind_param('ss', $now, $otp_id);
         $stmt->execute();
@@ -265,13 +248,13 @@ function registerUser($conn, $input): void {
 
     } catch (Exception $e) {
         $conn->rollback();
-        writeRegisterLog($conn, 'register_failed', null, $email);
+        writeAuthLog($conn, 'register_failed', null, $email);
         authResponse(500, 'An unexpected error occurred. Please try again.');
         return;
     }
 
     // 13. Audit log
-    writeRegisterLog($conn, 'register_success', $user_id, $email);
+    writeAuthLog($conn, 'register_success', $user_id, $email);
 
     authResponse(201, 'Registration successful. Your account is pending approval by your company administrator.', null, [
         'user_id'        => $user_id,
@@ -287,15 +270,19 @@ try {
     $method = $_SERVER['REQUEST_METHOD'];
     $conn   = getConn();
 
+    validateJsonContentType();
+
     switch ($method) {
         case 'POST':
             $input = json_decode(file_get_contents('php://input'), true) ?? [];
             registerUser($conn, $input);
             break;
         default:
-            authResponse(405, 'Method not allowed');
+            methodNotAllowed(['POST']);
     }
 
 } catch (Exception $e) {
-    authResponse(500, 'An unexpected error occurred. Please try again.');
+    authResponse(500, 'An unexpected error occurred. Please try again. Reference ID: ' . requestId(), null,
+        safeErrorResponse($e)
+    );
 }

@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
+require_once __DIR__ . '/../../helpers/permission.php';
 require_once __DIR__ . '/../../helpers/excel_export.php';
 
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
@@ -26,12 +27,13 @@ function fetchArRows($conn, $company_id) {
         LEFT JOIN " . APP_SCHEMA . ".sales_invoice si ON si.invoice_display_number = fp.invoice_number AND si.company_id = fp.company_id
         WHERE fp.company_id = '$company_id' AND fp.customer_id IS NOT NULL AND fp.deleted_at IS NULL
         GROUP BY fp.invoice_number, c.customer_name, c.id, si.invoice_date, c.customer_top_days
-        HAVING outstanding > 0");
+        HAVING outstanding > 0
+        LIMIT 100");
 
     $rows = mysqli_fetch_all($result, MYSQLI_ASSOC);
     foreach ($rows as &$row) {
         $row['type']          = 'ar';
-        $row['outstanding']   = (float)$row['outstanding'];
+        $row['outstanding']   = bcadd($row['outstanding'], '0', 2);
         $row['days_overdue']  = (int)$row['days_overdue'];
         $row['bucket']        = agingBucket($row['days_overdue']);
     }
@@ -49,12 +51,13 @@ function fetchApRows($conn, $company_id) {
         LEFT JOIN " . APP_SCHEMA . ".purchase_invoice pi ON pi.invoice_display_number = fp.invoice_number AND pi.company_id = fp.company_id
         WHERE fp.company_id = '$company_id' AND fp.supplier_id IS NOT NULL AND fp.deleted_at IS NULL
         GROUP BY fp.invoice_number, s.supplier_name, s.id, pi.invoice_date, pt.days
-        HAVING outstanding > 0");
+        HAVING outstanding > 0
+        LIMIT 100");
 
     $rows = mysqli_fetch_all($result, MYSQLI_ASSOC);
     foreach ($rows as &$row) {
         $row['type']          = 'ap';
-        $row['outstanding']   = (float)$row['outstanding'];
+        $row['outstanding']   = bcadd($row['outstanding'], '0', 2);
         $row['days_overdue']  = (int)$row['days_overdue'];
         $row['bucket']        = agingBucket($row['days_overdue']);
     }
@@ -63,7 +66,7 @@ function fetchApRows($conn, $company_id) {
 
 function getArApReport($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $type   = in_array($params['type'] ?? 'all', ['ar', 'ap', 'all'], true) ? $params['type'] : 'all';
     $bucket = in_array($params['bucket'] ?? '', ['current', '30', '60', '90', '90+'], true) ? $params['bucket'] : '';
     $search = isset($params['search']) ? mb_strtolower(trim($params['search'])) : '';
@@ -91,10 +94,10 @@ function getArApReport($conn, $company_id, $params) {
     $total_pages = (int)ceil($total / $limit);
     $data        = array_slice($rows, ($page - 1) * $limit, $limit);
 
-    $receivables = ['current' => 0, '30' => 0, '60' => 0, '90' => 0, '90+' => 0];
+    $receivables = ['current' => '0.00', '30' => '0.00', '60' => '0.00', '90' => '0.00', '90+' => '0.00'];
     $payables    = $receivables;
-    foreach ($ar_rows as $row) $receivables[$row['bucket']] += $row['outstanding'];
-    foreach ($ap_rows as $row) $payables[$row['bucket']]    += $row['outstanding'];
+    foreach ($ar_rows as $row) $receivables[$row['bucket']] = bcadd($receivables[$row['bucket']], $row['outstanding'], 2);
+    foreach ($ap_rows as $row) $payables[$row['bucket']]    = bcadd($payables[$row['bucket']], $row['outstanding'], 2);
 
     jsonResponse(200, 'AR/AP report found', [
         'data'       => $data,
@@ -112,6 +115,7 @@ function getArApReport($conn, $company_id, $params) {
 }
 
 function exportArApReport($conn, $company_id, $params) {
+    // Export returns binary .xlsx content — bypasses jsonResponse()
     $type   = in_array($params['type'] ?? 'all', ['ar', 'ap', 'all'], true) ? $params['type'] : 'all';
     $bucket = in_array($params['bucket'] ?? '', ['current', '30', '60', '90', '90+'], true) ? $params['bucket'] : '';
     $search = isset($params['search']) ? mb_strtolower(trim($params['search'])) : '';
@@ -152,7 +156,7 @@ function exportArApReport($conn, $company_id, $params) {
 
     $row              = 4;
     $no               = 1;
-    $total_outstanding = 0;
+    $total_outstanding = '0.00';
     foreach ($rows as $item) {
         $sheet->setCellValue("A$row", $no);
         $sheet->setCellValue("B$row", $item['type'] === 'ar' ? 'Piutang' : 'Hutang');
@@ -164,7 +168,7 @@ function exportArApReport($conn, $company_id, $params) {
         $sheet->setCellValue("H$row", $bucket_labels[$item['bucket']]);
         $sheet->getStyle("A$row:H$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
 
-        $total_outstanding += $item['outstanding'];
+        $total_outstanding = bcadd($total_outstanding, $item['outstanding'], 2);
         $row++;
         $no++;
     }
@@ -174,10 +178,10 @@ function exportArApReport($conn, $company_id, $params) {
     $sheet->getStyle("E$row:F$row")->getFont()->setBold(true);
     $sheet->getStyle("A$row:H$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
 
-    $receivables = ['current' => 0, '30' => 0, '60' => 0, '90' => 0, '90+' => 0];
+    $receivables = ['current' => '0.00', '30' => '0.00', '60' => '0.00', '90' => '0.00', '90+' => '0.00'];
     $payables    = $receivables;
-    foreach ($ar_rows as $item) $receivables[$item['bucket']] += $item['outstanding'];
-    foreach ($ap_rows as $item) $payables[$item['bucket']]    += $item['outstanding'];
+    foreach ($ar_rows as $item) $receivables[$item['bucket']] = bcadd($receivables[$item['bucket']], $item['outstanding'], 2);
+    foreach ($ap_rows as $item) $payables[$item['bucket']]    = bcadd($payables[$item['bucket']], $item['outstanding'], 2);
 
     $row += 2;
     $sheet->setCellValue("A$row", 'RINGKASAN AGING');
@@ -207,18 +211,25 @@ function exportArApReport($conn, $company_id, $params) {
 $authUser   = requireAuth();
 $method     = $_SERVER['REQUEST_METHOD'];
 $company_id = $authUser['company_id'] ?? null;
+$app_role_id = $authUser['app_role_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
     exit;
 }
 if ($method !== 'GET') {
-    jsonResponse(405, 'Method Not Allowed');
+    methodNotAllowed(['GET']);
     exit;
 }
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+
+    if (!userHasPermission($conn, $app_role_id, 'reports.ar_ap_report.view')) {
+        jsonResponse(403, 'You do not have permission to view this report');
+        return;
+    }
 
     if ($action === 'export') {
         exportArApReport($conn, $company_id, $_GET);
@@ -226,5 +237,5 @@ try {
         getArApReport($conn, $company_id, $_GET);
     }
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

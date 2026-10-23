@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
+require_once __DIR__ . '/../../helpers/permission.php';
 require_once __DIR__ . '/../../helpers/report_dates.php';
 require_once __DIR__ . '/../../helpers/excel_export.php';
 
@@ -11,7 +12,7 @@ use PhpOffice\PhpSpreadsheet\Style\Border;
 
 function getAllGeneralLedgerAccounts($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
 
     [$date_from, $date_to] = resolveReportDateRange($params);
@@ -43,9 +44,9 @@ function getAllGeneralLedgerAccounts($conn, $company_id, $params) {
 
     $data = mysqli_fetch_all($result, MYSQLI_ASSOC);
     foreach ($data as &$row) {
-        $row['opening_balance']  = (float)$row['opening_balance'];
-        $row['period_movement']  = (float)$row['period_movement'];
-        $row['closing_balance']  = $row['opening_balance'] + $row['period_movement'];
+        $row['opening_balance']  = bcadd($row['opening_balance'], '0', 2);
+        $row['period_movement']  = bcadd($row['period_movement'], '0', 2);
+        $row['closing_balance']  = bcadd($row['opening_balance'], $row['period_movement'], 2);
     }
 
     jsonResponse(200, 'General ledger found', [
@@ -94,10 +95,10 @@ function getDetailGeneralLedgerAccount($conn, $account_code_id, $company_id, $pa
     $opening_result = mysqli_query($conn, "SELECT COALESCE(SUM(amount), 0) AS opening_balance
         FROM $combined
         WHERE account_code_id = '$account_code_id' AND transaction_date < '$date_from'");
-    $opening_balance = (float)mysqli_fetch_assoc($opening_result)['opening_balance'];
+    $opening_balance = bcadd(mysqli_fetch_assoc($opening_result)['opening_balance'], '0', 2);
 
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 20)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
 
     $where = "account_code_id = '$account_code_id' AND transaction_date BETWEEN '$date_from' AND '$date_to'";
@@ -118,14 +119,14 @@ function getDetailGeneralLedgerAccount($conn, $account_code_id, $company_id, $pa
                 WHERE $where
                 ORDER BY transaction_date ASC, created_at ASC LIMIT $offset
             ) t");
-        $preceding_balance = (float)mysqli_fetch_assoc($preceding_result)['preceding_balance'];
+        $preceding_balance = bcadd(mysqli_fetch_assoc($preceding_result)['preceding_balance'], '0', 2);
     }
 
-    $running_balance = $opening_balance + $preceding_balance;
+    $running_balance = bcadd($opening_balance, $preceding_balance, 2);
     $transactions    = mysqli_fetch_all($result, MYSQLI_ASSOC);
     foreach ($transactions as &$row) {
-        $row['account_amount']  = (float)$row['account_amount'];
-        $running_balance       += $row['account_amount'];
+        $row['account_amount']  = bcadd($row['account_amount'], '0', 2);
+        $running_balance       = bcadd($running_balance, $row['account_amount'], 2);
         $row['running_balance'] = $running_balance;
     }
 
@@ -145,6 +146,7 @@ function getDetailGeneralLedgerAccount($conn, $account_code_id, $company_id, $pa
 }
 
 function exportGeneralLedgerSummary($conn, $company_id, $params) {
+    // Export returns binary .xlsx content — bypasses jsonResponse()
     [$date_from, $date_to] = resolveReportDateRange($params);
     $date_from = mysqli_real_escape_string($conn, $date_from);
     $date_to   = mysqli_real_escape_string($conn, $date_to);
@@ -190,9 +192,9 @@ function exportGeneralLedgerSummary($conn, $company_id, $params) {
     $row = 5;
     $no  = 1;
     foreach ($rows as $account) {
-        $opening_balance = (float)$account['opening_balance'];
-        $period_movement = (float)$account['period_movement'];
-        $closing_balance = $opening_balance + $period_movement;
+        $opening_balance = bcadd($account['opening_balance'], '0', 2);
+        $period_movement = bcadd($account['period_movement'], '0', 2);
+        $closing_balance = bcadd($opening_balance, $period_movement, 2);
 
         $sheet->setCellValue("A$row", $no);
         $sheet->setCellValue("B$row", $account['account_code']);
@@ -214,6 +216,7 @@ function exportGeneralLedgerSummary($conn, $company_id, $params) {
 }
 
 function exportGeneralLedgerDetail($conn, $account_code_id, $company_id, $params) {
+    // Export returns binary .xlsx content — bypasses jsonResponse()
     $account_code_id = mysqli_real_escape_string($conn, $account_code_id);
 
     $account_result = mysqli_query($conn, "SELECT id AS account_code_id, account_code, account_code_name, account_type
@@ -246,7 +249,7 @@ function exportGeneralLedgerDetail($conn, $account_code_id, $company_id, $params
     $opening_result = mysqli_query($conn, "SELECT COALESCE(SUM(amount), 0) AS opening_balance
         FROM $combined
         WHERE account_code_id = '$account_code_id' AND transaction_date < '$date_from'");
-    $opening_balance = (float)mysqli_fetch_assoc($opening_result)['opening_balance'];
+    $opening_balance = bcadd(mysqli_fetch_assoc($opening_result)['opening_balance'], '0', 2);
 
     $result = mysqli_query($conn, "SELECT transaction_date, reference_number, memo, source, amount AS account_amount
         FROM $combined
@@ -282,8 +285,8 @@ function exportGeneralLedgerDetail($conn, $account_code_id, $company_id, $params
     $no              = 1;
     $running_balance = $opening_balance;
     foreach ($transactions as $item) {
-        $account_amount   = (float)$item['account_amount'];
-        $running_balance += $account_amount;
+        $account_amount   = bcadd($item['account_amount'], '0', 2);
+        $running_balance = bcadd($running_balance, $account_amount, 2);
 
         $sheet->setCellValue("A$row", $no);
         $sheet->setCellValue("B$row", $item['transaction_date']);
@@ -314,13 +317,14 @@ function exportGeneralLedgerDetail($conn, $account_code_id, $company_id, $params
 $authUser   = requireAuth();
 $method     = $_SERVER['REQUEST_METHOD'];
 $company_id = $authUser['company_id'] ?? null;
+$app_role_id = $authUser['app_role_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
     exit;
 }
 if ($method !== 'GET') {
-    jsonResponse(405, 'Method Not Allowed');
+    methodNotAllowed(['GET']);
     exit;
 }
 
@@ -329,6 +333,12 @@ $sub_action      = $parts[4] ?? '';
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+
+    if (!userHasPermission($conn, $app_role_id, 'reports.general_ledger.view')) {
+        jsonResponse(403, 'You do not have permission to view this report');
+        return;
+    }
 
     if ($account_code_id === 'export') {
         exportGeneralLedgerSummary($conn, $company_id, $_GET);
@@ -340,5 +350,5 @@ try {
         getAllGeneralLedgerAccounts($conn, $company_id, $_GET);
     }
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

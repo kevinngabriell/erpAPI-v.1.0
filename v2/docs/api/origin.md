@@ -152,6 +152,7 @@ Get detail of a single origin.
   "data": {
     "id": "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",
     "origin_name": "Pelabuhan Tanjung Priok",
+    "region_id": "b2c3d4e5-f6a7-4b6c-9d0e-1f2a3b4c5d6e",
     "region_name": "Jawa Barat",
     "is_free_trade": false,
     "created_by": "Budi Santoso",
@@ -279,4 +280,4 @@ Soft-deletes the origin (sets `deleted_at`) — it will no longer appear in list
 - `region_id` must reference an existing, non-deleted row in the `region` table on both create and update; otherwise the request fails with `404 Region not found`.
 - Delete is a soft delete (`deleted_at` timestamp) and is reversible at the database layer, even though there is currently no undelete endpoint.
 - **`created_by` and `updated_by` are now resolved to the acting user's full name** (`"First Last"`, joined from the core user directory), on every endpoint that returns an origin (list, detail, and any nested items). Previously these fields held the raw user ID; there is no separate `*_id` field for them, the resolved name **is** the value. `updated_by` is `null` until the record has actually been updated; `created_by` can be `null` only if the creating user has since been deleted.
-- **`region_id` is no longer returned** on list or detail responses — it is replaced by `region_name`, resolved via `LEFT JOIN` on `region`. The join does not filter on `region.deleted_at`, so `region_name` still resolves even if the referenced region was later soft-deleted; it is `null` only if the region row no longer exists at all. `region_id` is still required as an input field on `POST`/`PUT` and still works as the `?region_id=` filter on the list endpoint — only the response shape changed.
+- **`region_id` is not returned on the list response** (and was briefly omitted from detail too) — the list carries `region_name` only. The **detail** response (`GET /origin/{id}`) returns both `region_id` and `region_name`, so an edit form can preselect the region. `region_name`, resolved via `LEFT JOIN` on `region`. The join does not filter on `region.deleted_at`, so `region_name` still resolves even if the referenced region was later soft-deleted; it is `null` only if the region row no longer exists at all. `region_id` is still required as an input field on `POST`/`PUT` and still works as the `?region_id=` filter on the list endpoint — only the response shape changed.

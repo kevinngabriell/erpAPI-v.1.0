@@ -5,7 +5,7 @@ require_once __DIR__ . '/../../connection/db.php';
 
 function getAllReorderPoints($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
 
     $where = "rp.company_id = '$company_id' AND rp.deleted_at IS NULL";
@@ -40,7 +40,15 @@ function getAllReorderPoints($conn, $company_id, $params) {
             ],
         ]);
     } else {
-        jsonResponse(404, 'No reorder points found');
+        jsonResponse(200, 'Reorder points found', [
+            'data'       => [],
+            'pagination' => [
+                'total'       => $total,
+                'page'        => $page,
+                'limit'       => $limit,
+                'total_pages' => (int)ceil($total / $limit),
+            ],
+        ]);
     }
 }
 
@@ -55,7 +63,7 @@ function createReorderPoint($conn, $input, $username, $company_id) {
 
     $product_id  = mysqli_real_escape_string($conn, $input['product_id']);
     $location_id = mysqli_real_escape_string($conn, $input['location_id']);
-    $min_stock   = (float)$input['min_stock'];
+    $min_stock   = mysqli_real_escape_string($conn, (string)$input['min_stock']);
 
     $product_check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".product WHERE id = '$product_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($product_check) === 0) {
@@ -85,7 +93,7 @@ function createReorderPoint($conn, $input, $username, $company_id) {
     if (mysqli_query($conn, $sql)) {
         jsonResponse(201, 'Reorder point created successfully', ['reorder_point_id' => $reorder_point_id]);
     } else {
-        jsonResponse(500, 'Failed to create reorder point', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to create reorder point', safeDbError($conn));
     }
 }
 
@@ -119,7 +127,8 @@ function updateReorderPoint($conn, $reorder_point_id, $input, $username, $compan
     $updates = [];
 
     if (isset($input['min_stock']) && $input['min_stock'] !== '') {
-        $updates[] = "min_stock = " . (float)$input['min_stock'];
+        $val = mysqli_real_escape_string($conn, (string)$input['min_stock']);
+        $updates[] = "min_stock = $val";
     }
 
     if (empty($updates)) {
@@ -134,7 +143,7 @@ function updateReorderPoint($conn, $reorder_point_id, $input, $username, $compan
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".reorder_point SET " . implode(', ', $updates) . " WHERE id = '$reorder_point_id' AND company_id = '$company_id'")) {
         jsonResponse(200, 'Reorder point updated successfully');
     } else {
-        jsonResponse(500, 'Failed to update reorder point', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to update reorder point', safeDbError($conn));
     }
 }
 
@@ -152,7 +161,7 @@ function deleteReorderPoint($conn, $reorder_point_id, $username, $company_id) {
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".reorder_point SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE id = '$reorder_point_id' AND company_id = '$company_id'")) {
         jsonResponse(200, 'Reorder point deleted successfully');
     } else {
-        jsonResponse(500, 'Failed to delete reorder point', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to delete reorder point', safeDbError($conn));
     }
 }
 
@@ -161,7 +170,7 @@ function deleteReorderPoint($conn, $reorder_point_id, $username, $company_id) {
 $authUser   = requireAuth();
 $method     = $_SERVER['REQUEST_METHOD'];
 $company_id = $authUser['company_id'] ?? null;
-$username   = $authUser['user_id'] ?? null;
+$username   = $authUser['sub'] ?? $authUser['user_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
@@ -172,6 +181,8 @@ $reorder_point_id = !empty($action) ? $action : null;
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $username = mysqli_real_escape_string($conn, $username);
 
     if ($reorder_point_id) {
         switch ($method) {
@@ -186,7 +197,7 @@ try {
                 deleteReorderPoint($conn, $reorder_point_id, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'PUT', 'DELETE']);
         }
     } else {
         switch ($method) {
@@ -198,10 +209,10 @@ try {
                 createReorderPoint($conn, $input, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'POST']);
         }
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

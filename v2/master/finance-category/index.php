@@ -2,12 +2,14 @@
 
 require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
+require_once __DIR__ . '/../../helpers/permission.php';
 
 function getAllFinanceCategories($conn, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
+    $search = str_replace(['%', '_'], ['\%', '\_'], $search);
 
     $where = "fc.deleted_at IS NULL";
     if ($search) {
@@ -21,23 +23,25 @@ function getAllFinanceCategories($conn, $params) {
     $result       = mysqli_query($conn, "SELECT fc.*,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
-            FROM $from WHERE $where ORDER BY fc.created_at DESC LIMIT $limit OFFSET $offset");
+            FROM $from WHERE $where ORDER BY fc.category_name ASC LIMIT $limit OFFSET $offset");
     $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".finance_category fc WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
-        jsonResponse(200, 'Finance categories found', [
-            'data'       => mysqli_fetch_all($result, MYSQLI_ASSOC),
-            'pagination' => [
-                'total'       => $total,
-                'page'        => $page,
-                'limit'       => $limit,
-                'total_pages' => (int)ceil($total / $limit),
-            ],
-        ]);
+        $data = mysqli_fetch_all($result, MYSQLI_ASSOC);
     } else {
-        jsonResponse(404, 'No finance categories found');
+        $data = [];
     }
+
+    jsonResponse(200, 'Finance categories found', [
+        'data'       => $data,
+        'pagination' => [
+            'total'       => $total,
+            'page'        => $page,
+            'limit'       => $limit,
+            'total_pages' => (int)ceil($total / $limit),
+        ],
+    ]);
 }
 
 function createFinanceCategory($conn, $input, $username) {
@@ -72,7 +76,7 @@ function createFinanceCategory($conn, $input, $username) {
     if (mysqli_query($conn, $sql)) {
         jsonResponse(201, 'Finance category created successfully', ['finance_category_id' => $finance_category_id]);
     } else {
-        jsonResponse(500, 'Failed to create finance category', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to create finance category', safeDbError($conn));
     }
 }
 
@@ -131,7 +135,7 @@ function updateFinanceCategory($conn, $finance_category_id, $input, $username) {
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".finance_category SET " . implode(', ', $updates) . " WHERE id = '$finance_category_id'")) {
         jsonResponse(200, 'Finance category updated successfully');
     } else {
-        jsonResponse(500, 'Failed to update finance category', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to update finance category', safeDbError($conn));
     }
 }
 
@@ -149,16 +153,17 @@ function deleteFinanceCategory($conn, $finance_category_id, $username) {
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".finance_category SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE id = '$finance_category_id'")) {
         jsonResponse(200, 'Finance category deleted successfully');
     } else {
-        jsonResponse(500, 'Failed to delete finance category', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to delete finance category', safeDbError($conn));
     }
 }
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
-$authUser   = requireAuth();
-$method     = $_SERVER['REQUEST_METHOD'];
-$company_id = $authUser['company_id'] ?? null;
-$username   = $authUser['user_id'] ?? null;
+$authUser    = requireAuth();
+$method      = $_SERVER['REQUEST_METHOD'];
+$company_id  = $authUser['company_id'] ?? null;
+$username    = $authUser['sub'] ?? $authUser['user_id'] ?? null;
+$app_role_id = $authUser['app_role_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
@@ -169,6 +174,8 @@ $finance_category_id = !empty($action) ? $action : null;
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $username = mysqli_real_escape_string($conn, $username);
 
     if ($finance_category_id) {
         switch ($method) {
@@ -176,14 +183,20 @@ try {
                 getDetailFinanceCategory($conn, $finance_category_id);
                 break;
             case 'PUT':
+                if (!userHasPermission($conn, $app_role_id, 'master.finance_category.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 $input = json_decode(file_get_contents('php://input'), true) ?? [];
                 updateFinanceCategory($conn, $finance_category_id, $input, $username);
                 break;
             case 'DELETE':
+                if (!userHasPermission($conn, $app_role_id, 'master.finance_category.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 deleteFinanceCategory($conn, $finance_category_id, $username);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'PUT', 'DELETE']);
         }
     } else {
         switch ($method) {
@@ -191,14 +204,17 @@ try {
                 getAllFinanceCategories($conn, $_GET);
                 break;
             case 'POST':
+                if (!userHasPermission($conn, $app_role_id, 'master.finance_category.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 $input = json_decode(file_get_contents('php://input'), true) ?? [];
                 createFinanceCategory($conn, $input, $username);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'POST']);
         }
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

@@ -3,6 +3,7 @@
 require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
 require_once __DIR__ . '/../../helpers/audit_log.php';
+require_once __DIR__ . '/../../helpers/pagination.php';
 require_once __DIR__ . '/../../helpers/notification.php';
 require_once __DIR__ . '/../../helpers/excel_export.php';
 require_once __DIR__ . '/../../helpers/word_export.php';
@@ -17,14 +18,13 @@ function getPurchaseStatusIdByName($conn, $status_name) {
 }
 
 function getAllPurchaseReceives($conn, $company_id, $params) {
-    $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
-    $offset = ($page - 1) * $limit;
+    $paging = resolveListPaging($params);
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
+    $search = str_replace(['%', '_'], ['\%', '\_'], $search);
 
     $where = "pr.company_id = '$company_id' AND pr.deleted_at IS NULL";
     if ($search) {
-        $where .= " AND po.po_display_number LIKE '%$search%'";
+        $where .= " AND po.po_display_number LIKE '%$search%' ESCAPE '\\\\'";
     }
     if (isset($params['purchase_order_id']) && trim($params['purchase_order_id']) !== '') {
         $purchase_order_id = mysqli_real_escape_string($conn, $params['purchase_order_id']);
@@ -59,22 +59,20 @@ function getAllPurchaseReceives($conn, $company_id, $params) {
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by,
             CONCAT(au.first_name, ' ', au.last_name) AS approved_by
-            FROM $from WHERE $where ORDER BY pr.created_at DESC LIMIT $limit OFFSET $offset");
+            FROM $from WHERE $where ORDER BY pr.created_at DESC " . sqlLimitClause($paging));
     $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM $from WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
         jsonResponse(200, 'Purchase receives found', [
             'data'       => mysqli_fetch_all($result, MYSQLI_ASSOC),
-            'pagination' => [
-                'total'       => $total,
-                'page'        => $page,
-                'limit'       => $limit,
-                'total_pages' => (int)ceil($total / $limit),
-            ],
+            'pagination' => buildPagination($paging, $total),
         ]);
     } else {
-        jsonResponse(404, 'No purchase receives found');
+        jsonResponse(200, 'Purchase receives found', [
+            'data'       => [],
+            'pagination' => buildPagination($paging, $total),
+        ]);
     }
 }
 
@@ -137,11 +135,11 @@ function createPurchaseReceive($conn, $input, $username, $company_id) {
         foreach ($input['items'] as $item) {
             $item_id        = generateUUID();
             $product_name   = mysqli_real_escape_string($conn, $item['product_name']);
-            $quantity       = (float)$item['quantity'];
-            $packaging_size = (float)$item['packaging_size'];
-            $unit_price     = (float)$item['unit_price'];
-            $vat            = isset($item['vat']) && $item['vat'] !== '' ? (float)$item['vat'] : 0;
-            $total          = isset($item['total']) && $item['total'] !== '' ? (float)$item['total'] : ($quantity * $unit_price) + $vat;
+            $quantity       = mysqli_real_escape_string($conn, (string)$item['quantity']);
+            $packaging_size = mysqli_real_escape_string($conn, (string)$item['packaging_size']);
+            $unit_price     = mysqli_real_escape_string($conn, (string)$item['unit_price']);
+            $vat            = isset($item['vat']) && $item['vat'] !== '' ? mysqli_real_escape_string($conn, (string)$item['vat']) : '0';
+            $total          = isset($item['total']) && $item['total'] !== '' ? mysqli_real_escape_string($conn, (string)$item['total']) : bcadd(bcmul($quantity, $unit_price, 2), $vat, 2);
 
             $item_sql = "INSERT INTO " . APP_SCHEMA . ".purchase_receive_item
                          (id, purchase_receive_id, product_name, quantity, packaging_size, unit_price, vat, total, created_by, created_at)
@@ -170,7 +168,7 @@ function createPurchaseReceive($conn, $input, $username, $company_id) {
         jsonResponse(201, 'Purchase receive created successfully', ['purchase_receive_id' => $purchase_receive_id]);
     } catch (Exception $e) {
         $conn->rollback();
-        jsonResponse(500, 'Failed to create purchase receive', ['error' => $e->getMessage()]);
+        jsonResponse(500, 'Failed to create purchase receive', safeErrorResponse($e));
     }
 }
 
@@ -249,7 +247,7 @@ function updatePurchaseReceive($conn, $purchase_receive_id, $input, $username, $
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".purchase_receive SET " . implode(', ', $updates) . " WHERE id = '$purchase_receive_id' AND company_id = '$company_id'")) {
         jsonResponse(200, 'Purchase receive updated successfully');
     } else {
-        jsonResponse(500, 'Failed to update purchase receive', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to update purchase receive', safeDbError($conn));
     }
 }
 
@@ -264,14 +262,21 @@ function deletePurchaseReceive($conn, $purchase_receive_id, $username, $company_
 
     $now = date('Y-m-d H:i:s');
 
-    if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".purchase_receive SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE id = '$purchase_receive_id' AND company_id = '$company_id'")) {
+    mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".purchase_receive_item 
+        SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' 
+        WHERE purchase_receive_id = '$purchase_receive_id' AND deleted_at IS NULL");
+
+    if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".purchase_receive 
+        SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' 
+        WHERE id = '$purchase_receive_id' AND company_id = '$company_id'")) {
         jsonResponse(200, 'Purchase receive deleted successfully');
     } else {
-        jsonResponse(500, 'Failed to delete purchase receive', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to delete purchase receive', safeDbError($conn));
     }
 }
 
 function approvePurchaseReceive($conn, $purchase_receive_id, $input, $username, $company_id) {
+    $purchase_receive_id = mysqli_real_escape_string($conn, $purchase_receive_id);
     $check = mysqli_query($conn, "SELECT pr.created_by, po.po_display_number FROM " . APP_SCHEMA . ".purchase_receive pr
             LEFT JOIN " . APP_SCHEMA . ".purchase_order po ON po.id = pr.purchase_order_id
             WHERE pr.id = '$purchase_receive_id' AND pr.company_id = '$company_id' AND pr.deleted_at IS NULL LIMIT 1");
@@ -310,11 +315,12 @@ function approvePurchaseReceive($conn, $purchase_receive_id, $input, $username, 
 
         jsonResponse(200, 'Purchase receive approved successfully');
     } else {
-        jsonResponse(500, 'Failed to approve purchase receive', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to approve purchase receive', safeDbError($conn));
     }
 }
 
 function rejectPurchaseReceive($conn, $purchase_receive_id, $input, $username, $company_id) {
+    $purchase_receive_id = mysqli_real_escape_string($conn, $purchase_receive_id);
     $check = mysqli_query($conn, "SELECT pr.created_by, po.po_display_number FROM " . APP_SCHEMA . ".purchase_receive pr
             LEFT JOIN " . APP_SCHEMA . ".purchase_order po ON po.id = pr.purchase_order_id
             WHERE pr.id = '$purchase_receive_id' AND pr.company_id = '$company_id' AND pr.deleted_at IS NULL LIMIT 1");
@@ -354,11 +360,12 @@ function rejectPurchaseReceive($conn, $purchase_receive_id, $input, $username, $
 
         jsonResponse(200, 'Purchase receive rejected successfully');
     } else {
-        jsonResponse(500, 'Failed to reject purchase receive', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to reject purchase receive', safeDbError($conn));
     }
 }
 
 function revisePurchaseReceive($conn, $purchase_receive_id, $input, $username, $company_id) {
+    $purchase_receive_id = mysqli_real_escape_string($conn, $purchase_receive_id);
     $check = mysqli_query($conn, "SELECT ps.status_name FROM " . APP_SCHEMA . ".purchase_receive pr
             LEFT JOIN " . APP_SCHEMA . ".purchase_status ps ON ps.id = pr.status_id
             WHERE pr.id = '$purchase_receive_id' AND pr.company_id = '$company_id' AND pr.deleted_at IS NULL LIMIT 1");
@@ -388,7 +395,7 @@ function revisePurchaseReceive($conn, $purchase_receive_id, $input, $username, $
         insertAuditLog($conn, $company_id, 'purchase_receive', $purchase_receive_id, 'revised', $username, $notes);
         jsonResponse(200, 'Purchase receive revised successfully');
     } else {
-        jsonResponse(500, 'Failed to revise purchase receive', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to revise purchase receive', safeDbError($conn));
     }
 }
 
@@ -485,7 +492,7 @@ function exportPurchaseReceive($conn, $purchase_receive_id, $company_id) {
 $authUser   = requireAuth();
 $method     = $_SERVER['REQUEST_METHOD'];
 $company_id = $authUser['company_id'] ?? null;
-$username   = $authUser['user_id'] ?? null;
+$username   = $authUser['sub'] ?? $authUser['user_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
@@ -497,12 +504,14 @@ $sub_action           = $parts[4] ?? '';
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $username = mysqli_real_escape_string($conn, $username);
 
     if ($purchase_receive_id && $sub_action === 'items') {
         require __DIR__ . '/items.php';
 
     } elseif ($purchase_receive_id && $sub_action === 'export') {
-        if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
+        if ($method !== 'GET') { methodNotAllowed(['GET']); }
         exportPurchaseReceive($conn, $purchase_receive_id, $company_id);
 
     } elseif ($purchase_receive_id && $sub_action !== '') {
@@ -512,15 +521,15 @@ try {
 
         switch ($sub_action) {
             case 'approve':
-                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                if ($method !== 'PATCH') { methodNotAllowed(['PATCH']); }
                 approvePurchaseReceive($conn, $purchase_receive_id, $input, $username, $company_id);
                 break;
             case 'reject':
-                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                if ($method !== 'PATCH') { methodNotAllowed(['PATCH']); }
                 rejectPurchaseReceive($conn, $purchase_receive_id, $input, $username, $company_id);
                 break;
             case 'revise':
-                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                if ($method !== 'PATCH') { methodNotAllowed(['PATCH']); }
                 revisePurchaseReceive($conn, $purchase_receive_id, $input, $username, $company_id);
                 break;
             default:
@@ -540,7 +549,7 @@ try {
                 deletePurchaseReceive($conn, $purchase_receive_id, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'PUT', 'DELETE']);
         }
     } else {
         switch ($method) {
@@ -552,10 +561,10 @@ try {
                 createPurchaseReceive($conn, $input, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'POST']);
         }
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

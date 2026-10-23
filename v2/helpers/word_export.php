@@ -1,10 +1,12 @@
 <?php
 
 require_once __DIR__ . '/../../vendor/autoload.php';
+require_once __DIR__ . '/excel_export.php';
 
 \PhpOffice\PhpWord\Settings::setOutputEscapingEnabled(true);
 
 function streamDocx(\PhpOffice\PhpWord\PhpWord $document, string $filename): void {
+    $filename = sanitizeFilename($filename);
     while (ob_get_level() > 0) {
         ob_end_clean();
     }
@@ -20,6 +22,7 @@ function streamDocx(\PhpOffice\PhpWord\PhpWord $document, string $filename): voi
 }
 
 function streamTemplateDocx(\PhpOffice\PhpWord\TemplateProcessor $template, string $filename): void {
+    $filename = sanitizeFilename($filename);
     $temp_path = $template->save();
 
     while (ob_get_level() > 0) {

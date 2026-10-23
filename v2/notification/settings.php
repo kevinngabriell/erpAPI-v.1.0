@@ -50,7 +50,7 @@ function createPublicHoliday($conn, $input, $username, $company_id) {
         insertAuditLog($conn, $company_id, 'public_holiday', $id, 'created', $username);
         jsonResponse(201, 'Public holiday created successfully', ['id' => $id]);
     } else {
-        jsonResponse(500, 'Failed to create public holiday', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to create public holiday', safeDbError($conn));
     }
 }
 
@@ -69,7 +69,7 @@ function deletePublicHoliday($conn, $holiday_id, $username, $company_id) {
         insertAuditLog($conn, $company_id, 'public_holiday', $holiday_id, 'deleted', $username);
         jsonResponse(200, 'Public holiday deleted successfully');
     } else {
-        jsonResponse(500, 'Failed to delete public holiday', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to delete public holiday', safeDbError($conn));
     }
 }
 
@@ -143,7 +143,7 @@ function updateWhatsAppOptOut($conn, $target_user_id, $input, $username, $compan
 $authUser    = requireAuth();
 $method      = $_SERVER['REQUEST_METHOD'];
 $company_id  = $authUser['company_id'] ?? null;
-$username    = $authUser['user_id'] ?? null;
+$username    = $authUser['sub'] ?? $authUser['user_id'] ?? null;
 $app_role_id = $authUser['app_role_id'] ?? null;
 
 if (!$company_id) {
@@ -156,6 +156,8 @@ $sub_action = $parts[4] ?? null;
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $username = mysqli_real_escape_string($conn, $username);
 
     if ($setting === 'public-holidays') {
         switch ($method) {
@@ -163,15 +165,21 @@ try {
                 getAllPublicHolidays($conn, $company_id, $_GET);
                 break;
             case 'POST':
+                if (!userHasPermission($conn, $app_role_id, 'notification.settings.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage notification settings');
+                }
                 $input = json_decode(file_get_contents('php://input'), true) ?? [];
                 createPublicHoliday($conn, $input, $username, $company_id);
                 break;
             case 'DELETE':
+                if (!userHasPermission($conn, $app_role_id, 'notification.settings.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage notification settings');
+                }
                 if (!$sub_action) { jsonResponse(400, 'Holiday id is required'); }
                 deletePublicHoliday($conn, $sub_action, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'POST', 'DELETE']);
         }
 
     } elseif ($setting === 'working-days') {
@@ -180,11 +188,14 @@ try {
                 getWorkingDays($conn, $company_id);
                 break;
             case 'PUT':
+                if (!userHasPermission($conn, $app_role_id, 'notification.settings.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage notification settings');
+                }
                 $input = json_decode(file_get_contents('php://input'), true) ?? [];
                 updateWorkingDays($conn, $input, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'PUT']);
         }
 
     } elseif ($setting === 'whatsapp-opt-out') {
@@ -204,7 +215,7 @@ try {
                 updateWhatsAppOptOut($conn, $target_user_id, $input, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'PUT']);
         }
 
     } else {
@@ -212,5 +223,5 @@ try {
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

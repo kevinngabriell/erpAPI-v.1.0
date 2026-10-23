@@ -2,12 +2,14 @@
 
 require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
+require_once __DIR__ . '/../../helpers/permission.php';
 
 function getAllRegions($conn, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
+    $search = str_replace(['%', '_'], ['\%', '\_'], $search);
 
     $where = "r.deleted_at IS NULL";
     if ($search) {
@@ -21,23 +23,25 @@ function getAllRegions($conn, $params) {
     $result       = mysqli_query($conn, "SELECT r.*,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
-            FROM $from WHERE $where ORDER BY r.created_at DESC LIMIT $limit OFFSET $offset");
+            FROM $from WHERE $where ORDER BY r.region_name ASC LIMIT $limit OFFSET $offset");
     $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".region r WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
-        jsonResponse(200, 'Regions found', [
-            'data'       => mysqli_fetch_all($result, MYSQLI_ASSOC),
-            'pagination' => [
-                'total'       => $total,
-                'page'        => $page,
-                'limit'       => $limit,
-                'total_pages' => (int)ceil($total / $limit),
-            ],
-        ]);
+        $data = mysqli_fetch_all($result, MYSQLI_ASSOC);
     } else {
-        jsonResponse(404, 'No regions found');
+        $data = [];
     }
+
+    jsonResponse(200, 'Regions found', [
+        'data'       => $data,
+        'pagination' => [
+            'total'       => $total,
+            'page'        => $page,
+            'limit'       => $limit,
+            'total_pages' => (int)ceil($total / $limit),
+        ],
+    ]);
 }
 
 function createRegion($conn, $input, $username) {
@@ -66,7 +70,7 @@ function createRegion($conn, $input, $username) {
     if (mysqli_query($conn, $sql)) {
         jsonResponse(201, 'Region created successfully', ['region_id' => $region_id]);
     } else {
-        jsonResponse(500, 'Failed to create region', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to create region', safeDbError($conn));
     }
 }
 
@@ -117,7 +121,7 @@ function updateRegion($conn, $region_id, $input, $username) {
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".region SET " . implode(', ', $updates) . " WHERE id = '$region_id'")) {
         jsonResponse(200, 'Region updated successfully');
     } else {
-        jsonResponse(500, 'Failed to update region', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to update region', safeDbError($conn));
     }
 }
 
@@ -135,16 +139,17 @@ function deleteRegion($conn, $region_id, $username) {
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".region SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE id = '$region_id'")) {
         jsonResponse(200, 'Region deleted successfully');
     } else {
-        jsonResponse(500, 'Failed to delete region', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to delete region', safeDbError($conn));
     }
 }
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
-$authUser   = requireAuth();
-$method     = $_SERVER['REQUEST_METHOD'];
-$company_id = $authUser['company_id'] ?? null;
-$username   = $authUser['user_id'] ?? null;
+$authUser    = requireAuth();
+$method      = $_SERVER['REQUEST_METHOD'];
+$company_id  = $authUser['company_id'] ?? null;
+$username    = $authUser['sub'] ?? $authUser['user_id'] ?? null;
+$app_role_id = $authUser['app_role_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
@@ -155,6 +160,8 @@ $region_id = !empty($action) ? $action : null;
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $username = mysqli_real_escape_string($conn, $username);
 
     if ($region_id) {
         switch ($method) {
@@ -162,14 +169,20 @@ try {
                 getDetailRegion($conn, $region_id, $company_id);
                 break;
             case 'PUT':
+                if (!userHasPermission($conn, $app_role_id, 'master.region.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 $input = json_decode(file_get_contents('php://input'), true) ?? [];
                 updateRegion($conn, $region_id, $input, $username);
                 break;
             case 'DELETE':
+                if (!userHasPermission($conn, $app_role_id, 'master.region.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 deleteRegion($conn, $region_id, $username);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'PUT', 'DELETE']);
         }
     } else {
         switch ($method) {
@@ -177,14 +190,17 @@ try {
                 getAllRegions($conn, $_GET);
                 break;
             case 'POST':
+                if (!userHasPermission($conn, $app_role_id, 'master.region.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 $input = json_decode(file_get_contents('php://input'), true) ?? [];
                 createRegion($conn, $input, $username);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'POST']);
         }
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

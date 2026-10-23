@@ -15,12 +15,13 @@ use PhpOffice\PhpSpreadsheet\Style\Border;
 
 function getAllFinancePayments($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
+    $search = str_replace(['%', '_'], ['\%', '\_'], $search);
 
     $where = "fp.company_id = '$company_id' AND fp.deleted_at IS NULL";
-    if ($search) {
+    if ($search !== '') {
         $where .= " AND fp.invoice_number LIKE '%$search%'";
     }
     if (isset($params['customer_id']) && trim($params['customer_id']) !== '') {
@@ -62,7 +63,15 @@ function getAllFinancePayments($conn, $company_id, $params) {
             ],
         ]);
     } else {
-        jsonResponse(404, 'No finance payments found');
+        jsonResponse(200, 'Finance payments found', [
+            'data'       => [],
+            'pagination' => [
+                'total'       => $total,
+                'page'        => $page,
+                'limit'       => $limit,
+                'total_pages' => (int)ceil($total / $limit),
+            ],
+        ]);
     }
 }
 
@@ -139,7 +148,7 @@ function getOutstandingInvoices($conn, $company_id, $params) {
         }
         jsonResponse(200, 'Outstanding invoices found', ['data' => $invoices]);
     } else {
-        jsonResponse(404, 'No outstanding invoices found');
+        jsonResponse(200, 'Outstanding invoices found', ['data' => []]);
     }
 }
 
@@ -195,9 +204,9 @@ function exportFinancePayments($conn, $company_id, $params) {
 
     $row   = 5;
     $no    = 1;
-    $total = 0;
+    $total = '0';
     foreach ($rows as $item) {
-        $paid_amount = (float)$item['paid_amount'];
+        $paid_amount = mysqli_real_escape_string($conn, (string)$item['paid_amount']);
         $sheet->setCellValue("A$row", $no);
         $sheet->setCellValue("B$row", $item['payment_date']);
         $sheet->setCellValue("C$row", $item['invoice_number']);
@@ -209,7 +218,7 @@ function exportFinancePayments($conn, $company_id, $params) {
         $sheet->setCellValue("I$row", $item['transaction_status']);
         $sheet->getStyle("A$row:I$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
 
-        $total += $paid_amount;
+        $total = bcadd($total, $paid_amount, 2);
         $row++;
         $no++;
     }
@@ -236,7 +245,7 @@ function createFinancePayment($conn, $input, $username, $company_id) {
     }
 
     $invoice_number    = trim(mysqli_real_escape_string($conn, $input['invoice_number']));
-    $paid_amount       = (float)$input['paid_amount'];
+    $paid_amount       = mysqli_real_escape_string($conn, (string)$input['paid_amount']);
     $is_supplier_payment = isset($input['supplier_id']) && trim($input['supplier_id']) !== '';
 
     if ($is_supplier_payment) {
@@ -287,17 +296,17 @@ function createFinancePayment($conn, $input, $username, $company_id) {
 
     $customer_id_sql       = isset($input['customer_id']) && trim($input['customer_id']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['customer_id']) . "'" : 'NULL';
     $supplier_id_sql        = isset($input['supplier_id']) && trim($input['supplier_id']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['supplier_id']) . "'" : 'NULL';
-    $due_amount_sql         = isset($input['due_amount']) && $input['due_amount'] !== '' ? (float)$input['due_amount'] : 'NULL';
+    $due_amount_sql         = isset($input['due_amount']) && $input['due_amount'] !== '' ? mysqli_real_escape_string($conn, (string)$input['due_amount']) : 'NULL';
     $payment_date_sql       = isset($input['payment_date']) && trim($input['payment_date']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['payment_date']) . "'" : 'NULL';
     $form_number_sql        = isset($input['form_number']) && trim($input['form_number']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['form_number']) . "'" : 'NULL';
     $bank_account_id_sql    = isset($input['bank_account_id']) && trim($input['bank_account_id']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['bank_account_id']) . "'" : 'NULL';
-    $exchange_rate_sql      = isset($input['exchange_rate']) && $input['exchange_rate'] !== '' ? (float)$input['exchange_rate'] : 'NULL';
+    $exchange_rate_sql      = isset($input['exchange_rate']) && $input['exchange_rate'] !== '' ? mysqli_real_escape_string($conn, (string)$input['exchange_rate']) : 'NULL';
     $cheque_number_sql      = isset($input['cheque_number']) && trim($input['cheque_number']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['cheque_number']) . "'" : 'NULL';
     $cheque_date_sql        = isset($input['cheque_date']) && trim($input['cheque_date']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['cheque_date']) . "'" : 'NULL';
-    $cheque_amount_sql      = isset($input['cheque_amount']) && $input['cheque_amount'] !== '' ? (float)$input['cheque_amount'] : 'NULL';
+    $cheque_amount_sql      = isset($input['cheque_amount']) && $input['cheque_amount'] !== '' ? mysqli_real_escape_string($conn, (string)$input['cheque_amount']) : 'NULL';
     $memo_sql               = isset($input['memo']) && trim($input['memo']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['memo']) . "'" : 'NULL';
     $recipient_sql          = isset($input['recipient']) && trim($input['recipient']) !== '' ? "'" . mysqli_real_escape_string($conn, $input['recipient']) . "'" : 'NULL';
-    $discount_amount        = isset($input['discount_amount']) && $input['discount_amount'] !== '' ? (float)$input['discount_amount'] : 0;
+    $discount_amount        = isset($input['discount_amount']) && $input['discount_amount'] !== '' ? mysqli_real_escape_string($conn, (string)$input['discount_amount']) : '0';
 
     $finance_payment_id = generateUUID();
     $now                = date('Y-m-d H:i:s');
@@ -326,7 +335,7 @@ function createFinancePayment($conn, $input, $username, $company_id) {
 
         jsonResponse(201, 'Finance payment created successfully', ['finance_payment_id' => $finance_payment_id]);
     } else {
-        jsonResponse(500, 'Failed to create finance payment', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to create finance payment', safeDbError($conn));
     }
 }
 
@@ -390,7 +399,8 @@ function updateFinancePayment($conn, $finance_payment_id, $input, $username, $co
     $numeric_fields = ['paid_amount', 'due_amount', 'exchange_rate', 'cheque_amount', 'discount_amount'];
     foreach ($numeric_fields as $field) {
         if (isset($input[$field]) && $input[$field] !== '') {
-            $updates[] = "$field = " . (float)$input[$field];
+            $val = mysqli_real_escape_string($conn, (string)$input[$field]);
+            $updates[] = "$field = $val";
         }
     }
 
@@ -407,7 +417,7 @@ function updateFinancePayment($conn, $finance_payment_id, $input, $username, $co
         insertAuditLog($conn, $company_id, 'finance_payment', $finance_payment_id, 'updated', $username);
         jsonResponse(200, 'Finance payment updated successfully');
     } else {
-        jsonResponse(500, 'Failed to update finance payment', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to update finance payment', safeDbError($conn));
     }
 }
 
@@ -426,7 +436,7 @@ function deleteFinancePayment($conn, $finance_payment_id, $username, $company_id
         insertAuditLog($conn, $company_id, 'finance_payment', $finance_payment_id, 'deleted', $username);
         jsonResponse(200, 'Finance payment deleted successfully');
     } else {
-        jsonResponse(500, 'Failed to delete finance payment', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to delete finance payment', safeDbError($conn));
     }
 }
 
@@ -435,7 +445,7 @@ function deleteFinancePayment($conn, $finance_payment_id, $username, $company_id
 // an account) if the payment has no bank_account_id, that bank has no mapped
 // account_code_id, or the relevant default receivable/payable account is missing.
 function postFinancePaymentSettlement($conn, $company_id, $finance_payment_id, $paid_amount, $customer_id, $supplier_id, $bank_account_id, $transaction_date, $username) {
-    if ($paid_amount <= 0) return;
+    if (bccomp($paid_amount, '0', 2) <= 0) return;
     if (!$bank_account_id) {
         insertAuditLog($conn, $company_id, 'general_journal', $finance_payment_id, 'gl_posting_skipped', $username, 'payment has no bank_account_id');
         return;
@@ -458,7 +468,7 @@ function postFinancePaymentSettlement($conn, $company_id, $finance_payment_id, $
         postGeneralJournalEntry($conn, $company_id, substr($transaction_date, 0, 10), "Pelunasan piutang - finance_payment $finance_payment_id",
             'finance_payment', $finance_payment_id, [
                 ['account_code_id' => $bank_account_code_id, 'amount' => $paid_amount],
-                ['account_code_id' => $receivable_account['id'], 'amount' => -$paid_amount],
+                ['account_code_id' => $receivable_account['id'], 'amount' => bcmul($paid_amount, '-1', 2)],
             ], $username);
     } elseif ($supplier_id) {
         $payable_account = getDefaultAccountCode($conn, $company_id, 'is_default_payable');
@@ -468,37 +478,54 @@ function postFinancePaymentSettlement($conn, $company_id, $finance_payment_id, $
         }
         postGeneralJournalEntry($conn, $company_id, substr($transaction_date, 0, 10), "Pelunasan hutang - finance_payment $finance_payment_id",
             'finance_payment', $finance_payment_id, [
-                ['account_code_id' => $payable_account['id'], 'amount' => -$paid_amount],
-                ['account_code_id' => $bank_account_code_id, 'amount' => -$paid_amount],
+                ['account_code_id' => $payable_account['id'], 'amount' => bcmul($paid_amount, '-1', 2)],
+                ['account_code_id' => $bank_account_code_id, 'amount' => bcmul($paid_amount, '-1', 2)],
             ], $username);
     }
 }
 
 function approveFinancePayment($conn, $finance_payment_id, $input, $username, $app_role_id, $company_id) {
+    $finance_payment_id = mysqli_real_escape_string($conn, $finance_payment_id);
+
     $doc_check = mysqli_query($conn, "SELECT invoice_number, created_by, paid_amount, customer_id, supplier_id, bank_account_id, payment_date
-            FROM " . APP_SCHEMA . ".finance_payment WHERE id = '$finance_payment_id' AND company_id = '$company_id' LIMIT 1");
+            FROM " . APP_SCHEMA . ".finance_payment WHERE id = '$finance_payment_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
     $doc       = $doc_check ? mysqli_fetch_assoc($doc_check) : null;
 
-    $result = applyDualApproval($conn, APP_SCHEMA . '.finance_payment', $finance_payment_id, $company_id, $username, $app_role_id);
+    $conn->begin_transaction();
+    try {
+        $result = applyDualApproval($conn, APP_SCHEMA . '.finance_payment', $finance_payment_id, $company_id, $username, $app_role_id);
 
-    if ($result['code'] !== 200) {
-        jsonResponse($result['code'], $result['message'], isset($result['error']) ? ['error' => $result['error']] : []);
+        if ($result['code'] !== 200) {
+            $conn->rollback();
+            jsonResponse($result['code'], $result['message'], isset($result['error']) ? ['error' => $result['error']] : []);
+            return;
+        }
+
+        $notes = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
+        insertAuditLog($conn, $company_id, 'finance_payment', $finance_payment_id, "approved_{$result['slot']}", $username, $notes);
+
+        if ($result['transaction_status'] === 'posted') {
+            invalidateApprovalTokens($conn, 'finance_payment', $finance_payment_id);
+            if ($doc) {
+                $settlement_date = $doc['payment_date'] ?? date('Y-m-d H:i:s');
+                $paid_amount = mysqli_real_escape_string($conn, (string)$doc['paid_amount']);
+                postFinancePaymentSettlement($conn, $company_id, $finance_payment_id, $paid_amount,
+                    $doc['customer_id'], $doc['supplier_id'], $doc['bank_account_id'], $settlement_date, $username);
+            }
+        }
+
+        $conn->commit();
+    } catch (Exception $e) {
+        $conn->rollback();
+        error_log('Finance payment approval failed: ' . $e->getMessage());
+        jsonResponse(500, 'Failed to process approval');
         return;
     }
-
-    $notes = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
-    insertAuditLog($conn, $company_id, 'finance_payment', $finance_payment_id, "approved_{$result['slot']}", $username, $notes);
 
     $approver_name    = resolveDisplayName($conn, $username);
     $invoice_display  = $doc['invoice_number'] ?? $finance_payment_id;
 
     if ($result['transaction_status'] === 'posted') {
-        invalidateApprovalTokens($conn, 'finance_payment', $finance_payment_id);
-        if ($doc) {
-            $settlement_date = $doc['payment_date'] ?? date('Y-m-d H:i:s');
-            postFinancePaymentSettlement($conn, $company_id, $finance_payment_id, (float)$doc['paid_amount'],
-                $doc['customer_id'], $doc['supplier_id'], $doc['bank_account_id'], $settlement_date, $username);
-        }
         notify($conn, [
             'company_id'         => $company_id,
             'type'               => 'approval_approved',
@@ -543,7 +570,9 @@ function approveFinancePayment($conn, $finance_payment_id, $input, $username, $a
 }
 
 function rejectFinancePayment($conn, $finance_payment_id, $input, $username, $app_role_id, $company_id) {
-    $doc_check = mysqli_query($conn, "SELECT invoice_number, created_by FROM " . APP_SCHEMA . ".finance_payment WHERE id = '$finance_payment_id' AND company_id = '$company_id' LIMIT 1");
+    $finance_payment_id = mysqli_real_escape_string($conn, $finance_payment_id);
+
+    $doc_check = mysqli_query($conn, "SELECT invoice_number, created_by FROM " . APP_SCHEMA . ".finance_payment WHERE id = '$finance_payment_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
     $doc       = $doc_check ? mysqli_fetch_assoc($doc_check) : null;
 
     $result = rejectDualApproval($conn, APP_SCHEMA . '.finance_payment', $finance_payment_id, $company_id, $username, $app_role_id);
@@ -579,7 +608,7 @@ function rejectFinancePayment($conn, $finance_payment_id, $input, $username, $ap
 $authUser    = requireAuth();
 $method      = $_SERVER['REQUEST_METHOD'];
 $company_id  = $authUser['company_id'] ?? null;
-$username    = $authUser['user_id'] ?? null;
+$username    = $authUser['sub'] ?? $authUser['user_id'] ?? null;
 $app_role_id = $authUser['app_role_id'] ?? null;
 
 if (!$company_id) {
@@ -592,13 +621,15 @@ $sub_action          = $parts[4] ?? '';
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $username = mysqli_real_escape_string($conn, $username);
 
     if ($finance_payment_id === 'outstanding-invoices') {
-        if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
+        if ($method !== 'GET') { methodNotAllowed(['GET']); }
         getOutstandingInvoices($conn, $company_id, $_GET);
 
     } elseif ($finance_payment_id === 'export') {
-        if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
+        if ($method !== 'GET') { methodNotAllowed(['GET']); }
         exportFinancePayments($conn, $company_id, $_GET);
 
     } elseif ($finance_payment_id && $sub_action !== '') {
@@ -608,11 +639,11 @@ try {
 
         switch ($sub_action) {
             case 'approve':
-                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                if ($method !== 'PATCH') { methodNotAllowed(['PATCH']); }
                 approveFinancePayment($conn, $finance_payment_id, $input, $username, $app_role_id, $company_id);
                 break;
             case 'reject':
-                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                if ($method !== 'PATCH') { methodNotAllowed(['PATCH']); }
                 rejectFinancePayment($conn, $finance_payment_id, $input, $username, $app_role_id, $company_id);
                 break;
             default:
@@ -632,7 +663,7 @@ try {
                 deleteFinancePayment($conn, $finance_payment_id, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'PUT', 'DELETE']);
         }
     } else {
         switch ($method) {
@@ -644,10 +675,10 @@ try {
                 createFinancePayment($conn, $input, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'POST']);
         }
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

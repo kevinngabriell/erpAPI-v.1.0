@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/../general.php';
 require_once __DIR__ . '/../connection/db.php';
+require_once __DIR__ . '/../helpers/permission.php';
 
 function searchSalesOrders($conn, $company_id, $search, $limit) {
     $result = mysqli_query($conn, "SELECT so.id, so.so_display_number, c.customer_name
@@ -198,8 +199,9 @@ function getGlobalSearchResults($conn, $company_id, $params) {
         return;
     }
 
-    $limit  = min(10, max(1, (int)($params['limit'] ?? 5)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $search = mysqli_real_escape_string($conn, $search_term);
+    $search = str_replace(['%', '_'], ['\%', '\_'], $search);
 
     $group_builders = [
         'sales-order'         => ['label' => 'Sales Orders',         'items' => searchSalesOrders($conn, $company_id, $search, $limit)],
@@ -227,9 +229,10 @@ function getGlobalSearchResults($conn, $company_id, $params) {
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
-$authUser   = requireAuth();
-$method     = $_SERVER['REQUEST_METHOD'];
-$company_id = $authUser['company_id'] ?? null;
+$authUser    = requireAuth();
+$method      = $_SERVER['REQUEST_METHOD'];
+$company_id  = $authUser['company_id'] ?? null;
+$app_role_id = $authUser['app_role_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
@@ -238,13 +241,18 @@ if (!$company_id) {
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+
+    if (!userHasPermission($conn, $app_role_id, 'search.view')) {
+        jsonResponse(403, 'You do not have permission to use search');
+    }
 
     if ($method !== 'GET') {
-        jsonResponse(405, 'Method Not Allowed');
+        methodNotAllowed(['GET']);
     }
 
     getGlobalSearchResults($conn, $company_id, $_GET);
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

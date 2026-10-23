@@ -14,7 +14,7 @@ function buildWarehouseMonthly($conn, $company_id, $monthly_from, $monthly_to) {
         WHERE wt.company_id = '$company_id' AND wt.deleted_at IS NULL
           AND wt.transaction_type IN ('stock_in', 'stock_out')
           AND wt.transaction_date BETWEEN '$monthly_from' AND '$monthly_to'
-        GROUP BY ym");
+        GROUP BY ym LIMIT 100");
     while ($row = mysqli_fetch_assoc($result)) {
         if (isset($months[$row['ym']])) {
             $months[$row['ym']]['total_in']  = (float)$row['total_in'];

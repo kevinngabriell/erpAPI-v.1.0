@@ -155,7 +155,7 @@ function updateMyProfile($conn, $app_user_id, $input, $username, $company_id) {
         $conn->commit();
     } catch (Exception $e) {
         $conn->rollback();
-        jsonResponse(500, 'Failed to update profile', ['error' => $e->getMessage()]);
+        jsonResponse(500, 'Failed to update profile', safeErrorResponse($e));
         return;
     }
 
@@ -168,7 +168,7 @@ $authUser    = requireAuth();
 $method      = $_SERVER['REQUEST_METHOD'];
 $company_id  = $authUser['company_id'] ?? null;
 $app_user_id = $authUser['user_id'] ?? null;
-$username    = $authUser['user_id'] ?? null;
+$username    = $authUser['sub'] ?? $authUser['user_id'] ?? null;
 
 if (!$company_id || !$app_user_id) {
     jsonResponse(400, 'company_id is required');
@@ -177,6 +177,8 @@ if (!$company_id || !$app_user_id) {
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $username = mysqli_real_escape_string($conn, $username);
 
     switch ($method) {
         case 'GET':
@@ -188,9 +190,9 @@ try {
             updateMyProfile($conn, $app_user_id, $input, $username, $company_id);
             break;
         default:
-            jsonResponse(405, 'Method Not Allowed');
+            methodNotAllowed(['GET', 'PUT', 'PATCH']);
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

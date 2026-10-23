@@ -67,11 +67,11 @@ try {
             getMyPermissions($conn, $app_role_id);
             break;
         default:
-            authResponse(405, 'Method not allowed');
+            methodNotAllowed(['GET']);
     }
 
-} catch (Throwable $e) {
-    authResponse(500, 'An unexpected error occurred. Please try again.', null,
-        APP_ENV === 'development' ? ['debug' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()] : null
+} catch (Exception $e) {
+    authResponse(500, 'An unexpected error occurred. Please try again. Reference ID: ' . requestId(), null,
+        safeErrorResponse($e)
     );
 }

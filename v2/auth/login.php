@@ -2,28 +2,11 @@
 require_once __DIR__ . '/../general.php';
 require_once __DIR__ . '/../helpers/auth_response.php';
 require_once __DIR__ . '/../helpers/rate_limit.php';
+require_once __DIR__ . '/../helpers/auth_log.php';
 
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
 header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
-
-function writeLoginLog($conn, string $action, ?string $user_id, string $username): void {
-    $log_id = generateUUID();
-    $ip     = substr(getUserIP(), 0, 45);
-    $ua     = substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 500);
-    $module = 'auth';
-    $now    = date('Y-m-d H:i:s');
-
-    $stmt = $conn->prepare(
-        "INSERT INTO " . CORE_SCHEMA . ".log (id, action, ip_address, module, resource_id, `timestamp`, user_agent, username)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-    );
-    if ($stmt) {
-        $stmt->bind_param('ssssssss', $log_id, $action, $ip, $module, $user_id, $now, $ua, $username);
-        $stmt->execute();
-        $stmt->close();
-    }
-}
 
 function loginUser($conn, $input): void {
     // 1. Required field validation
@@ -43,7 +26,7 @@ function loginUser($conn, $input): void {
     // 3. IP rate limit — 20 requests per minute
     $ip = getUserIP();
     if (checkRateLimitByIP($conn, $ip, 'login', 20, 1)) {
-        writeLoginLog($conn, 'login_failed', null, $email);
+        writeAuthLog($conn, 'login_failed', null, $email);
         authResponse(429, 'Too many login attempts. Please try again later.', 'RATE_002');
         return;
     }
@@ -84,14 +67,14 @@ function loginUser($conn, $input): void {
 
     // 6. User not found — same message as wrong password (prevent enumeration)
     if (!$row) {
-        writeLoginLog($conn, 'login_failed', null, $email);
+        writeAuthLog($conn, 'login_failed', null, $email);
         authResponse(401, 'Invalid email or password', 'AUTH_001');
         return;
     }
 
     // 7. Verify password
     if (!password_verify($password, $row['password'])) {
-        writeLoginLog($conn, 'login_failed', $row['user_id'], $email);
+        writeAuthLog($conn, 'login_failed', $row['user_id'], $email);
         authResponse(401, 'Invalid email or password', 'AUTH_001');
         return;
     }
@@ -141,7 +124,7 @@ function loginUser($conn, $input): void {
         'language'       => $row['language'] ?? 'id',
     ];
 
-    $token = JWT::encode($claims, 28800);
+    $token = JWT::encode($claims, JWT::ACCESS_TTL);
 
     // 11. Update last-login timestamp
     $now  = date('Y-m-d H:i:s');
@@ -153,7 +136,7 @@ function loginUser($conn, $input): void {
     }
 
     // 12. Audit log
-    writeLoginLog($conn, 'login_success', $row['user_id'], $email);
+    writeAuthLog($conn, 'login_success', $row['user_id'], $email);
 
     authResponse(200, 'Login successful', null, [
         'token'   => $token,
@@ -178,17 +161,19 @@ try {
     $method = $_SERVER['REQUEST_METHOD'];
     $conn   = getConn();
 
+    validateJsonContentType();
+
     switch ($method) {
         case 'POST':
             $input = json_decode(file_get_contents('php://input'), true) ?? [];
             loginUser($conn, $input);
             break;
         default:
-            authResponse(405, 'Method not allowed');
+            methodNotAllowed(['POST']);
     }
 
-} catch (Throwable $e) {
-    authResponse(500, 'An unexpected error occurred. Please try again.', null,
-        APP_ENV === 'development' ? ['debug' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()] : null
+} catch (Exception $e) {
+    authResponse(500, 'An unexpected error occurred. Please try again. Reference ID: ' . requestId(), null,
+        safeErrorResponse($e)
     );
 }

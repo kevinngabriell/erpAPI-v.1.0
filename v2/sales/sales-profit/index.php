@@ -5,6 +5,8 @@ require_once __DIR__ . '/../../connection/db.php';
 require_once __DIR__ . '/../../helpers/audit_log.php';
 require_once __DIR__ . '/../../helpers/excel_export.php';
 require_once __DIR__ . '/../../helpers/notification.php';
+require_once __DIR__ . '/../../helpers/pagination.php';
+require_once __DIR__ . '/../../helpers/permission.php';
 
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
@@ -21,14 +23,13 @@ function calculateSalesProfitTotal($conn, $sales_profit_id) {
     $sales_profit_id = mysqli_real_escape_string($conn, $sales_profit_id);
     $result = mysqli_query($conn, "SELECT SUM(quantity * (price - landed_cost)) AS total_profit
             FROM " . APP_SCHEMA . ".sales_profit_item WHERE sales_profit_id = '$sales_profit_id' AND deleted_at IS NULL");
-    return $result ? (float)(mysqli_fetch_assoc($result)['total_profit'] ?? 0) : 0;
+    return $result ? (string)(mysqli_fetch_assoc($result)['total_profit'] ?? '0') : '0';
 }
 
 function getAllSalesProfits($conn, $company_id, $params) {
-    $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
-    $offset = ($page - 1) * $limit;
+    $paging = resolveListPaging($params);
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
+    $search = str_replace(['%', '_'], ['\%', '\_'], $search);
 
     $where = "sp.company_id = '$company_id' AND sp.deleted_at IS NULL";
     if ($search) {
@@ -67,22 +68,20 @@ function getAllSalesProfits($conn, $company_id, $params) {
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by,
             CONCAT(au.first_name, ' ', au.last_name) AS approved_by
-            FROM $from WHERE $where ORDER BY sp.created_at DESC LIMIT $limit OFFSET $offset");
+            FROM $from WHERE $where ORDER BY sp.created_at DESC" . sqlLimitClause($paging));
     $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM $from WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
         jsonResponse(200, 'Sales profits found', [
             'data'       => mysqli_fetch_all($result, MYSQLI_ASSOC),
-            'pagination' => [
-                'total'       => $total,
-                'page'        => $page,
-                'limit'       => $limit,
-                'total_pages' => (int)ceil($total / $limit),
-            ],
+            'pagination' => buildPagination($paging, $total),
         ]);
     } else {
-        jsonResponse(404, 'No sales profits found');
+        jsonResponse(200, 'No sales profits found', [
+            'data'       => [],
+            'pagination' => buildPagination($paging, $total),
+        ]);
     }
 }
 
@@ -142,9 +141,9 @@ function createSalesProfit($conn, $input, $username, $company_id) {
         foreach ($input['items'] as $item) {
             $item_id      = generateUUID();
             $product_name = mysqli_real_escape_string($conn, $item['product_name']);
-            $quantity     = (float)$item['quantity'];
-            $price        = (float)$item['price'];
-            $landed_cost  = (float)$item['landed_cost'];
+            $quantity     = mysqli_real_escape_string($conn, (string)$item['quantity']);
+            $price        = mysqli_real_escape_string($conn, (string)$item['price']);
+            $landed_cost  = mysqli_real_escape_string($conn, (string)$item['landed_cost']);
             $purchase_order_id_sql = isset($item['purchase_order_id']) && trim($item['purchase_order_id']) !== '' ? "'" . mysqli_real_escape_string($conn, $item['purchase_order_id']) . "'" : 'NULL';
 
             $item_sql = "INSERT INTO " . APP_SCHEMA . ".sales_profit_item
@@ -162,7 +161,7 @@ function createSalesProfit($conn, $input, $username, $company_id) {
         jsonResponse(201, 'Sales profit created successfully', ['sales_profit_id' => $sales_profit_id]);
     } catch (Exception $e) {
         $conn->rollback();
-        jsonResponse(500, 'Failed to create sales profit', ['error' => $e->getMessage()]);
+        jsonResponse(500, 'Failed to create sales profit', safeErrorResponse($e));
     }
 }
 
@@ -277,9 +276,9 @@ function updateSalesProfit($conn, $sales_profit_id, $input, $username, $company_
             foreach ($input['items'] as $item) {
                 $item_id      = generateUUID();
                 $product_name = mysqli_real_escape_string($conn, $item['product_name']);
-                $quantity     = (float)$item['quantity'];
-                $price        = (float)$item['price'];
-                $landed_cost  = (float)$item['landed_cost'];
+                $quantity     = mysqli_real_escape_string($conn, (string)$item['quantity']);
+                $price        = mysqli_real_escape_string($conn, (string)$item['price']);
+                $landed_cost  = mysqli_real_escape_string($conn, (string)$item['landed_cost']);
                 $purchase_order_id_sql = isset($item['purchase_order_id']) && trim($item['purchase_order_id']) !== '' ? "'" . mysqli_real_escape_string($conn, $item['purchase_order_id']) . "'" : 'NULL';
 
                 $item_sql = "INSERT INTO " . APP_SCHEMA . ".sales_profit_item
@@ -298,7 +297,7 @@ function updateSalesProfit($conn, $sales_profit_id, $input, $username, $company_
         jsonResponse(200, 'Sales profit updated successfully');
     } catch (Exception $e) {
         $conn->rollback();
-        jsonResponse(500, 'Failed to update sales profit', ['error' => $e->getMessage()]);
+        jsonResponse(500, 'Failed to update sales profit', safeErrorResponse($e));
     }
 }
 
@@ -313,15 +312,20 @@ function deleteSalesProfit($conn, $sales_profit_id, $username, $company_id) {
 
     $now = date('Y-m-d H:i:s');
 
+    mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".sales_profit_item
+        SET deleted_at = '$now', updated_by = '$username', updated_at = '$now'
+        WHERE sales_profit_id = '$sales_profit_id' AND deleted_at IS NULL");
+
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".sales_profit SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE id = '$sales_profit_id' AND company_id = '$company_id'")) {
         insertAuditLog($conn, $company_id, 'sales_profit', $sales_profit_id, 'deleted', $username);
         jsonResponse(200, 'Sales profit deleted successfully');
     } else {
-        jsonResponse(500, 'Failed to delete sales profit', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to delete sales profit', safeDbError($conn));
     }
 }
 
 function approveSalesProfit($conn, $sales_profit_id, $input, $username, $company_id) {
+    $sales_profit_id = mysqli_real_escape_string($conn, $sales_profit_id);
     $check = mysqli_query($conn, "SELECT sp.created_by, so.so_display_number, c.customer_name
             FROM " . APP_SCHEMA . ".sales_profit sp
             LEFT JOIN " . APP_SCHEMA . ".sales_order so ON so.id = sp.sales_order_id
@@ -367,11 +371,12 @@ function approveSalesProfit($conn, $sales_profit_id, $input, $username, $company
 
         jsonResponse(200, 'Sales profit approved successfully');
     } else {
-        jsonResponse(500, 'Failed to approve sales profit', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to approve sales profit', safeDbError($conn));
     }
 }
 
 function rejectSalesProfit($conn, $sales_profit_id, $input, $username, $company_id) {
+    $sales_profit_id = mysqli_real_escape_string($conn, $sales_profit_id);
     $check = mysqli_query($conn, "SELECT sp.created_by, so.so_display_number
             FROM " . APP_SCHEMA . ".sales_profit sp
             LEFT JOIN " . APP_SCHEMA . ".sales_order so ON so.id = sp.sales_order_id
@@ -412,11 +417,12 @@ function rejectSalesProfit($conn, $sales_profit_id, $input, $username, $company_
 
         jsonResponse(200, 'Sales profit rejected successfully');
     } else {
-        jsonResponse(500, 'Failed to reject sales profit', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to reject sales profit', safeDbError($conn));
     }
 }
 
 function reviseSalesProfit($conn, $sales_profit_id, $input, $username, $company_id) {
+    $sales_profit_id = mysqli_real_escape_string($conn, $sales_profit_id);
     $check = mysqli_query($conn, "SELECT ss.status_name FROM " . APP_SCHEMA . ".sales_profit sp
             LEFT JOIN " . APP_SCHEMA . ".sales_status ss ON ss.id = sp.status_id
             WHERE sp.id = '$sales_profit_id' AND sp.company_id = '$company_id' AND sp.deleted_at IS NULL LIMIT 1");
@@ -446,7 +452,7 @@ function reviseSalesProfit($conn, $sales_profit_id, $input, $username, $company_
         insertAuditLog($conn, $company_id, 'sales_profit', $sales_profit_id, 'revised', $username, $notes);
         jsonResponse(200, 'Sales profit revised successfully');
     } else {
-        jsonResponse(500, 'Failed to revise sales profit', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to revise sales profit', safeDbError($conn));
     }
 }
 
@@ -508,18 +514,18 @@ function exportSalesProfit($conn, $sales_profit_id, $company_id) {
 
     $row              = 9;
     $no               = 1;
-    $total_qty        = 0;
-    $total_price      = 0;
-    $total_landed     = 0;
-    $total_profit     = 0;
-    $total_percentage = 0;
+    $total_qty        = '0';
+    $total_price      = '0';
+    $total_landed     = '0';
+    $total_profit     = '0';
+    $total_percentage = '0';
 
     foreach ($items as $item) {
-        $quantity    = (float)$item['quantity'];
-        $price       = (float)$item['price'];
-        $landed_cost = (float)$item['landed_cost'];
-        $profit      = $price - $landed_cost;
-        $percentage  = $landed_cost != 0 ? ($profit / $landed_cost * 100) : 0;
+        $quantity    = (string)$item['quantity'];
+        $price       = (string)$item['price'];
+        $landed_cost = (string)$item['landed_cost'];
+        $profit      = bcsub($price, $landed_cost, 2);
+        $percentage  = bccomp($landed_cost, '0', 2) !== 0 ? bcmul(bcdiv($profit, $landed_cost, 4), '100', 2) : '0';
 
         $sheet->setCellValue("A$row", $no);
         $sheet->setCellValue("B$row", $item['product_name']);
@@ -527,15 +533,15 @@ function exportSalesProfit($conn, $sales_profit_id, $company_id) {
         $sheet->setCellValue("D$row", number_format($price, 2));
         $sheet->setCellValue("E$row", number_format($landed_cost, 2));
         $sheet->setCellValue("F$row", number_format($profit, 2));
-        $sheet->setCellValue("G$row", round($percentage, 2));
+        $sheet->setCellValue("G$row", round((float)$percentage, 2));
 
         $sheet->getStyle("A$row:G$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
 
-        $total_qty        += $quantity;
-        $total_price       += $price;
-        $total_landed      += $landed_cost;
-        $total_profit      += $profit;
-        $total_percentage  += $percentage;
+        $total_qty        = bcadd($total_qty, $quantity, 4);
+        $total_price      = bcadd($total_price, $price, 2);
+        $total_landed     = bcadd($total_landed, $landed_cost, 2);
+        $total_profit     = bcadd($total_profit, $profit, 2);
+        $total_percentage = bcadd($total_percentage, $percentage, 2);
 
         $row++;
         $no++;
@@ -553,11 +559,11 @@ function exportSalesProfit($conn, $sales_profit_id, $company_id) {
     $row++;
 
     $sheet->setCellValue("B$row", 'TOTAL');
-    $sheet->setCellValue("C$row", $total_qty);
-    $sheet->setCellValue("D$row", $total_price);
-    $sheet->setCellValue("E$row", $total_landed);
-    $sheet->setCellValue("F$row", $total_profit);
-    $sheet->setCellValue("G$row", round($total_percentage, 2));
+    $sheet->setCellValue("C$row", number_format($total_qty, 0));
+    $sheet->setCellValue("D$row", number_format($total_price, 2));
+    $sheet->setCellValue("E$row", number_format($total_landed, 2));
+    $sheet->setCellValue("F$row", number_format($total_profit, 2));
+    $sheet->setCellValue("G$row", round((float)$total_percentage, 2));
     $sheet->getStyle("A$row:G$row")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
     $row++;
 
@@ -570,9 +576,10 @@ function exportSalesProfit($conn, $sales_profit_id, $company_id) {
     $sheet->setCellValue("C$row", ($sales_profit['created_by_name'] ?? '-') . ' pada ' . $sales_profit['created_at']);
     $sheet->setCellValue("F$row", ($sales_profit['approved_by_name'] ?? '-') . ' pada ' . ($sales_profit['approved_at'] ?? '-'));
     $row += 3;
-    $sheet->setCellValue("A$row", '( ADMIN SALES )');
-    $sheet->setCellValue("C$row", '( TUKAR FAKTUR )');
-    $sheet->setCellValue("F$row", '( SULANTO )    ( IRENE )');
+    $signatures = getDocumentSignatures($conn, $company_id, 'sales_profit');
+    $sheet->setCellValue("A$row", $signatures['created']);
+    $sheet->setCellValue("C$row", $signatures['acknowledged']);
+    $sheet->setCellValue("F$row", $signatures['approved']);
 
     foreach (range('A', 'J') as $col) {
         $sheet->getColumnDimension($col)->setAutoSize(true);
@@ -586,7 +593,8 @@ function exportSalesProfit($conn, $sales_profit_id, $company_id) {
 $authUser   = requireAuth();
 $method     = $_SERVER['REQUEST_METHOD'];
 $company_id = $authUser['company_id'] ?? null;
-$username   = $authUser['user_id'] ?? null;
+$username   = $authUser['sub'] ?? $authUser['user_id'] ?? null;
+$app_role_id = $authUser['app_role_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
@@ -598,9 +606,11 @@ $sub_action       = $parts[4] ?? '';
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $username = mysqli_real_escape_string($conn, $username);
 
     if ($sales_profit_id && $sub_action === 'export') {
-        if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
+        if ($method !== 'GET') { methodNotAllowed(['GET']); }
         exportSalesProfit($conn, $sales_profit_id, $company_id);
 
     } elseif ($sales_profit_id && $sub_action !== '') {
@@ -610,15 +620,24 @@ try {
 
         switch ($sub_action) {
             case 'approve':
-                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                if ($method !== 'PATCH') { methodNotAllowed(['PATCH']); }
+                if (!userHasPermission($conn, $app_role_id, 'sales_profit.approve')) {
+                    jsonResponse(403, 'You do not have permission to approve sales profits');
+                }
                 approveSalesProfit($conn, $sales_profit_id, $input, $username, $company_id);
                 break;
             case 'reject':
-                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                if ($method !== 'PATCH') { methodNotAllowed(['PATCH']); }
+                if (!userHasPermission($conn, $app_role_id, 'sales_profit.approve')) {
+                    jsonResponse(403, 'You do not have permission to reject sales profits');
+                }
                 rejectSalesProfit($conn, $sales_profit_id, $input, $username, $company_id);
                 break;
             case 'revise':
-                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                if ($method !== 'PATCH') { methodNotAllowed(['PATCH']); }
+                if (!userHasPermission($conn, $app_role_id, 'sales_profit.approve')) {
+                    jsonResponse(403, 'You do not have permission to revise sales profits');
+                }
                 reviseSalesProfit($conn, $sales_profit_id, $input, $username, $company_id);
                 break;
             default:
@@ -638,7 +657,7 @@ try {
                 deleteSalesProfit($conn, $sales_profit_id, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'PUT', 'DELETE']);
         }
     } else {
         switch ($method) {
@@ -650,10 +669,10 @@ try {
                 createSalesProfit($conn, $input, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'POST']);
         }
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

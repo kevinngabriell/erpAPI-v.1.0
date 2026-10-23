@@ -2,12 +2,14 @@
 
 require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
+require_once __DIR__ . '/../../helpers/permission.php';
 
 function getAllSuppliers($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
+    $search = str_replace(['%', '_'], ['\%', '\_'], $search);
 
     $where = "s.company_id = '$company_id' AND s.deleted_at IS NULL";
     if ($search) {
@@ -19,14 +21,9 @@ function getAllSuppliers($conn, $company_id, $params) {
     }
 
     $outstanding_join = "LEFT JOIN (
-            SELECT supplier_id, SUM(outstanding) AS outstanding_amount
-            FROM (
-                SELECT supplier_id, invoice_number, MAX(due_amount) - SUM(COALESCE(paid_amount, 0)) AS outstanding
-                FROM " . APP_SCHEMA . ".finance_payment
-                WHERE company_id = '$company_id' AND supplier_id IS NOT NULL AND deleted_at IS NULL
-                GROUP BY supplier_id, invoice_number
-                HAVING outstanding > 0
-            ) inv
+            SELECT supplier_id, SUM(due_amount - COALESCE(paid_amount, 0)) AS outstanding_amount
+            FROM " . APP_SCHEMA . ".finance_payment
+            WHERE company_id = '$company_id' AND supplier_id IS NOT NULL AND deleted_at IS NULL
             GROUP BY supplier_id
         ) fpo ON fpo.supplier_id = s.id";
 
@@ -44,24 +41,24 @@ function getAllSuppliers($conn, $company_id, $params) {
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
-        $suppliers = mysqli_fetch_all($result, MYSQLI_ASSOC);
-        foreach ($suppliers as &$supplier) {
-            $supplier['outstanding_amount'] = (float)$supplier['outstanding_amount'];
-            $supplier['has_outstanding']    = $supplier['outstanding_amount'] > 0;
+        $data = mysqli_fetch_all($result, MYSQLI_ASSOC);
+        foreach ($data as &$supplier) {
+            $supplier['outstanding_amount'] = bcadd($supplier['outstanding_amount'], '0', 2);
+            $supplier['has_outstanding']    = bccomp($supplier['outstanding_amount'], '0', 2) > 0;
         }
-
-        jsonResponse(200, 'Suppliers found', [
-            'data'       => $suppliers,
-            'pagination' => [
-                'total'       => $total,
-                'page'        => $page,
-                'limit'       => $limit,
-                'total_pages' => (int)ceil($total / $limit),
-            ],
-        ]);
     } else {
-        jsonResponse(404, 'No suppliers found');
+        $data = [];
     }
+
+    jsonResponse(200, 'Suppliers found', [
+        'data'       => $data,
+        'pagination' => [
+            'total'       => $total,
+            'page'        => $page,
+            'limit'       => $limit,
+            'total_pages' => (int)ceil($total / $limit),
+        ],
+    ]);
 }
 
 function createSupplier($conn, $input, $username, $company_id) {
@@ -145,7 +142,7 @@ function createSupplier($conn, $input, $username, $company_id) {
     if (mysqli_query($conn, $sql)) {
         jsonResponse(201, 'Supplier created successfully', ['supplier_id' => $supplier_id]);
     } else {
-        jsonResponse(500, 'Failed to create supplier', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to create supplier', safeDbError($conn));
     }
 }
 
@@ -296,7 +293,7 @@ function updateSupplier($conn, $supplier_id, $input, $username, $company_id) {
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".supplier SET " . implode(', ', $updates) . " WHERE id = '$supplier_id' AND company_id = '$company_id'")) {
         jsonResponse(200, 'Supplier updated successfully');
     } else {
-        jsonResponse(500, 'Failed to update supplier', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to update supplier', safeDbError($conn));
     }
 }
 
@@ -314,16 +311,17 @@ function deleteSupplier($conn, $supplier_id, $username, $company_id) {
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".supplier SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE id = '$supplier_id' AND company_id = '$company_id'")) {
         jsonResponse(200, 'Supplier deleted successfully');
     } else {
-        jsonResponse(500, 'Failed to delete supplier', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to delete supplier', safeDbError($conn));
     }
 }
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
-$authUser   = requireAuth();
-$method     = $_SERVER['REQUEST_METHOD'];
-$company_id = $authUser['company_id'] ?? null;
-$username   = $authUser['user_id'] ?? null;
+$authUser    = requireAuth();
+$method      = $_SERVER['REQUEST_METHOD'];
+$company_id  = $authUser['company_id'] ?? null;
+$username    = $authUser['sub'] ?? $authUser['user_id'] ?? null;
+$app_role_id = $authUser['app_role_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
@@ -334,6 +332,8 @@ $supplier_id = !empty($action) ? $action : null;
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $username = mysqli_real_escape_string($conn, $username);
 
     if ($supplier_id) {
         switch ($method) {
@@ -341,14 +341,20 @@ try {
                 getDetailSupplier($conn, $supplier_id, $company_id);
                 break;
             case 'PUT':
+                if (!userHasPermission($conn, $app_role_id, 'master.supplier.update')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 $input = json_decode(file_get_contents('php://input'), true) ?? [];
                 updateSupplier($conn, $supplier_id, $input, $username, $company_id);
                 break;
             case 'DELETE':
+                if (!userHasPermission($conn, $app_role_id, 'master.supplier.delete')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 deleteSupplier($conn, $supplier_id, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'PUT', 'DELETE']);
         }
     } else {
         switch ($method) {
@@ -356,14 +362,17 @@ try {
                 getAllSuppliers($conn, $company_id, $_GET);
                 break;
             case 'POST':
+                if (!userHasPermission($conn, $app_role_id, 'master.supplier.create')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 $input = json_decode(file_get_contents('php://input'), true) ?? [];
                 createSupplier($conn, $input, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'POST']);
         }
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

@@ -5,7 +5,7 @@ require_once __DIR__ . '/../../connection/db.php';
 
 function getAllSalaryTransactions($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
 
     $where = "st.company_id = '$company_id' AND st.deleted_at IS NULL";
@@ -40,7 +40,15 @@ function getAllSalaryTransactions($conn, $company_id, $params) {
             ],
         ]);
     } else {
-        jsonResponse(404, 'No salary transactions found');
+        jsonResponse(200, 'Salary transactions found', [
+            'data'       => [],
+            'pagination' => [
+                'total'       => $total,
+                'page'        => $page,
+                'limit'       => $limit,
+                'total_pages' => (int)ceil($total / $limit),
+            ],
+        ]);
     }
 }
 
@@ -55,7 +63,7 @@ function createSalaryTransaction($conn, $input, $username, $company_id) {
 
     $app_user_id        = mysqli_real_escape_string($conn, $input['app_user_id']);
     $salary_category_id = mysqli_real_escape_string($conn, $input['salary_category_id']);
-    $salary_amount       = (float)$input['salary_amount'];
+    $salary_amount       = mysqli_real_escape_string($conn, (string)$input['salary_amount']);
 
     $category_check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".salary_category WHERE id = '$salary_category_id' AND deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($category_check) === 0) {
@@ -73,7 +81,7 @@ function createSalaryTransaction($conn, $input, $username, $company_id) {
     if (mysqli_query($conn, $sql)) {
         jsonResponse(201, 'Salary transaction created successfully', ['salary_transaction_id' => $salary_transaction_id]);
     } else {
-        jsonResponse(500, 'Failed to create salary transaction', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to create salary transaction', safeDbError($conn));
     }
 }
 
@@ -118,7 +126,8 @@ function updateSalaryTransaction($conn, $salary_transaction_id, $input, $usernam
     }
 
     if (isset($input['salary_amount']) && $input['salary_amount'] !== '') {
-        $updates[] = "salary_amount = " . (float)$input['salary_amount'];
+        $val = mysqli_real_escape_string($conn, (string)$input['salary_amount']);
+        $updates[] = "salary_amount = $val";
     }
 
     if (empty($updates)) {
@@ -133,7 +142,7 @@ function updateSalaryTransaction($conn, $salary_transaction_id, $input, $usernam
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".salary_transaction SET " . implode(', ', $updates) . " WHERE id = '$salary_transaction_id' AND company_id = '$company_id'")) {
         jsonResponse(200, 'Salary transaction updated successfully');
     } else {
-        jsonResponse(500, 'Failed to update salary transaction', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to update salary transaction', safeDbError($conn));
     }
 }
 
@@ -151,7 +160,7 @@ function deleteSalaryTransaction($conn, $salary_transaction_id, $username, $comp
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".salary_transaction SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE id = '$salary_transaction_id' AND company_id = '$company_id'")) {
         jsonResponse(200, 'Salary transaction deleted successfully');
     } else {
-        jsonResponse(500, 'Failed to delete salary transaction', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to delete salary transaction', safeDbError($conn));
     }
 }
 
@@ -160,7 +169,7 @@ function deleteSalaryTransaction($conn, $salary_transaction_id, $username, $comp
 $authUser   = requireAuth();
 $method     = $_SERVER['REQUEST_METHOD'];
 $company_id = $authUser['company_id'] ?? null;
-$username   = $authUser['user_id'] ?? null;
+$username   = $authUser['sub'] ?? $authUser['user_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
@@ -171,6 +180,8 @@ $salary_transaction_id = !empty($action) ? $action : null;
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $username = mysqli_real_escape_string($conn, $username);
 
     if ($salary_transaction_id) {
         switch ($method) {
@@ -185,7 +196,7 @@ try {
                 deleteSalaryTransaction($conn, $salary_transaction_id, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'PUT', 'DELETE']);
         }
     } else {
         switch ($method) {
@@ -197,10 +208,10 @@ try {
                 createSalaryTransaction($conn, $input, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'POST']);
         }
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

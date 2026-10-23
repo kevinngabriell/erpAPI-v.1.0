@@ -29,6 +29,11 @@ class JWT {
 
         [$header, $body, $sig] = $parts;
 
+        $decoded_header = json_decode(self::base64urlDecode($header), true);
+        if (!$decoded_header || ($decoded_header['alg'] ?? '') !== 'HS256') {
+            throw new Exception('Invalid token algorithm', 401);
+        }
+
         $expected = self::base64url(hash_hmac('sha256', "$header.$body", JWT_SECRET, true));
         if (!hash_equals($expected, $sig)) {
             throw new Exception('Invalid token signature', 401);

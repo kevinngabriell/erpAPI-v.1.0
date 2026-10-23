@@ -36,7 +36,7 @@ function buildRevenueTrend($conn, $company_id) {
     $months = [];
     for ($i = 5; $i >= 0; $i--) {
         $ym = date('Y-m', strtotime("-$i months"));
-        $months[$ym] = ['month' => $ym, 'revenue' => 0];
+        $months[$ym] = ['month' => $ym, 'revenue' => '0.00'];
     }
 
     $result = mysqli_query($conn, "SELECT DATE_FORMAT(si.invoice_date, '%Y-%m') AS ym,
@@ -45,10 +45,10 @@ function buildRevenueTrend($conn, $company_id) {
         JOIN " . APP_SCHEMA . ".sales_invoice_item sii ON sii.sales_invoice_id = si.id AND sii.deleted_at IS NULL
         WHERE si.company_id = '$company_id' AND si.deleted_at IS NULL
           AND si.invoice_date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
-        GROUP BY ym");
+        GROUP BY ym LIMIT 100");
     while ($row = mysqli_fetch_assoc($result)) {
         if (isset($months[$row['ym']])) {
-            $months[$row['ym']]['revenue'] = (float)$row['revenue'];
+            $months[$row['ym']]['revenue'] = bcadd($row['revenue'], '0', 2);
         }
     }
 
@@ -69,16 +69,16 @@ function buildProfitSummary($conn, $company_id) {
     $this_month = date('Y-m');
     $last_month = date('Y-m', strtotime('-1 month'));
     $summary = [
-        $this_month => ['profit' => 0, 'revenue' => 0],
-        $last_month => ['profit' => 0, 'revenue' => 0],
+        $this_month => ['profit' => '0.00', 'revenue' => '0.00'],
+        $last_month => ['profit' => '0.00', 'revenue' => '0.00'],
     ];
     while ($row = mysqli_fetch_assoc($result)) {
         if (isset($summary[$row['ym']])) {
-            $summary[$row['ym']] = ['profit' => (float)$row['profit'], 'revenue' => (float)$row['revenue']];
+            $summary[$row['ym']] = ['profit' => bcadd($row['profit'], '0', 2), 'revenue' => bcadd($row['revenue'], '0', 2)];
         }
     }
 
-    $margin = fn($s) => $s['revenue'] > 0 ? round($s['profit'] / $s['revenue'] * 100, 2) : 0;
+    $margin = fn($s) => bccomp($s['revenue'], '0', 2) > 0 ? round((float)bcdiv($s['profit'], $s['revenue'], 8) * 100, 2) : 0;
 
     return [
         'this_month' => array_merge($summary[$this_month], ['margin_percent' => $margin($summary[$this_month])]),
@@ -93,13 +93,14 @@ function buildCashPosition($conn, $company_id) {
         LEFT JOIN " . APP_SCHEMA . ".finance_transaction ft
                ON ft.bank_account_id = ba.id AND ft.deleted_at IS NULL
         WHERE ba.company_id = '$company_id' AND ba.deleted_at IS NULL
-        GROUP BY ba.id, ba.bank_name, ba.bank_number");
+        GROUP BY ba.id, ba.bank_name, ba.bank_number
+        LIMIT 100");
 
     $accounts    = [];
-    $total_cash  = 0;
+    $total_cash  = '0.00';
     while ($row = mysqli_fetch_assoc($result)) {
-        $balance      = (float)$row['balance'];
-        $total_cash  += $balance;
+        $balance      = bcadd($row['balance'], '0', 2);
+        $total_cash  = bcadd($total_cash, $balance, 2);
         $accounts[]   = [
             'bank_account_id' => $row['id'],
             'bank_name'       => $row['bank_name'],
@@ -111,14 +112,15 @@ function buildCashPosition($conn, $company_id) {
     return ['total_cash' => $total_cash, 'accounts' => $accounts];
 }
 
-function buildArApSummary($conn, $company_id) {
-    $buckets = ['current' => 0, '30' => 0, '60' => 0, '90' => 0, '90+' => 0];
+function buildArApSummary($conn, $company_id, $date_to = null) {
+    $as_of_date_expr = $date_to ? "'" . mysqli_real_escape_string($conn, $date_to) . "'" : 'CURDATE()';
+    $buckets = ['current' => '0.00', '30' => '0.00', '60' => '0.00', '90' => '0.00', '90+' => '0.00'];
     $ar = $buckets;
     $ap = $buckets;
 
     $result = mysqli_query($conn, "SELECT
             MAX(fp.due_amount) - SUM(COALESCE(fp.paid_amount, 0)) AS outstanding,
-            DATEDIFF(CURDATE(), DATE_ADD(si.invoice_date, INTERVAL COALESCE(c.customer_top_days, 0) DAY)) AS days_overdue
+            DATEDIFF($as_of_date_expr, DATE_ADD(si.invoice_date, INTERVAL COALESCE(c.customer_top_days, 0) DAY)) AS days_overdue
         FROM " . APP_SCHEMA . ".finance_payment fp
         LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = fp.customer_id
         LEFT JOIN " . APP_SCHEMA . ".sales_invoice si ON si.invoice_display_number = fp.invoice_number AND si.company_id = fp.company_id
@@ -126,12 +128,12 @@ function buildArApSummary($conn, $company_id) {
         GROUP BY fp.invoice_number, si.invoice_date, c.customer_top_days
         HAVING outstanding > 0");
     while ($row = mysqli_fetch_assoc($result)) {
-        $ar[agingBucket((int)$row['days_overdue'])] += (float)$row['outstanding'];
+        $ar[agingBucket((int)$row['days_overdue'])] = bcadd($ar[agingBucket((int)$row['days_overdue'])], $row['outstanding'], 2);
     }
 
     $result = mysqli_query($conn, "SELECT
             MAX(fp.due_amount) - SUM(COALESCE(fp.paid_amount, 0)) AS outstanding,
-            DATEDIFF(CURDATE(), DATE_ADD(pi.invoice_date, INTERVAL COALESCE(pt.days, 0) DAY)) AS days_overdue
+            DATEDIFF($as_of_date_expr, DATE_ADD(pi.invoice_date, INTERVAL COALESCE(pt.days, 0) DAY)) AS days_overdue
         FROM " . APP_SCHEMA . ".finance_payment fp
         LEFT JOIN " . APP_SCHEMA . ".supplier s ON s.id = fp.supplier_id
         LEFT JOIN " . APP_SCHEMA . ".payment_term pt ON pt.id = s.supplier_term_id
@@ -140,7 +142,7 @@ function buildArApSummary($conn, $company_id) {
         GROUP BY fp.invoice_number, pi.invoice_date, pt.days
         HAVING outstanding > 0");
     while ($row = mysqli_fetch_assoc($result)) {
-        $ap[agingBucket((int)$row['days_overdue'])] += (float)$row['outstanding'];
+        $ap[agingBucket((int)$row['days_overdue'])] = bcadd($ap[agingBucket((int)$row['days_overdue'])], $row['outstanding'], 2);
     }
 
     return ['receivables' => $ar, 'payables' => $ap];
@@ -177,8 +179,8 @@ function buildTopPartners($conn, $company_id) {
           AND MONTH(pi.invoice_date) = MONTH(CURDATE()) AND YEAR(pi.invoice_date) = YEAR(CURDATE())
         GROUP BY s.id, s.supplier_name ORDER BY total DESC LIMIT 5"), MYSQLI_ASSOC);
 
-    foreach ($customers as &$row) $row['total'] = (float)$row['total'];
-    foreach ($suppliers as &$row) $row['total'] = (float)$row['total'];
+    foreach ($customers as &$row) $row['total'] = bcadd($row['total'], '0', 2);
+    foreach ($suppliers as &$row) $row['total'] = bcadd($row['total'], '0', 2);
 
     return ['top_customers' => $customers, 'top_suppliers' => $suppliers];
 }
@@ -200,12 +202,14 @@ function buildExceptions($conn, $company_id) {
         FROM " . APP_SCHEMA . ".purchase_order po
         LEFT JOIN " . APP_SCHEMA . ".purchase_receive pr ON pr.purchase_order_id = po.id AND pr.deleted_at IS NULL
         WHERE po.company_id = '$company_id' AND po.deleted_at IS NULL AND po.approved_by IS NOT NULL
-          AND po.eta_date IS NOT NULL AND po.eta_date < CURDATE() AND pr.id IS NULL"), MYSQLI_ASSOC);
+          AND po.eta_date IS NOT NULL AND po.eta_date < CURDATE() AND pr.id IS NULL
+        LIMIT 100"), MYSQLI_ASSOC);
 
     $delayed_deliveries = mysqli_fetch_all(mysqli_query($conn, "SELECT sd.id, sd.do_display_number, sd.eta_date
         FROM " . APP_SCHEMA . ".sales_delivery sd
         WHERE sd.company_id = '$company_id' AND sd.deleted_at IS NULL
-          AND sd.eta_date IS NOT NULL AND sd.eta_date < CURDATE()"), MYSQLI_ASSOC);
+          AND sd.eta_date IS NOT NULL AND sd.eta_date < CURDATE()
+        LIMIT 100"), MYSQLI_ASSOC);
 
     return [
         'overdue_purchase_orders'  => $overdue_pos,
@@ -234,8 +238,8 @@ function buildBukuKasSnapshot($conn, $company_id) {
           AND MONTH(transaction_date) = MONTH(CURDATE()) AND YEAR(transaction_date) = YEAR(CURDATE())");
 
     return [
-        'today_net' => (float)mysqli_fetch_assoc($today_result)['total'],
-        'mtd_net'   => (float)mysqli_fetch_assoc($mtd_result)['total'],
+        'today_net' => bcadd(mysqli_fetch_assoc($today_result)['total'], '0', 2),
+        'mtd_net'   => bcadd(mysqli_fetch_assoc($mtd_result)['total'], '0', 2),
     ];
 }
 
@@ -247,9 +251,9 @@ function buildFinanceEntriesToday($conn, $company_id) {
     $result = mysqli_query($conn, "SELECT id, voucher_number, bank_account_id, amount, payee, created_by, created_at
         FROM " . APP_SCHEMA . ".finance_transaction
         WHERE company_id = '$company_id' AND deleted_at IS NULL AND transaction_date = CURDATE()
-        ORDER BY created_at DESC");
+        ORDER BY created_at DESC LIMIT 100");
     $rows = mysqli_fetch_all($result, MYSQLI_ASSOC);
-    foreach ($rows as &$row) $row['amount'] = (float)$row['amount'];
+    foreach ($rows as &$row) $row['amount'] = bcadd($row['amount'], '0', 2);
 
     return ['total_entries' => count($rows), 'data' => $rows];
 }
@@ -266,15 +270,15 @@ function buildPnlSnapshot($conn, $company_id) {
           AND MONTH(ft.transaction_date) = MONTH(CURDATE()) AND YEAR(ft.transaction_date) = YEAR(CURDATE())
         GROUP BY ac.account_type");
 
-    $totals = ['revenue' => 0, 'expense' => 0];
+    $totals = ['revenue' => '0.00', 'expense' => '0.00'];
     while ($row = mysqli_fetch_assoc($result)) {
-        $totals[$row['account_type']] = (float)$row['total'];
+        $totals[$row['account_type']] = bcadd($row['total'], '0', 2);
     }
 
     return [
         'revenue' => $totals['revenue'],
         'expense' => $totals['expense'],
-        'profit'  => $totals['revenue'] - $totals['expense'],
+        'profit'  => bcsub($totals['revenue'], $totals['expense'], 2),
     ];
 }
 
@@ -287,9 +291,9 @@ function buildNeracaSnapshot($conn, $company_id) {
           AND ac.account_type IN ('asset', 'liability', 'equity')
         GROUP BY ac.account_type");
 
-    $totals = ['asset' => 0, 'liability' => 0, 'equity' => 0];
+    $totals = ['asset' => '0.00', 'liability' => '0.00', 'equity' => '0.00'];
     while ($row = mysqli_fetch_assoc($result)) {
-        $totals[$row['account_type']] = (float)$row['total'];
+        $totals[$row['account_type']] = bcadd($row['total'], '0', 2);
     }
 
     return $totals;
@@ -306,30 +310,33 @@ function buildBukuBesarSummary($conn, $company_id) {
         WHERE ac.company_id = '$company_id' AND ac.deleted_at IS NULL
           AND (ftd.id IS NULL OR ft.id IS NOT NULL)
         GROUP BY ac.id, ac.account_code, ac.account_code_name
-        ORDER BY ac.account_code ASC");
+        ORDER BY ac.account_code ASC
+        LIMIT 100");
 
     $rows = mysqli_fetch_all($result, MYSQLI_ASSOC);
-    foreach ($rows as &$row) $row['total'] = (float)$row['total'];
+    foreach ($rows as &$row) $row['total'] = bcadd($row['total'], '0', 2);
 
     return $rows;
 }
 
-function buildArAging($conn, $company_id) {
+function buildArAging($conn, $company_id, $date_to = null) {
+    $as_of_date_expr = $date_to ? "'" . mysqli_real_escape_string($conn, $date_to) . "'" : 'CURDATE()';
     $result = mysqli_query($conn, "SELECT
             fp.invoice_number, c.customer_name, c.id AS customer_id, si.invoice_date,
             MAX(fp.due_amount) - SUM(COALESCE(fp.paid_amount, 0)) AS outstanding,
-            DATEDIFF(CURDATE(), DATE_ADD(si.invoice_date, INTERVAL COALESCE(c.customer_top_days, 0) DAY)) AS days_overdue
+            DATEDIFF($as_of_date_expr, DATE_ADD(si.invoice_date, INTERVAL COALESCE(c.customer_top_days, 0) DAY)) AS days_overdue
         FROM " . APP_SCHEMA . ".finance_payment fp
         LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = fp.customer_id
         LEFT JOIN " . APP_SCHEMA . ".sales_invoice si ON si.invoice_display_number = fp.invoice_number AND si.company_id = fp.company_id
         WHERE fp.company_id = '$company_id' AND fp.customer_id IS NOT NULL AND fp.deleted_at IS NULL
         GROUP BY fp.invoice_number, c.customer_name, c.id, si.invoice_date, c.customer_top_days
         HAVING outstanding > 0
-        ORDER BY days_overdue DESC");
+        ORDER BY days_overdue DESC
+        LIMIT 100");
 
     $rows = mysqli_fetch_all($result, MYSQLI_ASSOC);
     foreach ($rows as &$row) {
-        $row['outstanding']  = (float)$row['outstanding'];
+        $row['outstanding']  = bcadd($row['outstanding'], '0', 2);
         $row['days_overdue'] = (int)$row['days_overdue'];
         $row['bucket']       = agingBucket($row['days_overdue']);
     }
@@ -337,11 +344,12 @@ function buildArAging($conn, $company_id) {
     return $rows;
 }
 
-function buildApAging($conn, $company_id) {
+function buildApAging($conn, $company_id, $date_to = null) {
+    $as_of_date_expr = $date_to ? "'" . mysqli_real_escape_string($conn, $date_to) . "'" : 'CURDATE()';
     $result = mysqli_query($conn, "SELECT
             fp.invoice_number, s.supplier_name, s.id AS supplier_id, pi.invoice_date,
             MAX(fp.due_amount) - SUM(COALESCE(fp.paid_amount, 0)) AS outstanding,
-            DATEDIFF(CURDATE(), DATE_ADD(pi.invoice_date, INTERVAL COALESCE(pt.days, 0) DAY)) AS days_overdue
+            DATEDIFF($as_of_date_expr, DATE_ADD(pi.invoice_date, INTERVAL COALESCE(pt.days, 0) DAY)) AS days_overdue
         FROM " . APP_SCHEMA . ".finance_payment fp
         LEFT JOIN " . APP_SCHEMA . ".supplier s ON s.id = fp.supplier_id
         LEFT JOIN " . APP_SCHEMA . ".payment_term pt ON pt.id = s.supplier_term_id
@@ -349,11 +357,12 @@ function buildApAging($conn, $company_id) {
         WHERE fp.company_id = '$company_id' AND fp.supplier_id IS NOT NULL AND fp.deleted_at IS NULL
         GROUP BY fp.invoice_number, s.supplier_name, s.id, pi.invoice_date, pt.days
         HAVING outstanding > 0
-        ORDER BY days_overdue DESC");
+        ORDER BY days_overdue DESC
+        LIMIT 100");
 
     $rows = mysqli_fetch_all($result, MYSQLI_ASSOC);
     foreach ($rows as &$row) {
-        $row['outstanding']  = (float)$row['outstanding'];
+        $row['outstanding']  = bcadd($row['outstanding'], '0', 2);
         $row['days_overdue'] = (int)$row['days_overdue'];
         $row['bucket']       = agingBucket($row['days_overdue']);
     }
@@ -365,12 +374,12 @@ function buildTaxDue($conn, $company_id) {
     $sales_pending = mysqli_fetch_all(mysqli_query($conn, "SELECT id, invoice_display_number, invoice_date, customer_id
         FROM " . APP_SCHEMA . ".sales_invoice
         WHERE company_id = '$company_id' AND deleted_at IS NULL AND tax_invoice_number IS NULL
-        ORDER BY invoice_date ASC"), MYSQLI_ASSOC);
+        ORDER BY invoice_date ASC LIMIT 100"), MYSQLI_ASSOC);
 
     $purchase_pending = mysqli_fetch_all(mysqli_query($conn, "SELECT id, invoice_display_number, invoice_date, supplier_id
         FROM " . APP_SCHEMA . ".purchase_invoice
         WHERE company_id = '$company_id' AND deleted_at IS NULL AND tax_invoice_number IS NULL
-        ORDER BY invoice_date ASC"), MYSQLI_ASSOC);
+        ORDER BY invoice_date ASC LIMIT 100"), MYSQLI_ASSOC);
 
     return [
         'sales_invoices_pending_faktur'    => $sales_pending,
@@ -392,7 +401,7 @@ function buildOpenPos($conn, $company_id) {
         ORDER BY total DESC LIMIT 5");
 
     $rows = mysqli_fetch_all($result, MYSQLI_ASSOC);
-    foreach ($rows as &$row) $row['total'] = (float)$row['total'];
+    foreach ($rows as &$row) $row['total'] = bcadd($row['total'], '0', 2);
 
     $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".purchase_order
         WHERE company_id = '$company_id' AND deleted_at IS NULL
@@ -410,7 +419,7 @@ function buildIncomingEta($conn, $company_id) {
         FROM " . APP_SCHEMA . ".purchase_order
         WHERE company_id = '$company_id' AND deleted_at IS NULL AND approved_by IS NOT NULL
           AND eta_date IS NOT NULL AND eta_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)
-        ORDER BY eta_date ASC");
+        ORDER BY eta_date ASC LIMIT 100");
 
     return mysqli_fetch_all($result, MYSQLI_ASSOC);
 }
@@ -466,7 +475,7 @@ function buildOrderBacklog($conn, $company_id) {
         LEFT JOIN " . APP_SCHEMA . ".sales_delivery sd ON sd.sales_order_id = so.id AND sd.deleted_at IS NULL
         WHERE so.company_id = '$company_id' AND so.deleted_at IS NULL AND so.approved_by IS NOT NULL AND sd.id IS NULL");
 
-    return ['backlog_value' => (float)mysqli_fetch_assoc($result)['total']];
+    return ['backlog_value' => bcadd(mysqli_fetch_assoc($result)['total'], '0', 2)];
 }
 
 function buildTopCustomersMtd($conn, $company_id) {
@@ -481,13 +490,13 @@ function buildShipmentsInTransit($conn, $company_id) {
         WHERE company_id = '$company_id' AND deleted_at IS NULL AND approved_by IS NOT NULL
           AND status_id != '" . PO_STATUS_RECEIVED . "' AND status_id != '" . PO_STATUS_INVOICED . "'
           AND (vessel_name IS NOT NULL OR container_number IS NOT NULL)
-        ORDER BY eta_date ASC"), MYSQLI_ASSOC);
+        ORDER BY eta_date ASC LIMIT 100"), MYSQLI_ASSOC);
 
     $sales = mysqli_fetch_all(mysqli_query($conn, "SELECT id, do_display_number, vessel_name, container_number, bl_number, etd_date, eta_date
         FROM " . APP_SCHEMA . ".sales_delivery
         WHERE company_id = '$company_id' AND deleted_at IS NULL
           AND (vessel_name IS NOT NULL OR container_number IS NOT NULL)
-        ORDER BY eta_date ASC"), MYSQLI_ASSOC);
+        ORDER BY eta_date ASC LIMIT 100"), MYSQLI_ASSOC);
 
     return ['inbound' => $purchase, 'outbound' => $sales];
 }
@@ -505,11 +514,13 @@ function buildSppbTracker($conn, $company_id) {
 function buildContainerLookup($conn, $company_id) {
     $purchase = mysqli_fetch_all(mysqli_query($conn, "SELECT id, po_display_number, container_number, bl_number, vessel_name
         FROM " . APP_SCHEMA . ".purchase_order
-        WHERE company_id = '$company_id' AND deleted_at IS NULL AND container_number IS NOT NULL"), MYSQLI_ASSOC);
+        WHERE company_id = '$company_id' AND deleted_at IS NULL AND container_number IS NOT NULL
+        LIMIT 100"), MYSQLI_ASSOC);
 
     $sales = mysqli_fetch_all(mysqli_query($conn, "SELECT id, do_display_number, container_number, bl_number, vessel_name
         FROM " . APP_SCHEMA . ".sales_delivery
-        WHERE company_id = '$company_id' AND deleted_at IS NULL AND container_number IS NOT NULL"), MYSQLI_ASSOC);
+        WHERE company_id = '$company_id' AND deleted_at IS NULL AND container_number IS NOT NULL
+        LIMIT 100"), MYSQLI_ASSOC);
 
     return ['inbound' => $purchase, 'outbound' => $sales];
 }
@@ -520,7 +531,8 @@ function buildAtRiskShipments($conn, $company_id) {
         WHERE po.company_id = '$company_id' AND po.deleted_at IS NULL AND po.approved_by IS NOT NULL
           AND po.eta_date IS NOT NULL
           AND po.eta_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 3 DAY)
-          AND po.status_id != '" . PO_STATUS_RECEIVED . "' AND po.status_id != '" . PO_STATUS_INVOICED . "'");
+          AND po.status_id != '" . PO_STATUS_RECEIVED . "' AND po.status_id != '" . PO_STATUS_INVOICED . "'
+        LIMIT 100");
 
     return mysqli_fetch_all($result, MYSQLI_ASSOC);
 }
@@ -547,7 +559,7 @@ function buildPendingReceive($conn, $company_id) {
         LEFT JOIN " . APP_SCHEMA . ".purchase_receive pr ON pr.purchase_order_id = po.id AND pr.deleted_at IS NULL
         LEFT JOIN " . APP_SCHEMA . ".supplier s ON s.id = po.supplier_id
         WHERE po.company_id = '$company_id' AND po.deleted_at IS NULL AND po.approved_by IS NOT NULL AND pr.id IS NULL
-        ORDER BY po.eta_date ASC");
+        ORDER BY po.eta_date ASC LIMIT 100");
 
     return mysqli_fetch_all($result, MYSQLI_ASSOC);
 }
@@ -558,7 +570,7 @@ function buildPendingOutbound($conn, $company_id) {
         LEFT JOIN " . APP_SCHEMA . ".sales_delivery sd ON sd.sales_order_id = so.id AND sd.deleted_at IS NULL
         LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = so.customer_id
         WHERE so.company_id = '$company_id' AND so.deleted_at IS NULL AND so.approved_by IS NOT NULL AND sd.id IS NULL
-        ORDER BY so.so_date ASC");
+        ORDER BY so.so_date ASC LIMIT 100");
 
     return mysqli_fetch_all($result, MYSQLI_ASSOC);
 }
@@ -572,7 +584,8 @@ function buildStockByLocation($conn, $company_id) {
         LEFT JOIN " . APP_SCHEMA . ".warehouse_lot lot
                ON lot.location_id = wl.id AND lot.deleted_at IS NULL
         WHERE wl.company_id = '$company_id' AND wl.deleted_at IS NULL
-        GROUP BY wl.id, wl.location_name");
+        GROUP BY wl.id, wl.location_name
+        LIMIT 100");
 
     $rows = mysqli_fetch_all($result, MYSQLI_ASSOC);
     foreach ($rows as &$row) $row['total_stock'] = (float)$row['total_stock'];
@@ -592,7 +605,7 @@ function buildLowStock($conn, $company_id) {
         WHERE rp.company_id = '$company_id' AND rp.deleted_at IS NULL
         GROUP BY rp.id, p.id, p.product_name, wl.id, wl.location_name, rp.min_stock
         HAVING current_stock < rp.min_stock
-        ORDER BY p.product_name ASC");
+        ORDER BY p.product_name ASC LIMIT 100");
 
     $rows = mysqli_fetch_all($result, MYSQLI_ASSOC);
     foreach ($rows as &$row) {
@@ -627,6 +640,8 @@ $authUser    = requireAuth();
 $method      = $_SERVER['REQUEST_METHOD'];
 $company_id  = $authUser['company_id'] ?? null;
 $app_role_id = $authUser['app_role_id'] ?? null;
+$date_from   = $_GET['date_from'] ?? null;
+$date_to     = $_GET['date_to'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
@@ -637,12 +652,20 @@ if (!$app_role_id) {
     exit;
 }
 if ($method !== 'GET') {
-    jsonResponse(405, 'Method Not Allowed');
+    methodNotAllowed(['GET']);
     exit;
+}
+
+foreach (['date_from' => $date_from, 'date_to' => $date_to] as $field => $value) {
+    if ($value !== null && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) {
+        jsonResponse(400, "$field must be YYYY-MM-DD format");
+        exit;
+    }
 }
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
 
     // Widgets not listed here (dept_comparison, payment_verification,
     // supplier_scorecard, clearance_mode, adjustment_approvals,
@@ -653,7 +676,7 @@ try {
         'dashboard.revenue_trend.view'              => fn() => buildRevenueTrend($conn, $company_id),
         'dashboard.profit_summary.view'              => fn() => buildProfitSummary($conn, $company_id),
         'dashboard.cash_position.view'                => fn() => buildCashPosition($conn, $company_id),
-        'dashboard.ar_ap_summary.view'                => fn() => buildArApSummary($conn, $company_id),
+        'dashboard.ar_ap_summary.view'                => fn() => buildArApSummary($conn, $company_id, $date_to),
         'dashboard.pending_approvals.view'            => fn() => buildPendingApprovals($conn, $company_id),
         'dashboard.top_partners.view'                 => fn() => buildTopPartners($conn, $company_id),
         'dashboard.subscription_status.view'          => fn() => buildSubscriptionStatus($authUser),
@@ -670,8 +693,8 @@ try {
         'dashboard.pnl_snapshot.view'                  => fn() => buildPnlSnapshot($conn, $company_id),
         'dashboard.neraca_snapshot.view'               => fn() => buildNeracaSnapshot($conn, $company_id),
         'dashboard.buku_besar_summary.view'           => fn() => buildBukuBesarSummary($conn, $company_id),
-        'dashboard.ar_aging.view'                      => fn() => buildArAging($conn, $company_id),
-        'dashboard.ap_aging.view'                      => fn() => buildApAging($conn, $company_id),
+        'dashboard.ar_aging.view'                      => fn() => buildArAging($conn, $company_id, $date_to),
+        'dashboard.ap_aging.view'                      => fn() => buildApAging($conn, $company_id, $date_to),
         'dashboard.tax_due.view'                       => fn() => buildTaxDue($conn, $company_id),
 
         'dashboard.open_pos.view'                      => fn() => buildOpenPos($conn, $company_id),
@@ -712,5 +735,5 @@ try {
     jsonResponse(200, 'Dashboard found', ['widgets' => $widgets]);
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

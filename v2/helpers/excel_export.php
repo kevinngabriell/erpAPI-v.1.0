@@ -38,3 +38,32 @@ function streamXlsx($spreadsheet, string $filename): void {
     $writer->save('php://output');
     exit;
 }
+
+// Signer names printed under the "DIBUAT / MENGETAHUI / DISETUJUI OLEH" blocks are configured per
+// company in document_signature. A slot holds one or more names separated by commas; each name is
+// rendered as "( NAME )". An unconfigured slot renders an empty "(        )" box to sign by hand.
+function formatSignatureNames(?string $names): string {
+    $list = array_filter(array_map('trim', explode(',', (string)$names)), 'strlen');
+    if (!$list) return '(                    )';
+
+    return implode('    ', array_map(fn($name) => '( ' . mb_strtoupper($name) . ' )', $list));
+}
+
+function getDocumentSignatures($conn, string $company_id, string $document_type): array {
+    $signatures = ['created' => null, 'acknowledged' => null, 'approved' => null];
+
+    $company_id    = mysqli_real_escape_string($conn, $company_id);
+    $document_type = mysqli_real_escape_string($conn, $document_type);
+    $result = @mysqli_query($conn, "SELECT created_by_names, acknowledged_by_names, approved_by_names
+            FROM " . APP_SCHEMA . ".document_signature
+            WHERE company_id = '$company_id' AND document_type = '$document_type' AND deleted_at IS NULL LIMIT 1");
+    if ($result && ($row = mysqli_fetch_assoc($result))) {
+        $signatures = [
+            'created'      => $row['created_by_names'],
+            'acknowledged' => $row['acknowledged_by_names'],
+            'approved'     => $row['approved_by_names'],
+        ];
+    }
+
+    return array_map('formatSignatureNames', $signatures);
+}

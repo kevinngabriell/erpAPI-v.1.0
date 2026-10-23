@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/../config.php';
 
 function userHasPermission($conn, $app_role_id, $permission_key) {
     if (!$app_role_id) return false;

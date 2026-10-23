@@ -1,9 +1,11 @@
 <?php
 
 function assertFinanceTransactionBelongsToCompany($conn, $finance_transaction_id, $company_id) {
+    $finance_transaction_id = mysqli_real_escape_string($conn, $finance_transaction_id);
     $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".finance_transaction WHERE id = '$finance_transaction_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Finance transaction not found');
+        return;
     }
 }
 
@@ -22,7 +24,7 @@ function getAllFinanceTransactionDetails($conn, $finance_transaction_id, $compan
     if ($result && mysqli_num_rows($result) > 0) {
         jsonResponse(200, 'Finance transaction details found', ['data' => mysqli_fetch_all($result, MYSQLI_ASSOC)]);
     } else {
-        jsonResponse(404, 'No finance transaction details found');
+        jsonResponse(200, 'Finance transaction details found', ['data' => []]);
     }
 }
 
@@ -38,7 +40,7 @@ function createFinanceTransactionDetail($conn, $finance_transaction_id, $input, 
     }
 
     $account_code_id = mysqli_real_escape_string($conn, $input['account_code_id']);
-    $amount          = (float)$input['amount'];
+    $amount          = mysqli_real_escape_string($conn, (string)$input['amount']);
 
     $account_check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".account_code WHERE id = '$account_code_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($account_check) === 0) {
@@ -58,7 +60,7 @@ function createFinanceTransactionDetail($conn, $finance_transaction_id, $input, 
     if (mysqli_query($conn, $sql)) {
         jsonResponse(201, 'Finance transaction detail created successfully', ['finance_transaction_detail_id' => $finance_transaction_detail_id]);
     } else {
-        jsonResponse(500, 'Failed to create finance transaction detail', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to create finance transaction detail', safeDbError($conn));
     }
 }
 
@@ -109,7 +111,8 @@ function updateFinanceTransactionDetail($conn, $finance_transaction_id, $finance
     }
 
     if (isset($input['amount']) && $input['amount'] !== '') {
-        $updates[] = "amount = " . (float)$input['amount'];
+        $val = mysqli_real_escape_string($conn, (string)$input['amount']);
+        $updates[] = "amount = $val";
     }
 
     if (array_key_exists('memo', $input)) {
@@ -129,7 +132,7 @@ function updateFinanceTransactionDetail($conn, $finance_transaction_id, $finance
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".finance_transaction_detail SET " . implode(', ', $updates) . " WHERE id = '$finance_transaction_detail_id' AND finance_transaction_id = '$finance_transaction_id'")) {
         jsonResponse(200, 'Finance transaction detail updated successfully');
     } else {
-        jsonResponse(500, 'Failed to update finance transaction detail', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to update finance transaction detail', safeDbError($conn));
     }
 }
 
@@ -149,7 +152,7 @@ function deleteFinanceTransactionDetail($conn, $finance_transaction_id, $finance
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".finance_transaction_detail SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE id = '$finance_transaction_detail_id' AND finance_transaction_id = '$finance_transaction_id'")) {
         jsonResponse(200, 'Finance transaction detail deleted successfully');
     } else {
-        jsonResponse(500, 'Failed to delete finance transaction detail', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to delete finance transaction detail', safeDbError($conn));
     }
 }
 
@@ -168,7 +171,7 @@ if ($finance_transaction_detail_id) {
             deleteFinanceTransactionDetail($conn, $finance_transaction_id, $finance_transaction_detail_id, $username, $company_id);
             break;
         default:
-            jsonResponse(405, 'Method Not Allowed');
+            methodNotAllowed(['GET', 'PUT', 'DELETE']);
     }
 } else {
     switch ($method) {
@@ -180,6 +183,6 @@ if ($finance_transaction_detail_id) {
             createFinanceTransactionDetail($conn, $finance_transaction_id, $input, $username, $company_id);
             break;
         default:
-            jsonResponse(405, 'Method Not Allowed');
+            methodNotAllowed(['GET', 'POST']);
     }
 }

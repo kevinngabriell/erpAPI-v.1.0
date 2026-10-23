@@ -34,7 +34,7 @@ List all purchase receives belonging to the authenticated company.
 | Parameter          | Type   | Required | Default | Description |
 |--------------------|--------|----------|---------|-------------|
 | page               | int    | No       | 1       | Page number |
-| limit              | int    | No       | 10      | Items per page (max 100) |
+| limit              | int/string | No | 15 | Items per page (max 15), or `all` to return every matching row (used by list exports) |
 | search             | string | No       | —       | Search on the linked purchase order's `po_display_number` (left-joined) |
 | purchase_order_id  | string | No       | —       | Filter by `purchase_order_id` |
 | supplier_id        | string | No       | —       | Filter by `supplier_id` |

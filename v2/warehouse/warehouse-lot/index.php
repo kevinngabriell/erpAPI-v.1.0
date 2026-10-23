@@ -5,7 +5,7 @@ require_once __DIR__ . '/../../connection/db.php';
 
 function getAllWarehouseLots($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
 
     $where = "wl.company_id = '$company_id' AND wl.deleted_at IS NULL";
@@ -40,7 +40,15 @@ function getAllWarehouseLots($conn, $company_id, $params) {
             ],
         ]);
     } else {
-        jsonResponse(404, 'No warehouse lots found');
+        jsonResponse(200, 'Warehouse lots found', [
+            'data'       => [],
+            'pagination' => [
+                'total'       => $total,
+                'page'        => $page,
+                'limit'       => $limit,
+                'total_pages' => (int)ceil($total / $limit),
+            ],
+        ]);
     }
 }
 
@@ -55,8 +63,8 @@ function createWarehouseLot($conn, $input, $username, $company_id) {
 
     $product_id        = mysqli_real_escape_string($conn, $input['product_id']);
     $lot_date          = mysqli_real_escape_string($conn, $input['lot_date']);
-    $beginning_balance = (float)$input['beginning_balance'];
-    $end_balance       = (float)$input['end_balance'];
+    $beginning_balance = mysqli_real_escape_string($conn, (string)$input['beginning_balance']);
+    $end_balance       = mysqli_real_escape_string($conn, (string)$input['end_balance']);
 
     $product_check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".product WHERE id = '$product_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($product_check) === 0) {
@@ -85,7 +93,7 @@ function createWarehouseLot($conn, $input, $username, $company_id) {
     if (mysqli_query($conn, $sql)) {
         jsonResponse(201, 'Warehouse lot created successfully', ['warehouse_lot_id' => $warehouse_lot_id]);
     } else {
-        jsonResponse(500, 'Failed to create warehouse lot', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to create warehouse lot', safeDbError($conn));
     }
 }
 
@@ -127,10 +135,12 @@ function updateWarehouseLot($conn, $warehouse_lot_id, $input, $username, $compan
         $updates[] = "lot_date = '" . mysqli_real_escape_string($conn, $input['lot_date']) . "'";
     }
     if (isset($input['beginning_balance']) && $input['beginning_balance'] !== '') {
-        $updates[] = "beginning_balance = " . (float)$input['beginning_balance'];
+        $val = mysqli_real_escape_string($conn, (string)$input['beginning_balance']);
+        $updates[] = "beginning_balance = $val";
     }
     if (isset($input['end_balance']) && $input['end_balance'] !== '') {
-        $updates[] = "end_balance = " . (float)$input['end_balance'];
+        $val = mysqli_real_escape_string($conn, (string)$input['end_balance']);
+        $updates[] = "end_balance = $val";
     }
 
     if (empty($updates)) {
@@ -145,7 +155,7 @@ function updateWarehouseLot($conn, $warehouse_lot_id, $input, $username, $compan
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".warehouse_lot SET " . implode(', ', $updates) . " WHERE id = '$warehouse_lot_id' AND company_id = '$company_id'")) {
         jsonResponse(200, 'Warehouse lot updated successfully');
     } else {
-        jsonResponse(500, 'Failed to update warehouse lot', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to update warehouse lot', safeDbError($conn));
     }
 }
 
@@ -163,7 +173,7 @@ function deleteWarehouseLot($conn, $warehouse_lot_id, $username, $company_id) {
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".warehouse_lot SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE id = '$warehouse_lot_id' AND company_id = '$company_id'")) {
         jsonResponse(200, 'Warehouse lot deleted successfully');
     } else {
-        jsonResponse(500, 'Failed to delete warehouse lot', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to delete warehouse lot', safeDbError($conn));
     }
 }
 
@@ -172,7 +182,7 @@ function deleteWarehouseLot($conn, $warehouse_lot_id, $username, $company_id) {
 $authUser   = requireAuth();
 $method     = $_SERVER['REQUEST_METHOD'];
 $company_id = $authUser['company_id'] ?? null;
-$username   = $authUser['user_id'] ?? null;
+$username   = $authUser['sub'] ?? $authUser['user_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
@@ -183,6 +193,8 @@ $warehouse_lot_id = !empty($action) ? $action : null;
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $username = mysqli_real_escape_string($conn, $username);
 
     if ($warehouse_lot_id) {
         switch ($method) {
@@ -197,7 +209,7 @@ try {
                 deleteWarehouseLot($conn, $warehouse_lot_id, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'PUT', 'DELETE']);
         }
     } else {
         switch ($method) {
@@ -209,10 +221,10 @@ try {
                 createWarehouseLot($conn, $input, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'POST']);
         }
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

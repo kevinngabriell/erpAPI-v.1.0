@@ -15,6 +15,7 @@
 require_once __DIR__ . '/../general.php';
 require_once __DIR__ . '/../connection/db.php';
 require_once __DIR__ . '/../helpers/notification.php';
+require_once __DIR__ . '/../helpers/permission.php';
 
 const DIGEST_MODULE_LABELS = [
     'sales_order'         => 'Sales',
@@ -210,9 +211,16 @@ function runDigestForCompany($conn, $company) {
 $isCli  = php_sapi_name() === 'cli';
 $isDebugHttp = !$isCli && ($_GET['debug'] ?? '') === '1';
 
+if ($isDebugHttp) {
+    $authUser = requireAuth();
+    $company_id = $authUser['company_id'] ?? null;
+    $app_role_id = $authUser['app_role_id'] ?? null;
+    if (!$app_role_id || !userHasPermission(getConn(), $app_role_id, 'system.digest.run')) {
+        jsonResponse(403, 'Admin permission required to trigger digest via HTTP');
+    }
+}
 if (!$isCli && !$isDebugHttp) {
     jsonResponse(403, 'This endpoint requires ?debug=1 or CLI invocation');
-    exit;
 }
 
 $conn = getConn();

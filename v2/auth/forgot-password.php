@@ -3,28 +3,11 @@ require_once __DIR__ . '/../general.php';
 require_once __DIR__ . '/../helpers/auth_response.php';
 require_once __DIR__ . '/../helpers/rate_limit.php';
 require_once __DIR__ . '/../helpers/whatsapp.php';
+require_once __DIR__ . '/../helpers/auth_log.php';
 
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
 header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
-
-function writeForgotPasswordLog($conn, string $action, ?string $user_id, string $username): void {
-    $log_id = generateUUID();
-    $ip     = substr(getUserIP(), 0, 45);
-    $ua     = substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 500);
-    $module = 'auth';
-    $now    = date('Y-m-d H:i:s');
-
-    $stmt = $conn->prepare(
-        "INSERT INTO " . CORE_SCHEMA . ".log (id, action, ip_address, module, resource_id, `timestamp`, user_agent, username)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-    );
-    if ($stmt) {
-        $stmt->bind_param('ssssssss', $log_id, $action, $ip, $module, $user_id, $now, $ua, $username);
-        $stmt->execute();
-        $stmt->close();
-    }
-}
 
 function requestPasswordReset($conn, $input): void {
     // 1. Required field validation
@@ -69,7 +52,7 @@ function requestPasswordReset($conn, $input): void {
     $stmt->close();
 
     if (!$user_row || empty($user_row['phone_number'])) {
-        writeForgotPasswordLog($conn, 'forgot_password_requested', null, $email);
+        writeAuthLog($conn, 'forgot_password_requested', null, $email);
         authResponse(200, $generic_message);
         return;
     }
@@ -78,8 +61,8 @@ function requestPasswordReset($conn, $input): void {
 
     // 5. Invalidate any previously issued, still-unused codes for this email
     $stmt = $conn->prepare(
-        "UPDATE " . CORE_SCHEMA . ".otp_codes SET is_used = 1, used_at = ?
-         WHERE identifier = ? AND purpose = 'forgot_password' AND is_used = 0"
+        "UPDATE " . CORE_SCHEMA . ".otp_codes SET used_at = ?
+         WHERE identifier = ? AND purpose = 'forgot_password' AND used_at IS NULL"
     );
     $stmt->bind_param('ss', $now, $email);
     $stmt->execute();
@@ -88,13 +71,14 @@ function requestPasswordReset($conn, $input): void {
     // 6. Generate and store a new OTP
     $otp_id    = 'otp_' . uniqid();
     $otp_code  = str_pad((string)random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+    $otp_hash  = hash_hmac('sha256', $otp_code, OTP_PEPPER);
     $expire_at = date('Y-m-d H:i:s', strtotime('+10 minutes'));
 
     $stmt = $conn->prepare(
-        "INSERT INTO " . CORE_SCHEMA . ".otp_codes (otp_id, identifier, otp_code, purpose, expire_at, is_used, attempt_count, created_at)
-         VALUES (?, ?, ?, 'forgot_password', ?, 0, 0, ?)"
+        "INSERT INTO " . CORE_SCHEMA . ".otp_codes (otp_id, identifier, otp_hash, purpose, expire_at, ip_address, created_at)
+         VALUES (?, ?, ?, 'forgot_password', ?, ?, ?)"
     );
-    $stmt->bind_param('sssss', $otp_id, $email, $otp_code, $expire_at, $now);
+    $stmt->bind_param('ssssss', $otp_id, $email, $otp_hash, $expire_at, $ip, $now);
     $stmt->execute();
     $stmt->close();
 
@@ -109,7 +93,7 @@ function requestPasswordReset($conn, $input): void {
     }
 
     // 8. Audit log
-    writeForgotPasswordLog($conn, 'forgot_password_requested', $user_row['user_id'], $email);
+    writeAuthLog($conn, 'forgot_password_requested', $user_row['user_id'], $email);
 
     authResponse(200, $generic_message);
 }
@@ -118,17 +102,19 @@ try {
     $method = $_SERVER['REQUEST_METHOD'];
     $conn   = getConn();
 
+    validateJsonContentType();
+
     switch ($method) {
         case 'POST':
             $input = json_decode(file_get_contents('php://input'), true) ?? [];
             requestPasswordReset($conn, $input);
             break;
         default:
-            authResponse(405, 'Method not allowed');
+            methodNotAllowed(['POST']);
     }
 
-} catch (Throwable $e) {
-    authResponse(500, 'An unexpected error occurred. Please try again.', null,
-        APP_ENV === 'development' ? ['debug' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()] : null
+} catch (Exception $e) {
+    authResponse(500, 'An unexpected error occurred. Please try again. Reference ID: ' . requestId(), null,
+        safeErrorResponse($e)
     );
 }

@@ -10,7 +10,7 @@
 // post-migration checklist for the unit + Nginx wss:// proxy setup, neither
 // of which exists yet and isn't installed by this script.
 //
-// websocket://0.0.0.0:{WS_PORT} is the one and only Workerman Worker here —
+// websocket://127.0.0.1:{WS_PORT} is the one and only Workerman Worker here —
 // client-facing, requires the same JWT issued by v2/helpers/jwt.php as its
 // first message. count=1, so exactly one process holds every live
 // connection in the in-memory ConnectionRegistry below.
@@ -26,9 +26,11 @@
 
 require_once __DIR__ . '/../../vendor/autoload.php';
 require_once __DIR__ . '/../config.php';
+require_once __DIR__ . '/../connection/db.php';
 require_once __DIR__ . '/../helpers/jwt.php';
 
 use Workerman\Connection\TcpConnection;
+use Workerman\Timer;
 use Workerman\Worker;
 
 if (php_sapi_name() !== 'cli') {
@@ -42,6 +44,11 @@ class ConnectionRegistry {
     public static array $byUser = [];
 
     public static function add(string $userId, TcpConnection $connection): void {
+        if (isset(self::$byUser[$userId]) && count(self::$byUser[$userId]) >= 5) {
+            $connection->send(json_encode(['event' => 'auth:error', 'payload' => ['message' => 'Too many concurrent connections']]));
+            $connection->close();
+            return;
+        }
         self::$byUser[$userId][$connection->id] = $connection;
     }
 
@@ -68,7 +75,7 @@ class ConnectionRegistry {
 Worker::$pidFile = '/var/run/erp-notification-ws/ws-server.pid';
 Worker::$logFile = '/var/log/erp-notification-ws/ws-server.log';
 
-$wsWorker        = new Worker('websocket://0.0.0.0:' . WS_PORT);
+$wsWorker        = new Worker('websocket://127.0.0.1:' . WS_PORT);
 $wsWorker->count = 1;
 $wsWorker->name  = 'notification-ws';
 
@@ -77,6 +84,11 @@ $wsWorker->onMessage = function (TcpConnection $connection, $data) {
 
     if (!is_array($message)) {
         $connection->send(json_encode(['event' => 'error', 'payload' => ['message' => 'Malformed message']]));
+        return;
+    }
+
+    if (($message['type'] ?? '') === 'pong') {
+        $connection->lastPing = time();
         return;
     }
 
@@ -96,7 +108,18 @@ $wsWorker->onMessage = function (TcpConnection $connection, $data) {
             return;
         }
 
+        $db = getConn();
+        $user_check = mysqli_query($db, "SELECT account_status FROM " . CORE_SCHEMA . ".app_user WHERE user_id = '" . mysqli_real_escape_string($db, $userId) . "' LIMIT 1");
+        $user_row = $user_check ? mysqli_fetch_assoc($user_check) : null;
+        if (!$user_row || $user_row['account_status'] !== 'verified') {
+            $connection->send(json_encode(['event' => 'auth:error', 'payload' => ['message' => 'Account is not active']]));
+            $connection->close();
+            return;
+        }
+
         $connection->authUserId = $userId;
+        $connection->tokenExp   = $claims['exp'] ?? null;
+        $connection->lastPing   = time();
         ConnectionRegistry::add($userId, $connection);
         $connection->send(json_encode(['event' => 'auth:ok', 'payload' => ['user_id' => $userId]]));
         return;
@@ -110,6 +133,23 @@ $wsWorker->onClose = function (TcpConnection $connection) {
 };
 
 $wsWorker->onWorkerStart = function () {
+    Timer::add(30, function() {
+        $now = time();
+        foreach (ConnectionRegistry::$byUser as $user_id => $connections) {
+            foreach ($connections as $conn) {
+                if (isset($conn->tokenExp) && $now > $conn->tokenExp) {
+                    $conn->close();
+                    continue;
+                }
+                if (!isset($conn->lastPing) || $now - $conn->lastPing > 90) {
+                    $conn->close();
+                    continue;
+                }
+                $conn->send(json_encode(['event' => 'ping']));
+            }
+        }
+    });
+
     $publishSocket = stream_socket_server('tcp://127.0.0.1:' . WS_PUBLISH_PORT, $errno, $errstr);
     if (!$publishSocket) {
         Worker::log("Failed to bind publish socket on " . WS_PUBLISH_PORT . ": $errstr");

@@ -10,32 +10,36 @@ const WAREHOUSE_TRANSACTION_TYPES = ['stock_in', 'stock_out', 'adjustment', 'tra
 // transfer apply the caller-supplied quantity as-is (already signed) — a
 // transfer is just two items in one transaction, a negative entry at the
 // source lot and a positive entry at the destination lot.
-function warehouseLotDelta(string $transaction_type, float $quantity): float {
+function warehouseLotDelta(string $transaction_type, string $quantity): string {
     return match ($transaction_type) {
-        'stock_in'  => abs($quantity),
-        'stock_out' => -abs($quantity),
+        'stock_in'  => ltrim($quantity, '-'),
+        'stock_out' => bcmul(ltrim($quantity, '-'), '-1', 2),
         default     => $quantity,
     };
 }
 
-function applyWarehouseLotDelta($conn, $warehouse_lot_id, float $delta, $username) {
+function applyWarehouseLotDelta($conn, $warehouse_lot_id, string $delta, $username, $company_id) {
     $warehouse_lot_id_sql = mysqli_real_escape_string($conn, $warehouse_lot_id);
     $now                  = date('Y-m-d H:i:s');
 
-    $lot_result = mysqli_query($conn, "SELECT product_id, location_id FROM " . APP_SCHEMA . ".warehouse_lot WHERE id = '$warehouse_lot_id_sql' LIMIT 1");
+    $lot_result = mysqli_query($conn, "SELECT product_id, location_id FROM " . APP_SCHEMA . ".warehouse_lot 
+        WHERE id = '$warehouse_lot_id_sql' AND company_id = '$company_id' LIMIT 1");
     $lot        = $lot_result ? mysqli_fetch_assoc($lot_result) : null;
     if (!$lot) return null;
 
     mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".warehouse_lot
-            SET end_balance = end_balance + ($delta), updated_by = '$username', updated_at = '$now'
-            WHERE id = '$warehouse_lot_id_sql'");
+        SET end_balance = end_balance + ($delta), updated_by = '$username', updated_at = '$now'
+        WHERE id = '$warehouse_lot_id_sql' AND company_id = '$company_id' AND end_balance + ($delta) >= 0");
+    if (mysqli_affected_rows($conn) === 0) {
+        throw new Exception("Insufficient stock for lot $warehouse_lot_id");
+    }
 
     return $lot;
 }
 
 function getAllWarehouseTransactions($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
 
     $where = "wt.company_id = '$company_id' AND wt.deleted_at IS NULL";
@@ -56,7 +60,7 @@ function getAllWarehouseTransactions($conn, $company_id, $params) {
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
             FROM $from WHERE $where ORDER BY wt.created_at DESC LIMIT $limit OFFSET $offset");
-    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM $from WHERE $where");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".warehouse_transaction wt WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
@@ -70,7 +74,15 @@ function getAllWarehouseTransactions($conn, $company_id, $params) {
             ],
         ]);
     } else {
-        jsonResponse(404, 'No warehouse transactions found');
+        jsonResponse(200, 'Warehouse transactions found', [
+            'data'       => [],
+            'pagination' => [
+                'total'       => $total,
+                'page'        => $page,
+                'limit'       => $limit,
+                'total_pages' => (int)ceil($total / $limit),
+            ],
+        ]);
     }
 }
 
@@ -138,9 +150,9 @@ function createWarehouseTransaction($conn, $input, $username, $company_id) {
             $item_id           = generateUUID();
             $warehouse_lot_id  = mysqli_real_escape_string($conn, $item['warehouse_lot_id']);
             $product_id        = mysqli_real_escape_string($conn, $item['product_id']);
-            $quantity          = (float)$item['quantity'];
+            $quantity          = mysqli_real_escape_string($conn, (string)$item['quantity']);
             $uom_id_sql        = isset($item['uom_id']) && trim($item['uom_id']) !== '' ? "'" . mysqli_real_escape_string($conn, $item['uom_id']) . "'" : 'NULL';
-            $conversion_factor_sql = isset($item['conversion_factor']) && $item['conversion_factor'] !== '' ? (float)$item['conversion_factor'] : 'NULL';
+            $conversion_factor_sql = isset($item['conversion_factor']) && $item['conversion_factor'] !== '' ? mysqli_real_escape_string($conn, (string)$item['conversion_factor']) : 'NULL';
             $expired_at_sql    = isset($item['expired_at']) && trim($item['expired_at']) !== '' ? "'" . mysqli_real_escape_string($conn, $item['expired_at']) . "'" : 'NULL';
             $item_notes_sql    = isset($item['notes']) && trim($item['notes']) !== '' ? "'" . mysqli_real_escape_string($conn, $item['notes']) . "'" : 'NULL';
 
@@ -153,7 +165,7 @@ function createWarehouseTransaction($conn, $input, $username, $company_id) {
             }
 
             $delta = warehouseLotDelta($transaction_type, $quantity);
-            $lot   = applyWarehouseLotDelta($conn, $warehouse_lot_id, $delta, $username);
+            $lot   = applyWarehouseLotDelta($conn, $warehouse_lot_id, $delta, $username, $company_id);
             if ($lot) {
                 $touched_lot_pairs[$lot['product_id'] . '|' . $lot['location_id']] = $lot;
             }
@@ -168,7 +180,7 @@ function createWarehouseTransaction($conn, $input, $username, $company_id) {
         jsonResponse(201, 'Warehouse transaction created successfully', ['warehouse_transaction_id' => $warehouse_transaction_id]);
     } catch (Exception $e) {
         $conn->rollback();
-        jsonResponse(500, 'Failed to create warehouse transaction', ['error' => $e->getMessage()]);
+        jsonResponse(500, 'Failed to create warehouse transaction', safeErrorResponse($e));
     }
 }
 
@@ -246,7 +258,7 @@ function updateWarehouseTransaction($conn, $warehouse_transaction_id, $input, $u
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".warehouse_transaction SET " . implode(', ', $updates) . " WHERE id = '$warehouse_transaction_id' AND company_id = '$company_id'")) {
         jsonResponse(200, 'Warehouse transaction updated successfully');
     } else {
-        jsonResponse(500, 'Failed to update warehouse transaction', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to update warehouse transaction', safeDbError($conn));
     }
 }
 
@@ -264,7 +276,7 @@ function deleteWarehouseTransaction($conn, $warehouse_transaction_id, $username,
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".warehouse_transaction SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE id = '$warehouse_transaction_id' AND company_id = '$company_id'")) {
         jsonResponse(200, 'Warehouse transaction deleted successfully');
     } else {
-        jsonResponse(500, 'Failed to delete warehouse transaction', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to delete warehouse transaction', safeDbError($conn));
     }
 }
 
@@ -273,7 +285,7 @@ function deleteWarehouseTransaction($conn, $warehouse_transaction_id, $username,
 $authUser   = requireAuth();
 $method     = $_SERVER['REQUEST_METHOD'];
 $company_id = $authUser['company_id'] ?? null;
-$username   = $authUser['user_id'] ?? null;
+$username   = $authUser['sub'] ?? $authUser['user_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
@@ -284,6 +296,8 @@ $warehouse_transaction_id = !empty($action) ? $action : null;
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $username = mysqli_real_escape_string($conn, $username);
 
     if ($warehouse_transaction_id) {
         switch ($method) {
@@ -298,7 +312,7 @@ try {
                 deleteWarehouseTransaction($conn, $warehouse_transaction_id, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'PUT', 'DELETE']);
         }
     } else {
         switch ($method) {
@@ -310,10 +324,10 @@ try {
                 createWarehouseTransaction($conn, $input, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'POST']);
         }
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

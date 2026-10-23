@@ -5,6 +5,8 @@ require_once __DIR__ . '/../../connection/db.php';
 require_once __DIR__ . '/../../helpers/audit_log.php';
 require_once __DIR__ . '/../../helpers/excel_export.php';
 require_once __DIR__ . '/../../helpers/notification.php';
+require_once __DIR__ . '/../../helpers/pagination.php';
+require_once __DIR__ . '/../../helpers/permission.php';
 
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 
@@ -43,10 +45,9 @@ function generateSalesDeliveryNumber($conn, $company_id) {
 }
 
 function getAllSalesDeliveries($conn, $company_id, $params) {
-    $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
-    $offset = ($page - 1) * $limit;
+    $paging = resolveListPaging($params);
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
+    $search = str_replace(['%', '_'], ['\%', '\_'], $search);
 
     $where = "sd.company_id = '$company_id' AND sd.deleted_at IS NULL";
     if ($search) {
@@ -85,22 +86,20 @@ function getAllSalesDeliveries($conn, $company_id, $params) {
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by,
             CONCAT(au.first_name, ' ', au.last_name) AS approved_by
-            FROM $from WHERE $where ORDER BY sd.created_at DESC LIMIT $limit OFFSET $offset");
+            FROM $from WHERE $where ORDER BY sd.created_at DESC" . sqlLimitClause($paging));
     $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM $from WHERE $where");
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
         jsonResponse(200, 'Sales deliveries found', [
             'data'       => mysqli_fetch_all($result, MYSQLI_ASSOC),
-            'pagination' => [
-                'total'       => $total,
-                'page'        => $page,
-                'limit'       => $limit,
-                'total_pages' => (int)ceil($total / $limit),
-            ],
+            'pagination' => buildPagination($paging, $total),
         ]);
     } else {
-        jsonResponse(404, 'No sales deliveries found');
+        jsonResponse(200, 'No sales deliveries found', [
+            'data'       => [],
+            'pagination' => buildPagination($paging, $total),
+        ]);
     }
 }
 
@@ -178,7 +177,7 @@ function createSalesDelivery($conn, $input, $username, $company_id) {
         foreach ($input['items'] as $item) {
             $item_id      = generateUUID();
             $product_name = mysqli_real_escape_string($conn, $item['product_name']);
-            $quantity     = (float)$item['quantity'];
+            $quantity     = mysqli_real_escape_string($conn, (string)$item['quantity']);
             $notes_sql    = isset($item['notes']) && trim($item['notes']) !== '' ? "'" . mysqli_real_escape_string($conn, $item['notes']) . "'" : 'NULL';
 
             $item_sql = "INSERT INTO " . APP_SCHEMA . ".sales_delivery_item
@@ -196,7 +195,7 @@ function createSalesDelivery($conn, $input, $username, $company_id) {
         jsonResponse(201, 'Sales delivery created successfully', ['sales_delivery_id' => $sales_delivery_id]);
     } catch (Exception $e) {
         $conn->rollback();
-        jsonResponse(500, 'Failed to create sales delivery', ['error' => $e->getMessage()]);
+        jsonResponse(500, 'Failed to create sales delivery', safeErrorResponse($e));
     }
 }
 
@@ -275,7 +274,7 @@ function updateSalesDelivery($conn, $sales_delivery_id, $input, $username, $comp
         insertAuditLog($conn, $company_id, 'sales_delivery', $sales_delivery_id, 'updated', $username);
         jsonResponse(200, 'Sales delivery updated successfully');
     } else {
-        jsonResponse(500, 'Failed to update sales delivery', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to update sales delivery', safeDbError($conn));
     }
 }
 
@@ -290,15 +289,20 @@ function deleteSalesDelivery($conn, $sales_delivery_id, $username, $company_id) 
 
     $now = date('Y-m-d H:i:s');
 
+    mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".sales_delivery_item
+        SET deleted_at = '$now', updated_by = '$username', updated_at = '$now'
+        WHERE sales_delivery_id = '$sales_delivery_id' AND deleted_at IS NULL");
+
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".sales_delivery SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE id = '$sales_delivery_id' AND company_id = '$company_id'")) {
         insertAuditLog($conn, $company_id, 'sales_delivery', $sales_delivery_id, 'deleted', $username);
         jsonResponse(200, 'Sales delivery deleted successfully');
     } else {
-        jsonResponse(500, 'Failed to delete sales delivery', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to delete sales delivery', safeDbError($conn));
     }
 }
 
 function approveSalesDelivery($conn, $sales_delivery_id, $input, $username, $company_id) {
+    $sales_delivery_id = mysqli_real_escape_string($conn, $sales_delivery_id);
     $check = mysqli_query($conn, "SELECT sd.do_display_number, sd.created_by, c.customer_name
             FROM " . APP_SCHEMA . ".sales_delivery sd
             LEFT JOIN " . APP_SCHEMA . ".customer c ON c.id = sd.customer_id
@@ -341,11 +345,12 @@ function approveSalesDelivery($conn, $sales_delivery_id, $input, $username, $com
 
         jsonResponse(200, 'Sales delivery approved successfully');
     } else {
-        jsonResponse(500, 'Failed to approve sales delivery', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to approve sales delivery', safeDbError($conn));
     }
 }
 
 function rejectSalesDelivery($conn, $sales_delivery_id, $input, $username, $company_id) {
+    $sales_delivery_id = mysqli_real_escape_string($conn, $sales_delivery_id);
     $check = mysqli_query($conn, "SELECT do_display_number, created_by FROM " . APP_SCHEMA . ".sales_delivery WHERE id = '$sales_delivery_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Sales delivery not found');
@@ -383,11 +388,12 @@ function rejectSalesDelivery($conn, $sales_delivery_id, $input, $username, $comp
 
         jsonResponse(200, 'Sales delivery rejected successfully');
     } else {
-        jsonResponse(500, 'Failed to reject sales delivery', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to reject sales delivery', safeDbError($conn));
     }
 }
 
 function reviseSalesDelivery($conn, $sales_delivery_id, $input, $username, $company_id) {
+    $sales_delivery_id = mysqli_real_escape_string($conn, $sales_delivery_id);
     $check = mysqli_query($conn, "SELECT ss.status_name FROM " . APP_SCHEMA . ".sales_delivery sd
             LEFT JOIN " . APP_SCHEMA . ".sales_status ss ON ss.id = sd.status_id
             WHERE sd.id = '$sales_delivery_id' AND sd.company_id = '$company_id' AND sd.deleted_at IS NULL LIMIT 1");
@@ -417,7 +423,7 @@ function reviseSalesDelivery($conn, $sales_delivery_id, $input, $username, $comp
         insertAuditLog($conn, $company_id, 'sales_delivery', $sales_delivery_id, 'revised', $username, $notes);
         jsonResponse(200, 'Sales delivery revised successfully');
     } else {
-        jsonResponse(500, 'Failed to revise sales delivery', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to revise sales delivery', safeDbError($conn));
     }
 }
 
@@ -479,7 +485,8 @@ function exportSalesDelivery($conn, $sales_delivery_id, $company_id) {
 $authUser   = requireAuth();
 $method     = $_SERVER['REQUEST_METHOD'];
 $company_id = $authUser['company_id'] ?? null;
-$username   = $authUser['user_id'] ?? null;
+$username   = $authUser['sub'] ?? $authUser['user_id'] ?? null;
+$app_role_id = $authUser['app_role_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
@@ -491,13 +498,15 @@ $sub_action         = $parts[4] ?? '';
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $username = mysqli_real_escape_string($conn, $username);
 
     if ($sales_delivery_id === 'generate-number' && $sub_action === '') {
-        if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
+        if ($method !== 'GET') { methodNotAllowed(['GET']); }
         generateSalesDeliveryNumber($conn, $company_id);
 
     } elseif ($sales_delivery_id && $sub_action === 'export') {
-        if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
+        if ($method !== 'GET') { methodNotAllowed(['GET']); }
         exportSalesDelivery($conn, $sales_delivery_id, $company_id);
 
     } elseif ($sales_delivery_id && $sub_action !== '') {
@@ -507,15 +516,24 @@ try {
 
         switch ($sub_action) {
             case 'approve':
-                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                if ($method !== 'PATCH') { methodNotAllowed(['PATCH']); }
+                if (!userHasPermission($conn, $app_role_id, 'sales_delivery.approve')) {
+                    jsonResponse(403, 'You do not have permission to approve sales deliveries');
+                }
                 approveSalesDelivery($conn, $sales_delivery_id, $input, $username, $company_id);
                 break;
             case 'reject':
-                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                if ($method !== 'PATCH') { methodNotAllowed(['PATCH']); }
+                if (!userHasPermission($conn, $app_role_id, 'sales_delivery.approve')) {
+                    jsonResponse(403, 'You do not have permission to reject sales deliveries');
+                }
                 rejectSalesDelivery($conn, $sales_delivery_id, $input, $username, $company_id);
                 break;
             case 'revise':
-                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                if ($method !== 'PATCH') { methodNotAllowed(['PATCH']); }
+                if (!userHasPermission($conn, $app_role_id, 'sales_delivery.approve')) {
+                    jsonResponse(403, 'You do not have permission to revise sales deliveries');
+                }
                 reviseSalesDelivery($conn, $sales_delivery_id, $input, $username, $company_id);
                 break;
             default:
@@ -535,7 +553,7 @@ try {
                 deleteSalesDelivery($conn, $sales_delivery_id, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'PUT', 'DELETE']);
         }
     } else {
         switch ($method) {
@@ -547,10 +565,10 @@ try {
                 createSalesDelivery($conn, $input, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'POST']);
         }
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

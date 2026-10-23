@@ -1,14 +1,20 @@
 <?php
 
 function assertPurchaseReceiveBelongsToCompany($conn, $purchase_receive_id, $company_id) {
+    $purchase_receive_id = mysqli_real_escape_string($conn, $purchase_receive_id);
     $check = mysqli_query($conn, "SELECT 1 FROM " . APP_SCHEMA . ".purchase_receive WHERE id = '$purchase_receive_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
     if (mysqli_num_rows($check) === 0) {
         jsonResponse(404, 'Purchase receive not found');
+        return;
     }
 }
 
-function getAllPurchaseReceiveItems($conn, $purchase_receive_id, $company_id) {
+function getAllPurchaseReceiveItems($conn, $purchase_receive_id, $company_id, $params = []) {
     assertPurchaseReceiveBelongsToCompany($conn, $purchase_receive_id, $company_id);
+
+    $page   = max(1, (int)($params['page']  ?? 1));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
+    $offset = ($page - 1) * $limit;
 
     $from   = APP_SCHEMA . ".purchase_receive_item pri
             LEFT JOIN " . CORE_SCHEMA . ".app_user cu ON cu.user_id COLLATE utf8mb4_general_ci = pri.created_by
@@ -16,12 +22,30 @@ function getAllPurchaseReceiveItems($conn, $purchase_receive_id, $company_id) {
     $result = mysqli_query($conn, "SELECT pri.*,
             CONCAT(cu.first_name, ' ', cu.last_name) AS created_by,
             CONCAT(uu.first_name, ' ', uu.last_name) AS updated_by
-            FROM $from WHERE pri.purchase_receive_id = '$purchase_receive_id' AND pri.deleted_at IS NULL ORDER BY pri.created_at ASC");
+            FROM $from WHERE pri.purchase_receive_id = '$purchase_receive_id' AND pri.deleted_at IS NULL ORDER BY pri.created_at ASC LIMIT $limit OFFSET $offset");
+    $count_result = mysqli_query($conn, "SELECT COUNT(*) AS total FROM " . APP_SCHEMA . ".purchase_receive_item pri WHERE pri.purchase_receive_id = '$purchase_receive_id' AND pri.deleted_at IS NULL");
+    $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
-        jsonResponse(200, 'Purchase receive items found', ['data' => mysqli_fetch_all($result, MYSQLI_ASSOC)]);
+        jsonResponse(200, 'Purchase receive items found', [
+            'data'       => mysqli_fetch_all($result, MYSQLI_ASSOC),
+            'pagination' => [
+                'total'       => $total,
+                'page'        => $page,
+                'limit'       => $limit,
+                'total_pages' => (int)ceil($total / $limit),
+            ],
+        ]);
     } else {
-        jsonResponse(404, 'No purchase receive items found');
+        jsonResponse(200, 'Purchase receive items found', [
+            'data'       => [],
+            'pagination' => [
+                'total'       => $total,
+                'page'        => $page,
+                'limit'       => $limit,
+                'total_pages' => (int)ceil($total / $limit),
+            ],
+        ]);
     }
 }
 
@@ -67,7 +91,7 @@ function updatePurchaseReceiveItem($conn, $purchase_receive_id, $purchase_receiv
     $numeric_fields = ['quantity', 'packaging_size', 'unit_price', 'vat', 'total'];
     foreach ($numeric_fields as $field) {
         if (isset($input[$field]) && $input[$field] !== '') {
-            $updates[] = "$field = " . (float)$input[$field];
+            $updates[] = "$field = " . mysqli_real_escape_string($conn, (string)$input[$field]);
         }
     }
 
@@ -83,7 +107,7 @@ function updatePurchaseReceiveItem($conn, $purchase_receive_id, $purchase_receiv
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".purchase_receive_item SET " . implode(', ', $updates) . " WHERE id = '$purchase_receive_item_id' AND purchase_receive_id = '$purchase_receive_id'")) {
         jsonResponse(200, 'Purchase receive item updated successfully');
     } else {
-        jsonResponse(500, 'Failed to update purchase receive item', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to update purchase receive item', safeDbError($conn));
     }
 }
 
@@ -99,14 +123,14 @@ if ($purchase_receive_item_id) {
             updatePurchaseReceiveItem($conn, $purchase_receive_id, $purchase_receive_item_id, $input, $username, $company_id);
             break;
         default:
-            jsonResponse(405, 'Method Not Allowed');
+            methodNotAllowed(['GET', 'PUT']);
     }
 } else {
     switch ($method) {
         case 'GET':
-            getAllPurchaseReceiveItems($conn, $purchase_receive_id, $company_id);
+            getAllPurchaseReceiveItems($conn, $purchase_receive_id, $company_id, $_GET);
             break;
         default:
-            jsonResponse(405, 'Method Not Allowed');
+            methodNotAllowed(['GET']);
     }
 }

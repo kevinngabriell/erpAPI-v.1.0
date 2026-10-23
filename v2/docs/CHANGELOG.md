@@ -7,6 +7,57 @@ Intended audience: frontend developers.
 
 ---
 
+## [2026-10-21 WIB] — Stock report (weekly / monthly / yearly); employee directory
+
+### Added
+- `GET /employee` and `GET /employee/{user_id}` — read-only employee directory: `app_user` rows for this app and the caller's company, with role (`role_name`), position (`position_name`), `employee_profile` HR fields, and a status/role summary. See [employee.md](api/employee.md).
+- `GET /stock-report` and `GET /stock-report/export` (`.xlsx`) — per-product opening balance, in, out, closing balance and per-day / per-month movement for `period=weekly|monthly|yearly`. Replaces the v1 `warehouse/weeklyreport.php`, `exportmonthlyreport.php` and `exportyearlyreport.php`, which no longer exist. See [stock-report.md](api/stock-report.md).
+- Migration `v52_legacy_warehouse_movement_direction.md` (**not yet applied** to `aluria_dev` / `aluria`). It restores the `stock_in` / `stock_out` type of movements that the v1 migration imported as positive `adjustment`s. Until it is applied, the stock report shows negative opening balances for migrated products.
+
+---
+
+## [2026-10-20 WIB] — Per-company export signers; `limit=all` on sales lists
+
+### Added
+- `GET /document-signature`, `PUT /document-signature/{document_type}` — configurable signer names for the Sales Order / SPPB / Sales Profit `.xlsx` exports (permission `master.document_signature.manage`). See [document-signature.md](api/document-signature.md).
+- `limit=all` on `GET /sales-order`, `/sales-sppb`, `/sales-delivery`, `/sales-invoice`, `/sales-profit` (list exports). Other limits remain capped at 15.
+
+### Changed
+- Sales Order / SPPB / Sales Profit exports no longer print the hardcoded Venken signers; they read `document_signature` (Venken companies are seeded with the previous values). Requires migration v49.
+
+---
+
+## [2026-10-20 WIB] — Document watermark: object-storage images
+
+### Added
+- `document-watermark` accepts `file_key` (a key returned by `POST /api/v2/files`) on `POST` and `PUT` instead of the inline base64 `watermark`. On `POST` exactly one of `watermark` / `file_key` is required. The key must belong to the caller's company (`400` otherwise).
+- `file_key` is returned by the list and detail endpoints. Use `GET /api/v2/files?key=` for a pre-signed preview/download URL.
+- Migration `v48_document_watermark_file_key.md` (**not yet applied** to `aluria_dev` / `aluria`).
+
+### Notes for frontend
+- Legacy rows keep `file_key: null` and their inline `watermark`; detail returns `watermark: null` for object-storage rows.
+- Setting `file_key` on `PUT` clears the inline image and vice versa.
+
+---
+
+## [2026-10-19 21:30:15 WIB] — Document watermark: names, working create/list
+
+### Added
+- `watermark_name` on `document-watermark` — **required** on `POST` (1–255 chars, trimmed), optional on `PUT`, returned by list and detail. New column added in `v45_document_watermark_name.md` (applied to `aluria_dev`, **not yet to prod `aluria`**).
+- `PUT /api/v2/document-watermark/{id}` now accepts `watermark_name` and/or `watermark` — rename without re-uploading the image.
+- Permission keys `master.document_watermark.manage` and `master.salary_category.manage` added to the catalog (`v46_watermark_salary_category_permission_seed.md`). **Not assigned to any role** — writes on both modules return `403` until a role is granted them.
+
+### Fixed
+- `GET /api/v2/document-watermark` always returned an empty list: it selected a `watermark_name` column that didn't exist, and the failed query was turned into `data: []`. It now returns the rows, and a failed query returns `500` with `error_id` instead of an empty list.
+- `POST` (and image replacement on `PUT`) always failed with `500 Column 'watermark' cannot be null` — the image was bound as a string parameter, so `send_long_data()` never reached MySQL. It's now bound as a blob.
+
+### Notes for frontend
+- The list is metadata only (no image) — fetch `GET /{id}` per watermark to preview.
+- Pre-existing watermarks have `watermark_name: null`; show a fallback label.
+- Page size default and max is 15.
+
+---
+
 ## [2026-08-13 12:55:00 WIB] — Profile module (new, self-service)
 
 ### Added

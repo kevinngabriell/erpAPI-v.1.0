@@ -8,12 +8,13 @@ require_once __DIR__ . '/../../helpers/notification.php';
 
 function getAllFinanceTransactions($conn, $company_id, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
+    $search = str_replace(['%', '_'], ['\%', '\_'], $search);
 
     $where = "ft.company_id = '$company_id' AND ft.deleted_at IS NULL";
-    if ($search) {
+    if ($search !== '') {
         $where .= " AND (ft.voucher_number LIKE '%$search%' OR ft.payee LIKE '%$search%')";
     }
     if (isset($params['bank_account_id']) && trim($params['bank_account_id']) !== '') {
@@ -84,7 +85,15 @@ function getAllFinanceTransactions($conn, $company_id, $params) {
             ],
         ]);
     } else {
-        jsonResponse(404, 'No finance transactions found');
+        jsonResponse(200, 'Finance transactions found', [
+            'data'       => [],
+            'pagination' => [
+                'total'       => $total,
+                'page'        => $page,
+                'limit'       => $limit,
+                'total_pages' => (int)ceil($total / $limit),
+            ],
+        ]);
     }
 }
 
@@ -102,7 +111,7 @@ function createFinanceTransaction($conn, $input, $username, $company_id) {
         return;
     }
 
-    $detail_sum = 0;
+    $detail_sum = '0';
     foreach ($input['details'] as $detail) {
         $detail_required = ['account_code_id', 'amount'];
         foreach ($detail_required as $field) {
@@ -111,15 +120,15 @@ function createFinanceTransaction($conn, $input, $username, $company_id) {
                 return;
             }
         }
-        $detail_sum += (float)$detail['amount'];
+        $detail_sum = bcadd($detail_sum, mysqli_real_escape_string($conn, (string)$detail['amount']), 2);
     }
 
     $bank_account_id     = mysqli_real_escape_string($conn, $input['bank_account_id']);
     $transaction_date    = mysqli_real_escape_string($conn, $input['transaction_date']);
-    $amount              = (float)$input['amount'];
+    $amount              = mysqli_real_escape_string($conn, (string)$input['amount']);
     $finance_category_id = mysqli_real_escape_string($conn, $input['finance_category_id']);
 
-    if (round($detail_sum, 2) !== round($amount, 2)) {
+    if (bccomp($detail_sum, $amount, 2) !== 0) {
         jsonResponse(400, 'Sum of details.amount must equal amount');
         return;
     }
@@ -162,7 +171,7 @@ function createFinanceTransaction($conn, $input, $username, $company_id) {
         foreach ($input['details'] as $detail) {
             $detail_id       = generateUUID();
             $account_code_id = mysqli_real_escape_string($conn, $detail['account_code_id']);
-            $detail_amount   = (float)$detail['amount'];
+            $detail_amount   = mysqli_real_escape_string($conn, (string)$detail['amount']);
             $detail_memo_sql = isset($detail['memo']) && trim($detail['memo']) !== '' ? "'" . mysqli_real_escape_string($conn, $detail['memo']) . "'" : 'NULL';
 
             $detail_sql = "INSERT INTO " . APP_SCHEMA . ".finance_transaction_detail
@@ -192,7 +201,7 @@ function createFinanceTransaction($conn, $input, $username, $company_id) {
         jsonResponse(201, 'Finance transaction created successfully', ['finance_transaction_id' => $finance_transaction_id]);
     } catch (Exception $e) {
         $conn->rollback();
-        jsonResponse(500, 'Failed to create finance transaction', ['error' => $e->getMessage()]);
+        jsonResponse(500, 'Failed to create finance transaction', safeErrorResponse($e));
     }
 }
 
@@ -264,7 +273,8 @@ function updateFinanceTransaction($conn, $finance_transaction_id, $input, $usern
         $updates[] = "transaction_date = '" . mysqli_real_escape_string($conn, $input['transaction_date']) . "'";
     }
     if (isset($input['amount']) && $input['amount'] !== '') {
-        $updates[] = "amount = " . (float)$input['amount'];
+        $val = mysqli_real_escape_string($conn, (string)$input['amount']);
+        $updates[] = "amount = $val";
     }
 
     if (empty($updates)) {
@@ -280,7 +290,7 @@ function updateFinanceTransaction($conn, $finance_transaction_id, $input, $usern
         insertAuditLog($conn, $company_id, 'finance_transaction', $finance_transaction_id, 'updated', $username);
         jsonResponse(200, 'Finance transaction updated successfully');
     } else {
-        jsonResponse(500, 'Failed to update finance transaction', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to update finance transaction', safeDbError($conn));
     }
 }
 
@@ -295,33 +305,51 @@ function deleteFinanceTransaction($conn, $finance_transaction_id, $username, $co
 
     $now = date('Y-m-d H:i:s');
 
+    mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".finance_transaction_detail SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE finance_transaction_id = '$finance_transaction_id' AND deleted_at IS NULL");
+
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".finance_transaction SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE id = '$finance_transaction_id' AND company_id = '$company_id'")) {
         insertAuditLog($conn, $company_id, 'finance_transaction', $finance_transaction_id, 'deleted', $username);
         jsonResponse(200, 'Finance transaction deleted successfully');
     } else {
-        jsonResponse(500, 'Failed to delete finance transaction', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to delete finance transaction', safeDbError($conn));
     }
 }
 
 function approveFinanceTransaction($conn, $finance_transaction_id, $input, $username, $app_role_id, $company_id) {
-    $doc_check = mysqli_query($conn, "SELECT voucher_number, created_by FROM " . APP_SCHEMA . ".finance_transaction WHERE id = '$finance_transaction_id' AND company_id = '$company_id' LIMIT 1");
+    $finance_transaction_id = mysqli_real_escape_string($conn, $finance_transaction_id);
+
+    $doc_check = mysqli_query($conn, "SELECT voucher_number, created_by FROM " . APP_SCHEMA . ".finance_transaction WHERE id = '$finance_transaction_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
     $doc       = $doc_check ? mysqli_fetch_assoc($doc_check) : null;
     $voucher_display = ($doc && $doc['voucher_number']) ? $doc['voucher_number'] : $finance_transaction_id;
 
-    $result = applyDualApproval($conn, APP_SCHEMA . '.finance_transaction', $finance_transaction_id, $company_id, $username, $app_role_id);
+    $conn->begin_transaction();
+    try {
+        $result = applyDualApproval($conn, APP_SCHEMA . '.finance_transaction', $finance_transaction_id, $company_id, $username, $app_role_id);
 
-    if ($result['code'] !== 200) {
-        jsonResponse($result['code'], $result['message'], isset($result['error']) ? ['error' => $result['error']] : []);
+        if ($result['code'] !== 200) {
+            $conn->rollback();
+            jsonResponse($result['code'], $result['message'], isset($result['error']) ? ['error' => $result['error']] : []);
+            return;
+        }
+
+        $notes = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
+        insertAuditLog($conn, $company_id, 'finance_transaction', $finance_transaction_id, "approved_{$result['slot']}", $username, $notes);
+
+        if ($result['transaction_status'] === 'posted') {
+            invalidateApprovalTokens($conn, 'finance_transaction', $finance_transaction_id);
+        }
+
+        $conn->commit();
+    } catch (Exception $e) {
+        $conn->rollback();
+        error_log('Finance transaction approval failed: ' . $e->getMessage());
+        jsonResponse(500, 'Failed to process approval');
         return;
     }
-
-    $notes = isset($input['notes']) && trim($input['notes']) !== '' ? trim($input['notes']) : null;
-    insertAuditLog($conn, $company_id, 'finance_transaction', $finance_transaction_id, "approved_{$result['slot']}", $username, $notes);
 
     $approver_name = resolveDisplayName($conn, $username);
 
     if ($result['transaction_status'] === 'posted') {
-        invalidateApprovalTokens($conn, 'finance_transaction', $finance_transaction_id);
         notify($conn, [
             'company_id'         => $company_id,
             'type'               => 'approval_approved',
@@ -333,9 +361,6 @@ function approveFinanceTransaction($conn, $finance_transaction_id, $input, $user
             'recipients'         => $doc ? [$doc['created_by']] : [],
         ]);
     } else {
-        // partially_approved: remind whoever hasn't signed yet, and tell the
-        // creator progress so far — no token invalidation, the other signer's
-        // link is still valid.
         $other_recipients = array_values(array_diff(resolveApprovalRecipients($conn, $company_id, 'finance_transaction'), [$username]));
         notify($conn, [
             'company_id'         => $company_id,
@@ -369,7 +394,9 @@ function approveFinanceTransaction($conn, $finance_transaction_id, $input, $user
 }
 
 function rejectFinanceTransaction($conn, $finance_transaction_id, $input, $username, $app_role_id, $company_id) {
-    $doc_check = mysqli_query($conn, "SELECT voucher_number, created_by FROM " . APP_SCHEMA . ".finance_transaction WHERE id = '$finance_transaction_id' AND company_id = '$company_id' LIMIT 1");
+    $finance_transaction_id = mysqli_real_escape_string($conn, $finance_transaction_id);
+
+    $doc_check = mysqli_query($conn, "SELECT voucher_number, created_by FROM " . APP_SCHEMA . ".finance_transaction WHERE id = '$finance_transaction_id' AND company_id = '$company_id' AND deleted_at IS NULL LIMIT 1");
     $doc       = $doc_check ? mysqli_fetch_assoc($doc_check) : null;
     $voucher_display = ($doc && $doc['voucher_number']) ? $doc['voucher_number'] : $finance_transaction_id;
 
@@ -405,7 +432,7 @@ function rejectFinanceTransaction($conn, $finance_transaction_id, $input, $usern
 $authUser    = requireAuth();
 $method      = $_SERVER['REQUEST_METHOD'];
 $company_id  = $authUser['company_id'] ?? null;
-$username    = $authUser['user_id'] ?? null;
+$username    = $authUser['sub'] ?? $authUser['user_id'] ?? null;
 $app_role_id = $authUser['app_role_id'] ?? null;
 
 if (!$company_id) {
@@ -418,6 +445,8 @@ $sub_action             = $parts[4] ?? '';
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $username = mysqli_real_escape_string($conn, $username);
 
     if ($finance_transaction_id && $sub_action === 'details') {
         require __DIR__ . '/details.php';
@@ -429,11 +458,11 @@ try {
 
         switch ($sub_action) {
             case 'approve':
-                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                if ($method !== 'PATCH') { methodNotAllowed(['PATCH']); }
                 approveFinanceTransaction($conn, $finance_transaction_id, $input, $username, $app_role_id, $company_id);
                 break;
             case 'reject':
-                if ($method !== 'PATCH') { jsonResponse(405, 'Method Not Allowed'); }
+                if ($method !== 'PATCH') { methodNotAllowed(['PATCH']); }
                 rejectFinanceTransaction($conn, $finance_transaction_id, $input, $username, $app_role_id, $company_id);
                 break;
             default:
@@ -453,7 +482,7 @@ try {
                 deleteFinanceTransaction($conn, $finance_transaction_id, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'PUT', 'DELETE']);
         }
     } else {
         switch ($method) {
@@ -465,10 +494,10 @@ try {
                 createFinanceTransaction($conn, $input, $username, $company_id);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'POST']);
         }
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

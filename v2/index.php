@@ -32,6 +32,7 @@ switch ($module) {
             'forgot-password'  => 'forgot-password.php',
             'reset-password'   => 'reset-password.php',
             'my-permissions'   => 'my-permissions.php',
+            'sso-callback'     => 'sso-callback.php',
         ];
         $file = isset($actionMap[$action]) ? __DIR__ . '/auth/' . $actionMap[$action] : null;
         if (!$file) jsonResponse(404, 'Route not found');
@@ -44,6 +45,14 @@ switch ($module) {
 
     case 'profile':
         require __DIR__ . '/profile/index.php';
+        break;
+
+    case 'subscription':
+        if ($action === 'webhook') {
+            require __DIR__ . '/subscription/webhook.php';
+        } else {
+            require __DIR__ . '/subscription/index.php';
+        }
         break;
 
     // ── Master data — global lookups ────────────────────────────────────────
@@ -106,11 +115,17 @@ switch ($module) {
     case 'product':
         require __DIR__ . '/master/product/index.php';
         break;
+    case 'files':
+        require __DIR__ . '/files/index.php';
+        break;
     case 'document-center':
         require __DIR__ . '/master/document-center/index.php';
         break;
     case 'document-watermark':
         require __DIR__ . '/master/document-watermark/index.php';
+        break;
+    case 'document-signature':
+        require __DIR__ . '/master/document-signature/index.php';
         break;
     case 'company-setting-menu':
         $sub_action = $parts[4] ?? '';
@@ -176,10 +191,16 @@ switch ($module) {
     case 'reorder-point':
         require __DIR__ . '/warehouse/reorder-point/index.php';
         break;
+    case 'stock-report':
+        require __DIR__ . '/warehouse/stock-report/index.php';
+        break;
 
     // ── HR ───────────────────────────────────────────────────────────────────
     case 'salary-transaction':
         require __DIR__ . '/hr/salary-transaction/index.php';
+        break;
+    case 'employee':
+        require __DIR__ . '/hr/employee/index.php';
         break;
 
     // ── Audit ────────────────────────────────────────────────────────────────

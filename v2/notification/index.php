@@ -14,7 +14,7 @@ const NOTIFICATION_CATEGORY_MODULES = [
 
 function getAllNotifications($conn, $company_id, $username, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
 
     $where = "n.company_id = '$company_id' AND n.target_user_id = '$username' AND n.deleted_at IS NULL";
@@ -63,7 +63,7 @@ function markNotificationRead($conn, $notification_id, $username, $company_id) {
             WHERE id = '$notification_id' AND target_user_id = '$username' AND company_id = '$company_id'")) {
         jsonResponse(200, 'Notification marked as read');
     } else {
-        jsonResponse(500, 'Failed to mark notification as read', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to mark notification as read', safeDbError($conn));
     }
 }
 
@@ -74,7 +74,7 @@ function markAllNotificationsRead($conn, $username, $company_id) {
             WHERE target_user_id = '$username' AND company_id = '$company_id' AND read_at IS NULL AND deleted_at IS NULL")) {
         jsonResponse(200, 'All notifications marked as read');
     } else {
-        jsonResponse(500, 'Failed to mark notifications as read', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to mark notifications as read', safeDbError($conn));
     }
 }
 
@@ -87,7 +87,7 @@ function getNotificationUnreadCount($conn, $company_id, $username) {
 $authUser   = requireAuth();
 $method     = $_SERVER['REQUEST_METHOD'];
 $company_id = $authUser['company_id'] ?? null;
-$username   = $authUser['user_id'] ?? null;
+$username   = $authUser['sub'] ?? $authUser['user_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
@@ -99,17 +99,19 @@ $sub_action       = $parts[4] ?? '';
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $username = mysqli_real_escape_string($conn, $username);
 
     if ($notification_id === 'unread-count' && $sub_action === '') {
-        if ($method !== 'GET') { jsonResponse(405, 'Method Not Allowed'); }
+        if ($method !== 'GET') { methodNotAllowed(['GET']); }
         getNotificationUnreadCount($conn, $company_id, $username);
 
     } elseif ($notification_id === 'read-all' && $sub_action === '') {
-        if ($method !== 'PUT') { jsonResponse(405, 'Method Not Allowed'); }
+        if ($method !== 'PUT') { methodNotAllowed(['PUT']); }
         markAllNotificationsRead($conn, $username, $company_id);
 
     } elseif ($notification_id && $sub_action === 'read') {
-        if ($method !== 'PUT') { jsonResponse(405, 'Method Not Allowed'); }
+        if ($method !== 'PUT') { methodNotAllowed(['PUT']); }
         markNotificationRead($conn, $notification_id, $username, $company_id);
 
     } elseif ($notification_id) {
@@ -121,10 +123,10 @@ try {
                 getAllNotifications($conn, $company_id, $username, $_GET);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET']);
         }
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

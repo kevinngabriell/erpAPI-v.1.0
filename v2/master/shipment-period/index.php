@@ -2,12 +2,14 @@
 
 require_once __DIR__ . '/../../general.php';
 require_once __DIR__ . '/../../connection/db.php';
+require_once __DIR__ . '/../../helpers/permission.php';
 
 function getAllShipmentPeriods($conn, $params) {
     $page   = max(1, (int)($params['page']  ?? 1));
-    $limit  = min(100, max(1, (int)($params['limit'] ?? 10)));
+    $limit  = min(15, max(1, (int)($params['limit'] ?? 15)));
     $offset = ($page - 1) * $limit;
     $search = isset($params['search']) ? mysqli_real_escape_string($conn, $params['search']) : '';
+    $search = str_replace(['%', '_'], ['\%', '\_'], $search);
 
     $where = "sp.deleted_at IS NULL";
     if ($search) {
@@ -26,18 +28,20 @@ function getAllShipmentPeriods($conn, $params) {
     $total        = $count_result ? (int)mysqli_fetch_assoc($count_result)['total'] : 0;
 
     if ($result && mysqli_num_rows($result) > 0) {
-        jsonResponse(200, 'Shipment periods found', [
-            'data'       => mysqli_fetch_all($result, MYSQLI_ASSOC),
-            'pagination' => [
-                'total'       => $total,
-                'page'        => $page,
-                'limit'       => $limit,
-                'total_pages' => (int)ceil($total / $limit),
-            ],
-        ]);
+        $data = mysqli_fetch_all($result, MYSQLI_ASSOC);
     } else {
-        jsonResponse(404, 'No shipment periods found');
+        $data = [];
     }
+
+    jsonResponse(200, 'Shipment periods found', [
+        'data'       => $data,
+        'pagination' => [
+            'total'       => $total,
+            'page'        => $page,
+            'limit'       => $limit,
+            'total_pages' => (int)ceil($total / $limit),
+        ],
+    ]);
 }
 
 function createShipmentPeriod($conn, $input, $username) {
@@ -67,7 +71,7 @@ function createShipmentPeriod($conn, $input, $username) {
     if (mysqli_query($conn, $sql)) {
         jsonResponse(201, 'Shipment period created successfully', ['shipment_period_id' => $shipment_period_id]);
     } else {
-        jsonResponse(500, 'Failed to create shipment period', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to create shipment period', safeDbError($conn));
     }
 }
 
@@ -122,7 +126,7 @@ function updateShipmentPeriod($conn, $shipment_period_id, $input, $username) {
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".shipment_period SET " . implode(', ', $updates) . " WHERE id = '$shipment_period_id'")) {
         jsonResponse(200, 'Shipment period updated successfully');
     } else {
-        jsonResponse(500, 'Failed to update shipment period', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to update shipment period', safeDbError($conn));
     }
 }
 
@@ -140,16 +144,17 @@ function deleteShipmentPeriod($conn, $shipment_period_id, $username) {
     if (mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".shipment_period SET deleted_at = '$now', updated_by = '$username', updated_at = '$now' WHERE id = '$shipment_period_id'")) {
         jsonResponse(200, 'Shipment period deleted successfully');
     } else {
-        jsonResponse(500, 'Failed to delete shipment period', ['error' => mysqli_error($conn)]);
+        jsonResponse(500, 'Failed to delete shipment period', safeDbError($conn));
     }
 }
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
-$authUser   = requireAuth();
-$method     = $_SERVER['REQUEST_METHOD'];
-$company_id = $authUser['company_id'] ?? null;
-$username   = $authUser['user_id'] ?? null;
+$authUser    = requireAuth();
+$method      = $_SERVER['REQUEST_METHOD'];
+$company_id  = $authUser['company_id'] ?? null;
+$username    = $authUser['sub'] ?? $authUser['user_id'] ?? null;
+$app_role_id = $authUser['app_role_id'] ?? null;
 
 if (!$company_id) {
     jsonResponse(400, 'company_id is required');
@@ -160,6 +165,8 @@ $shipment_period_id = !empty($action) ? $action : null;
 
 try {
     $conn = getConn();
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $username = mysqli_real_escape_string($conn, $username);
 
     if ($shipment_period_id) {
         switch ($method) {
@@ -167,14 +174,20 @@ try {
                 getDetailShipmentPeriod($conn, $shipment_period_id);
                 break;
             case 'PUT':
+                if (!userHasPermission($conn, $app_role_id, 'master.shipment_period.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 $input = json_decode(file_get_contents('php://input'), true) ?? [];
                 updateShipmentPeriod($conn, $shipment_period_id, $input, $username);
                 break;
             case 'DELETE':
+                if (!userHasPermission($conn, $app_role_id, 'master.shipment_period.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 deleteShipmentPeriod($conn, $shipment_period_id, $username);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'PUT', 'DELETE']);
         }
     } else {
         switch ($method) {
@@ -182,14 +195,17 @@ try {
                 getAllShipmentPeriods($conn, $_GET);
                 break;
             case 'POST':
+                if (!userHasPermission($conn, $app_role_id, 'master.shipment_period.manage')) {
+                    jsonResponse(403, 'You do not have permission to manage this master data');
+                }
                 $input = json_decode(file_get_contents('php://input'), true) ?? [];
                 createShipmentPeriod($conn, $input, $username);
                 break;
             default:
-                jsonResponse(405, 'Method Not Allowed');
+                methodNotAllowed(['GET', 'POST']);
         }
     }
 
 } catch (Exception $e) {
-    jsonResponse(500, 'Internal Server Error', ['error' => $e->getMessage()]);
+    handleModuleException($e);
 }

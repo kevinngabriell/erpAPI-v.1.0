@@ -6,7 +6,7 @@ function buildOverviewSummary($conn, $company_id, $ytd_from, $ytd_to) {
         JOIN " . APP_SCHEMA . ".sales_invoice_item sii ON sii.sales_invoice_id = si.id AND sii.deleted_at IS NULL
         WHERE si.company_id = '$company_id' AND si.deleted_at IS NULL
           AND si.invoice_date BETWEEN '$ytd_from' AND '$ytd_to'");
-    $revenue_ytd = (float)mysqli_fetch_assoc($revenue_result)['revenue'];
+    $revenue_ytd = bcadd(mysqli_fetch_assoc($revenue_result)['revenue'], '0', 2);
 
     $margin_result = mysqli_query($conn, "SELECT
             COALESCE(SUM(spi.price * spi.quantity), 0) AS revenue,
@@ -16,9 +16,9 @@ function buildOverviewSummary($conn, $company_id, $ytd_from, $ytd_to) {
         WHERE sp.company_id = '$company_id' AND sp.deleted_at IS NULL
           AND sp.created_at BETWEEN '$ytd_from 00:00:00' AND '$ytd_to 23:59:59'");
     $margin_row            = mysqli_fetch_assoc($margin_result);
-    $profit_revenue         = (float)$margin_row['revenue'];
-    $profit_cogs            = (float)$margin_row['cogs'];
-    $gross_margin_percent   = $profit_revenue > 0 ? round(($profit_revenue - $profit_cogs) / $profit_revenue * 100, 2) : 0;
+    $profit_revenue         = bcadd($margin_row['revenue'], '0', 2);
+    $profit_cogs            = bcadd($margin_row['cogs'], '0', 2);
+    $gross_margin_percent   = bccomp($profit_revenue, '0', 2) > 0 ? round((float)bcdiv(bcsub($profit_revenue, $profit_cogs, 2), $profit_revenue, 8) * 100, 2) : 0;
 
     // Point-in-time balances — cash position and AR/AP are "as of now", not
     // scoped to the requested window, same convention as the dashboard's
@@ -27,7 +27,7 @@ function buildOverviewSummary($conn, $company_id, $ytd_from, $ytd_to) {
         FROM " . APP_SCHEMA . ".bank_account ba
         LEFT JOIN " . APP_SCHEMA . ".finance_transaction ft ON ft.bank_account_id = ba.id AND ft.deleted_at IS NULL
         WHERE ba.company_id = '$company_id' AND ba.deleted_at IS NULL");
-    $cash_position = (float)mysqli_fetch_assoc($cash_result)['total'];
+    $cash_position = bcadd(mysqli_fetch_assoc($cash_result)['total'], '0', 2);
 
     $ar_result = mysqli_query($conn, "SELECT COALESCE(SUM(outstanding), 0) AS total FROM (
             SELECT MAX(fp.due_amount) - SUM(COALESCE(fp.paid_amount, 0)) AS outstanding
@@ -36,7 +36,7 @@ function buildOverviewSummary($conn, $company_id, $ytd_from, $ytd_to) {
             GROUP BY fp.invoice_number
             HAVING outstanding > 0
         ) t");
-    $total_ar = (float)mysqli_fetch_assoc($ar_result)['total'];
+    $total_ar = bcadd(mysqli_fetch_assoc($ar_result)['total'], '0', 2);
 
     $ap_result = mysqli_query($conn, "SELECT COALESCE(SUM(outstanding), 0) AS total FROM (
             SELECT MAX(fp.due_amount) - SUM(COALESCE(fp.paid_amount, 0)) AS outstanding
@@ -45,7 +45,7 @@ function buildOverviewSummary($conn, $company_id, $ytd_from, $ytd_to) {
             GROUP BY fp.invoice_number
             HAVING outstanding > 0
         ) t");
-    $total_ap = (float)mysqli_fetch_assoc($ap_result)['total'];
+    $total_ap = bcadd(mysqli_fetch_assoc($ap_result)['total'], '0', 2);
 
     return [
         'revenue_ytd'          => $revenue_ytd,
@@ -59,7 +59,7 @@ function buildOverviewSummary($conn, $company_id, $ytd_from, $ytd_to) {
 function buildOverviewMonthly($conn, $company_id, $monthly_from, $monthly_to) {
     $months = [];
     foreach (buildAnalyticsMonthBuckets($monthly_from, $monthly_to) as $ym) {
-        $months[$ym] = ['month' => $ym, 'revenue' => 0, 'purchase_spend' => 0];
+        $months[$ym] = ['month' => $ym, 'revenue' => '0.00', 'purchase_spend' => '0.00'];
     }
 
     $revenue_result = mysqli_query($conn, "SELECT DATE_FORMAT(si.invoice_date, '%Y-%m') AS ym,
@@ -68,9 +68,9 @@ function buildOverviewMonthly($conn, $company_id, $monthly_from, $monthly_to) {
         JOIN " . APP_SCHEMA . ".sales_invoice_item sii ON sii.sales_invoice_id = si.id AND sii.deleted_at IS NULL
         WHERE si.company_id = '$company_id' AND si.deleted_at IS NULL
           AND si.invoice_date BETWEEN '$monthly_from' AND '$monthly_to'
-        GROUP BY ym");
+        GROUP BY ym LIMIT 100");
     while ($row = mysqli_fetch_assoc($revenue_result)) {
-        if (isset($months[$row['ym']])) $months[$row['ym']]['revenue'] = (float)$row['total'];
+        if (isset($months[$row['ym']])) $months[$row['ym']]['revenue'] = bcadd($row['total'], '0', 2);
     }
 
     $purchase_result = mysqli_query($conn, "SELECT DATE_FORMAT(pi.invoice_date, '%Y-%m') AS ym,
@@ -79,9 +79,9 @@ function buildOverviewMonthly($conn, $company_id, $monthly_from, $monthly_to) {
         JOIN " . APP_SCHEMA . ".purchase_invoice_item pii ON pii.purchase_invoice_id = pi.id AND pii.deleted_at IS NULL
         WHERE pi.company_id = '$company_id' AND pi.deleted_at IS NULL
           AND pi.invoice_date BETWEEN '$monthly_from' AND '$monthly_to'
-        GROUP BY ym");
+        GROUP BY ym LIMIT 100");
     while ($row = mysqli_fetch_assoc($purchase_result)) {
-        if (isset($months[$row['ym']])) $months[$row['ym']]['purchase_spend'] = (float)$row['total'];
+        if (isset($months[$row['ym']])) $months[$row['ym']]['purchase_spend'] = bcadd($row['total'], '0', 2);
     }
 
     return array_values($months);

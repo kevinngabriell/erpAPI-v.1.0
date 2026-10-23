@@ -6,7 +6,7 @@ function buildPurchaseSummary($conn, $company_id, $ytd_from, $ytd_to, $default_f
         JOIN " . APP_SCHEMA . ".purchase_invoice_item pii ON pii.purchase_invoice_id = pi.id AND pii.deleted_at IS NULL
         WHERE pi.company_id = '$company_id' AND pi.deleted_at IS NULL
           AND pi.invoice_date BETWEEN '$ytd_from' AND '$ytd_to'");
-    $total_purchase_ytd = (float)mysqli_fetch_assoc($ytd_result)['total'];
+    $total_purchase_ytd = bcadd(mysqli_fetch_assoc($ytd_result)['total'], '0', 2);
 
     // Cycle time — POs whose first receipt landed in the window, mean
     // days between po_date and that first purchase_receive.
@@ -22,8 +22,8 @@ function buildPurchaseSummary($conn, $company_id, $ytd_from, $ytd_to, $default_f
     $avg_cycle_time_days   = $avg_days !== null ? round((float)$avg_days, 1) : 0;
 
     $import_result = mysqli_query($conn, "SELECT
-            SUM(CASE WHEN LOWER(pty.type_name) LIKE '%import%' THEN pii.quantity * pii.unit_price ELSE 0 END) AS import_total,
-            SUM(pii.quantity * pii.unit_price) AS grand_total
+            COALESCE(SUM(CASE WHEN LOWER(pty.type_name) LIKE '%import%' THEN pii.quantity * pii.unit_price ELSE 0 END), 0) AS import_total,
+            COALESCE(SUM(pii.quantity * pii.unit_price), 0) AS grand_total
         FROM " . APP_SCHEMA . ".purchase_invoice pi
         JOIN " . APP_SCHEMA . ".purchase_invoice_item pii ON pii.purchase_invoice_id = pi.id AND pii.deleted_at IS NULL
         LEFT JOIN " . APP_SCHEMA . ".purchase_order po ON po.id = pi.purchase_order_id
@@ -31,9 +31,9 @@ function buildPurchaseSummary($conn, $company_id, $ytd_from, $ytd_to, $default_f
         WHERE pi.company_id = '$company_id' AND pi.deleted_at IS NULL
           AND pi.invoice_date BETWEEN '$default_from' AND '$default_to'");
     $import_row           = mysqli_fetch_assoc($import_result);
-    $import_total          = (float)$import_row['import_total'];
-    $grand_total            = (float)$import_row['grand_total'];
-    $import_share_percent  = $grand_total > 0 ? round($import_total / $grand_total * 100, 2) : 0;
+    $import_total          = bcadd($import_row['import_total'], '0', 2);
+    $grand_total            = bcadd($import_row['grand_total'], '0', 2);
+    $import_share_percent  = bccomp($grand_total, '0', 2) > 0 ? round((float)bcdiv($import_total, $grand_total, 8) * 100, 2) : 0;
 
     return [
         'total_purchase_ytd'   => $total_purchase_ytd,
@@ -45,7 +45,7 @@ function buildPurchaseSummary($conn, $company_id, $ytd_from, $ytd_to, $default_f
 function buildPurchaseMonthly($conn, $company_id, $monthly_from, $monthly_to) {
     $months = [];
     foreach (buildAnalyticsMonthBuckets($monthly_from, $monthly_to) as $ym) {
-        $months[$ym] = ['month' => $ym, 'total_import' => 0, 'total_local' => 0];
+        $months[$ym] = ['month' => $ym, 'total_import' => '0.00', 'total_local' => '0.00'];
     }
 
     $result = mysqli_query($conn, "SELECT DATE_FORMAT(pi.invoice_date, '%Y-%m') AS ym,
@@ -57,11 +57,11 @@ function buildPurchaseMonthly($conn, $company_id, $monthly_from, $monthly_to) {
         LEFT JOIN " . APP_SCHEMA . ".purchase_type pty ON pty.id = po.type_id
         WHERE pi.company_id = '$company_id' AND pi.deleted_at IS NULL
           AND pi.invoice_date BETWEEN '$monthly_from' AND '$monthly_to'
-        GROUP BY ym");
+        GROUP BY ym LIMIT 100");
     while ($row = mysqli_fetch_assoc($result)) {
         if (isset($months[$row['ym']])) {
-            $months[$row['ym']]['total_import'] = (float)$row['total_import'];
-            $months[$row['ym']]['total_local']  = (float)$row['total_local'];
+            $months[$row['ym']]['total_import'] = bcadd($row['total_import'], '0', 2);
+            $months[$row['ym']]['total_local']  = bcadd($row['total_local'], '0', 2);
         }
     }
 
@@ -77,10 +77,10 @@ function buildPurchaseSupplierOrigin($conn, $company_id, $default_from, $default
         LEFT JOIN " . APP_SCHEMA . ".origin o ON o.id = s.supplier_origin_id
         WHERE pi.company_id = '$company_id' AND pi.deleted_at IS NULL
           AND pi.invoice_date BETWEEN '$default_from' AND '$default_to'
-        GROUP BY o.id, o.origin_name ORDER BY total DESC");
+        GROUP BY o.id, o.origin_name ORDER BY total DESC LIMIT 100");
 
     $rows = mysqli_fetch_all($result, MYSQLI_ASSOC);
-    foreach ($rows as &$row) $row['total'] = (float)$row['total'];
+    foreach ($rows as &$row) $row['total'] = bcadd($row['total'], '0', 2);
 
     return $rows;
 }
@@ -95,7 +95,7 @@ function buildPurchaseTopProducts($conn, $company_id, $default_from, $default_to
         GROUP BY pii.product_name ORDER BY total_purchase DESC LIMIT 10");
 
     $rows = mysqli_fetch_all($result, MYSQLI_ASSOC);
-    foreach ($rows as &$row) $row['total_purchase'] = (float)$row['total_purchase'];
+    foreach ($rows as &$row) $row['total_purchase'] = bcadd($row['total_purchase'], '0', 2);
 
     return $rows;
 }
@@ -111,7 +111,7 @@ function buildPurchaseTopSuppliers($conn, $company_id, $default_from, $default_t
         GROUP BY s.id, s.supplier_name ORDER BY total DESC LIMIT 10");
 
     $rows = mysqli_fetch_all($result, MYSQLI_ASSOC);
-    foreach ($rows as &$row) $row['total'] = (float)$row['total'];
+    foreach ($rows as &$row) $row['total'] = bcadd($row['total'], '0', 2);
 
     return $rows;
 }
