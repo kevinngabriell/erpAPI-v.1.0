@@ -530,7 +530,7 @@ function exportSalesProfit($conn, $sales_profit_id, $company_id) {
         $sheet->setCellValue("A$row", $no);
         $sheet->setCellValue("B$row", $item['product_name']);
         $sheet->setCellValue("C$row", number_format($quantity, 0));
-        $sheet->setCellValue("D$row", number_format($price, 2));
+        $sheet->setCellValue("D$row", formatUnitPrice($price));
         $sheet->setCellValue("E$row", number_format($landed_cost, 2));
         $sheet->setCellValue("F$row", number_format($profit, 2));
         $sheet->setCellValue("G$row", round((float)$percentage, 2));

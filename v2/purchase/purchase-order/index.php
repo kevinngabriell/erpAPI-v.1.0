@@ -268,7 +268,7 @@ function createPurchaseOrder($conn, $input, $username, $company_id) {
             $packaging_size = mysqli_real_escape_string($conn, (string)$item['packaging_size']);
             $unit_price     = mysqli_real_escape_string($conn, (string)$item['unit_price']);
             $vat            = isset($item['vat']) && $item['vat'] !== '' ? mysqli_real_escape_string($conn, (string)$item['vat']) : '0';
-            $total          = isset($item['total']) && $item['total'] !== '' ? mysqli_real_escape_string($conn, (string)$item['total']) : bcadd(bcmul($quantity, $unit_price, 2), $vat, 2);
+            $total          = isset($item['total']) && $item['total'] !== '' ? mysqli_real_escape_string($conn, (string)$item['total']) : bcadd(roundMoneyHalfUp(bcmul($quantity, $unit_price, 6), 2), $vat, 2);
 
             $item_sql = "INSERT INTO " . APP_SCHEMA . ".purchase_order_item
                          (id, purchase_order_id, product_name, quantity, packaging_size, unit_price, vat, total, created_by, created_at)
@@ -614,7 +614,7 @@ function fillPurchaseOrderItemPlaceholders(TemplateProcessor $template, array $i
         $template->setValue("productname$n", $item['product_name'] ?? '');
         $template->setValue("quantity$n", $item ? number_format((float)$item['quantity'], 0) : '');
         $template->setValue("packing$n", $item ? (string)$item['packaging_size'] : '');
-        $template->setValue("unitprice$n", $item ? number_format((float)$item['unit_price'], 2) : '');
+        $template->setValue("unitprice$n", $item ? formatUnitPrice($item['unit_price']) : '');
         $template->setValue("total$n", $item ? number_format($item_total, 2) : '');
     }
 
@@ -672,7 +672,7 @@ function exportPurchaseOrderGeneric($purchase_order, $items, bool $is_import) {
         $item_table->addCell(1600, $border_style)->addText($item['product_name'] ?? '');
         $item_table->addCell(1600, $border_style)->addText(number_format((float)$item['quantity'], 0), [], ['alignment' => 'center']);
         $item_table->addCell(1600, $border_style)->addText((string)$item['packaging_size'], [], ['alignment' => 'center']);
-        $item_table->addCell(1600, $border_style)->addText(number_format((float)$item['unit_price'], 2), [], ['alignment' => 'right']);
+        $item_table->addCell(1600, $border_style)->addText(formatUnitPrice($item['unit_price']), [], ['alignment' => 'right']);
         $item_table->addCell(1600, $border_style)->addText(number_format($item_total, 2), [], ['alignment' => 'right']);
     }
 
