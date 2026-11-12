@@ -65,7 +65,7 @@ function createPurchaseOrderItem($conn, $purchase_order_id, $input, $username, $
     $packaging_size = mysqli_real_escape_string($conn, (string)$input['packaging_size']);
     $unit_price     = mysqli_real_escape_string($conn, (string)$input['unit_price']);
     $vat            = isset($input['vat']) && $input['vat'] !== '' ? mysqli_real_escape_string($conn, (string)$input['vat']) : '0';
-    $total          = isset($input['total']) && $input['total'] !== '' ? mysqli_real_escape_string($conn, (string)$input['total']) : bcadd(bcmul($quantity, $unit_price, 2), $vat, 2);
+    $total          = isset($input['total']) && $input['total'] !== '' ? mysqli_real_escape_string($conn, (string)$input['total']) : bcadd(roundMoneyHalfUp(bcmul($quantity, $unit_price, 6), 2), $vat, 2);
 
     $item_id = generateUUID();
     $now     = date('Y-m-d H:i:s');

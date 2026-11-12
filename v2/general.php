@@ -125,6 +125,25 @@ function getUserIP(): string {
     return $remote_addr;
 }
 
+/**
+ * Round a bcmath numeric string half-up to $scale decimals (bcmul/bcadd only truncate).
+ * Use for line totals computed from 3-decimal unit prices so they match MySQL's ROUND.
+ */
+function roundMoneyHalfUp(string $value, int $scale = 2): string {
+    $adjust = '0.' . str_repeat('0', $scale) . '5';
+    return bccomp($value, '0', $scale + 1) >= 0
+        ? bcadd($value, $adjust, $scale)
+        : bcsub($value, $adjust, $scale);
+}
+
+/**
+ * Format a unit price for documents/exports: at least 2, at most 3 decimals (e.g. 0.78, 0.783).
+ */
+function formatUnitPrice($value): string {
+    $formatted = number_format((float)$value, 3);
+    return substr($formatted, -1) === '0' ? substr($formatted, 0, -1) : $formatted;
+}
+
 function methodNotAllowed(array $allowed): void {
     header('Allow: ' . implode(', ', $allowed));
     jsonResponse(405, 'Method Not Allowed');

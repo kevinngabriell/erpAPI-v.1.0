@@ -510,7 +510,7 @@ function exportSalesOrder($conn, $sales_order_id, $company_id) {
     $ppn_percentage = (string)($sales_order['ppn_percentage'] ?? 0);
 
     foreach ($items as $item) {
-        $dpp = bcmul((string)$item['quantity'], (string)$item['unit_price'], 2);
+        $dpp = roundMoneyHalfUp(bcmul((string)$item['quantity'], (string)$item['unit_price'], 6), 2);
         $ppn = bcdiv(bcmul($dpp, $ppn_percentage, 2), '100', 2);
 
         $sheet->setCellValue("A$row", $no);
@@ -518,7 +518,7 @@ function exportSalesOrder($conn, $sales_order_id, $company_id) {
         $sheet->setCellValue("C$row", $item['quantity']);
         $sheet->setCellValue("D$row", $item['uom_name']);
         $sheet->setCellValue("E$row", $item['currency_name']);
-        $sheet->setCellValue("F$row", number_format((string)$item['unit_price'], 2));
+        $sheet->setCellValue("F$row", formatUnitPrice($item['unit_price']));
         $sheet->setCellValue("G$row", number_format($dpp, 2));
         $sheet->setCellValue("H$row", number_format((string)$item['kurs'], 2));
         $sheet->setCellValue("I$row", number_format($dpp, 2));
