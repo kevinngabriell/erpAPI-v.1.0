@@ -3,6 +3,7 @@ require_once __DIR__ . '/../general.php';
 require_once __DIR__ . '/../helpers/auth_response.php';
 require_once __DIR__ . '/../helpers/rate_limit.php';
 require_once __DIR__ . '/../helpers/auth_log.php';
+require_once __DIR__ . '/../helpers/subscription.php';
 
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
@@ -105,6 +106,13 @@ function loginUser($conn, $input): void {
     // 9. Company status check
     if ($row['company_status'] === 'inactive') {
         authResponse(403, 'Your company account is not active.', 'AUTH_006');
+        return;
+    }
+
+    // 9b. Free trial over and not paid: block until the owner pays (see POST /subscription/owner-checkout).
+    if (isTrialLapsed($conn, $row['company_id'])) {
+        writeAuthLog($conn, 'login_trial_expired', $row['user_id'], $email);
+        authResponse(403, 'The free trial has ended. The account owner must pay to continue.', 'AUTH_007');
         return;
     }
 

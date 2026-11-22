@@ -3,6 +3,7 @@ require_once __DIR__ . '/../general.php';
 require_once __DIR__ . '/../helpers/auth_response.php';
 require_once __DIR__ . '/../helpers/rate_limit.php';
 require_once __DIR__ . '/../helpers/whatsapp.php';
+require_once __DIR__ . '/../helpers/otp.php';
 require_once __DIR__ . '/../helpers/auth_log.php';
 
 header('X-Content-Type-Options: nosniff');
@@ -73,7 +74,7 @@ function requestRegisterOtp($conn, $input): void {
 
     // 6. Generate and store a new OTP
     $otp_id    = 'otp_' . uniqid();
-    $otp_code  = str_pad((string)random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+    $otp_code  = generateOtpCode();
     $otp_hash  = hash_hmac('sha256', $otp_code, OTP_PEPPER);
     $expire_at = date('Y-m-d H:i:s', strtotime('+10 minutes'));
 
@@ -86,13 +87,16 @@ function requestRegisterOtp($conn, $input): void {
     $stmt->close();
 
     // 7. Send the OTP via WhatsApp — delivery failure never fails the request
-    $chat_id   = buildWhatsAppChatId($phone_number);
-    $wa_result = sendWhatsAppText(
-        $chat_id,
-        "Your Aluria registration code is: {$otp_code}\n\nThis code expires in 10 minutes. If you didn't request this, you can ignore this message."
-    );
-    if (!($wa_result['success'] ?? false)) {
-        error_log('Send-otp WhatsApp send failed for ' . $email . ': ' . json_encode($wa_result));
+    // Dev default OTP (see helpers/otp.php): nothing to deliver.
+    if (devDefaultOtp() === null) {
+        $chat_id   = buildWhatsAppChatId($phone_number);
+        $wa_result = sendWhatsAppText(
+            $chat_id,
+            "Your Aluria registration code is: {$otp_code}\n\nThis code expires in 10 minutes. If you didn't request this, you can ignore this message."
+        );
+        if (!($wa_result['success'] ?? false)) {
+            error_log('Send-otp WhatsApp send failed for ' . $email . ': ' . json_encode($wa_result));
+        }
     }
 
     // 8. Audit log
