@@ -549,12 +549,12 @@ function exportSalesInvoice($conn, $sales_invoice_id, $company_id) {
         $quantity   = (string)$item['quantity'];
         $unit_price = (string)$item['unit_price'];
         $tax        = (string)$item['tax'];
-        $subtotal   = bcmul($quantity, bcmul($unit_price, bcadd('1', bcdiv($tax, '100', 4), 4), 4), 2);
+        $subtotal   = roundMoneyHalfUp(bcmul($quantity, bcmul($unit_price, bcadd('1', bcdiv($tax, '100', 4), 4), 6), 6), 2);
 
         $sheet->setCellValue("A$row", $no);
         $sheet->setCellValue("B$row", $item['product_name']);
         $sheet->setCellValue("C$row", number_format($quantity, 0));
-        $sheet->setCellValue("D$row", number_format($unit_price, 2));
+        $sheet->setCellValue("D$row", formatUnitPrice($unit_price));
         $sheet->setCellValue("E$row", $tax);
         $sheet->setCellValue("F$row", number_format($subtotal, 2));
 

@@ -180,7 +180,7 @@ function createPurchaseInvoice($conn, $input, $username, $company_id) {
             $packaging_size = mysqli_real_escape_string($conn, (string)$item['packaging_size']);
             $unit_price     = mysqli_real_escape_string($conn, (string)$item['unit_price']);
             $vat            = isset($item['vat']) && $item['vat'] !== '' ? mysqli_real_escape_string($conn, (string)$item['vat']) : '0';
-            $total          = isset($item['total']) && $item['total'] !== '' ? mysqli_real_escape_string($conn, (string)$item['total']) : bcadd(bcmul($quantity, $unit_price, 2), $vat, 2);
+            $total          = isset($item['total']) && $item['total'] !== '' ? mysqli_real_escape_string($conn, (string)$item['total']) : bcadd(roundMoneyHalfUp(bcmul($quantity, $unit_price, 6), 2), $vat, 2);
 
             $item_sql = "INSERT INTO " . APP_SCHEMA . ".purchase_invoice_item
                          (id, purchase_invoice_id, product_name, quantity, packaging_size, unit_price, vat, total, created_by, created_at)
@@ -531,7 +531,7 @@ function exportPurchaseInvoice($conn, $purchase_invoice_id, $company_id) {
         $item_table->addCell(1300, $border_style)->addText($item['product_name']);
         $item_table->addCell(1300, $border_style)->addText(number_format((float)$item['quantity'], 0), [], ['alignment' => 'center']);
         $item_table->addCell(1300, $border_style)->addText((string)$item['packaging_size'], [], ['alignment' => 'center']);
-        $item_table->addCell(1300, $border_style)->addText(number_format((float)$item['unit_price'], 2), [], ['alignment' => 'right']);
+        $item_table->addCell(1300, $border_style)->addText(formatUnitPrice($item['unit_price']), [], ['alignment' => 'right']);
         $item_table->addCell(1300, $border_style)->addText(number_format((float)$item['vat'], 2), [], ['alignment' => 'right']);
         $item_table->addCell(1300, $border_style)->addText(number_format((float)$item['total'], 2), [], ['alignment' => 'right']);
         $grand_total += (float)$item['total'];
