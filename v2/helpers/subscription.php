@@ -32,7 +32,9 @@ function activateSubscriptionFromPayment($conn, array $payment, string $now): st
     }
     $customer_id_sql = $company['customer_id'] !== null ? "'" . mysqli_real_escape_string($conn, $company['customer_id']) . "'" : 'NULL';
 
-    $existing_result = mysqli_query($conn, "SELECT subscription_id, subscription_status, current_period_end, next_billing_date
+    $trial_support = coreTrialSupportAvailable($conn);
+    $trial_select  = $trial_support ? ', is_trial' : ', 0 AS is_trial';
+    $existing_result = mysqli_query($conn, "SELECT subscription_id, subscription_status, current_period_end, next_billing_date$trial_select
         FROM " . CORE_SCHEMA . ".app_subscription
         WHERE app_company_id = '$company_id' AND app_id = '" . APP_ID . "'
           AND subscription_status IN ('active', 'paused', 'pending', 'expired')
@@ -40,7 +42,8 @@ function activateSubscriptionFromPayment($conn, array $payment, string $now): st
     $existing = $existing_result ? mysqli_fetch_assoc($existing_result) : null;
 
     $period_start = $today;
-    if ($existing && $existing['subscription_status'] === 'active') {
+    // Paying during (or after) the trial starts the paid period today; the unused trial days are not stacked.
+    if ($existing && $existing['subscription_status'] === 'active' && !(int)$existing['is_trial']) {
         $current_end = $existing['current_period_end'] ?? $existing['next_billing_date'];
         if ($current_end && $current_end > $today) {
             $period_start = $current_end;
@@ -55,7 +58,7 @@ function activateSubscriptionFromPayment($conn, array $payment, string $now): st
                 subscription_status = 'active', payment_status = 'paid',
                 current_period_start = '$period_start', current_period_end = '$period_end',
                 next_billing_date = '$period_end',
-                pricing_model_snapshot = 'fixed', price_snapshot = $amount
+                pricing_model_snapshot = 'fixed', price_snapshot = $amount" . ($trial_support ? ', is_trial = 0' : '') . "
             WHERE subscription_id = '$subscription_id'");
     } else {
         $subscription_id = generateUUID();
@@ -85,6 +88,44 @@ function activateSubscriptionFromPayment($conn, array $payment, string $now): st
 }
 
 
+// Owner sign-up with a free trial: same end state as a paid first activation (company active, owner
+// verified) but the subscription is flagged is_trial and runs $trial_days. Caller owns the transaction.
+function activateTrialSubscription($conn, string $company_id, array $package, int $trial_days, string $now): string {
+    $company_id    = mysqli_real_escape_string($conn, $company_id);
+    $service_id    = mysqli_real_escape_string($conn, $package['service_id']);
+    $billing_cycle = $package['billing_cycle'] === 'yearly' ? 'yearly' : 'monthly';
+    $amount        = (int)$package['service_price'];
+    $today         = date('Y-m-d');
+    $trial_end     = date('Y-m-d', strtotime("+{$trial_days} days"));
+    $subscription_id = generateUUID();
+
+    mysqli_query($conn, "INSERT INTO " . CORE_SCHEMA . ".app_subscription
+        (subscription_id, customer_id, app_company_id, app_id, service_id, start_date, next_billing_date,
+         billing_cycle, subscription_status, payment_status, current_period_start, current_period_end,
+         pricing_model_snapshot, price_snapshot, is_trial, created_at)
+        VALUES ('$subscription_id', NULL, '$company_id', '" . APP_ID . "', '$service_id', '$today', '$trial_end',
+                '$billing_cycle', 'active', 'unpaid', '$today', '$trial_end',
+                'fixed', $amount, 1, '$now')");
+    mysqli_query($conn, "UPDATE " . CORE_SCHEMA . ".app_company SET status = 'active', expired_at = '$trial_end 23:59:59'
+        WHERE company_id = '$company_id' AND app_id = '" . APP_ID . "'");
+    mysqli_query($conn, "UPDATE " . CORE_SCHEMA . ".app_user SET account_status = 'verified'
+        WHERE company_id = '$company_id' AND app_id = '" . APP_ID . "' AND account_status = 'waiting_payment'");
+
+    return $subscription_id;
+}
+
+// True when the company's latest subscription is an unpaid trial whose last day has passed.
+function isTrialLapsed($conn, string $company_id): bool {
+    if (!coreTrialSupportAvailable($conn)) return false;
+    $company_id = mysqli_real_escape_string($conn, $company_id);
+    $result = mysqli_query($conn, "SELECT is_trial, next_billing_date FROM " . CORE_SCHEMA . ".app_subscription
+        WHERE app_company_id = '$company_id' AND app_id = '" . APP_ID . "'
+        ORDER BY created_at DESC LIMIT 1");
+    $sub = $result ? mysqli_fetch_assoc($result) : null;
+    return $sub && (int)$sub['is_trial'] === 1 && $sub['next_billing_date'] !== null && $sub['next_billing_date'] < date('Y-m-d');
+}
+
+
 // ── Packages (Movira app_services) ───────────────────────────────────────────
 // Packages are owned by Movira. Booku-era pricing columns (list_price/tagline/features) and
 // campaigns (app_service_campaign) come from movira_api migration 2026_11_16; fall back to the
@@ -96,6 +137,21 @@ function corePricingExtensionsAvailable($conn): bool {
         $result = mysqli_query($conn, "SELECT
                 (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = '" . CORE_SCHEMA . "' AND TABLE_NAME = 'app_services' AND COLUMN_NAME = 'list_price')
               + (SELECT COUNT(*) FROM information_schema.TABLES  WHERE TABLE_SCHEMA = '" . CORE_SCHEMA . "' AND TABLE_NAME = 'app_service_campaign') AS n");
+        $row = $result ? mysqli_fetch_assoc($result) : null;
+        $available = $row && (int)$row['n'] === 2;
+    }
+    return $available;
+}
+
+// Free trial (movira_api migration 2026_11_22): app_services.trial_days is the length Movira configures
+// per package, app_subscription.is_trial marks a subscription that has not been paid yet. Without the
+// columns every package simply has no trial and sign-up stays pay-first.
+function coreTrialSupportAvailable($conn): bool {
+    static $available = null;
+    if ($available === null) {
+        $result = mysqli_query($conn, "SELECT
+                (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = '" . CORE_SCHEMA . "' AND TABLE_NAME = 'app_services' AND COLUMN_NAME = 'trial_days')
+              + (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = '" . CORE_SCHEMA . "' AND TABLE_NAME = 'app_subscription' AND COLUMN_NAME = 'is_trial') AS n");
         $row = $result ? mysqli_fetch_assoc($result) : null;
         $available = $row && (int)$row['n'] === 2;
     }
@@ -139,8 +195,10 @@ function fetchPurchasablePackages($conn, ?string $customer_id, ?string $only_ser
                AND (c.ends_at IS NULL OR c.ends_at > NOW())) AS campaign_price"
         : ", NULL AS list_price, NULL AS tagline, NULL AS features, NULL AS campaign_price";
 
+    $trial_column = coreTrialSupportAvailable($conn) ? ', s.trial_days' : ', NULL AS trial_days';
+
     $result = mysqli_query($conn, "SELECT s.service_id, s.service_name, s.service_description, s.service_price,
-            s.billing_cycle, s.customer_id $extension_columns
+            s.billing_cycle, s.customer_id $trial_column $extension_columns
         FROM " . CORE_SCHEMA . ".app_services s
         WHERE s.app_id = '" . APP_ID . "' AND s.is_active = 1 AND s.pricing_model = 'fixed'
           AND s.billing_cycle IN ('monthly', 'yearly') AND (s.customer_id IS NULL$private_sql) $only_sql
@@ -164,6 +222,7 @@ function fetchPurchasablePackages($conn, ?string $customer_id, ?string $only_ser
             'tagline'             => $row['tagline'],
             'features'            => splitPackageFeatures($row['features']),
             'is_private'          => $row['customer_id'] !== null,
+            'trial_days'          => max(0, min(90, (int)($row['trial_days'] ?? 0))),
         ];
     }
     return $packages;

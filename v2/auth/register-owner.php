@@ -204,6 +204,32 @@ function registerOwner($conn, $input): void {
 
     writeAuthLog($conn, 'register_success', $user_id, $email);
 
+    // Free trial configured by Movira for this package: open the account right away, ask to pay when it ends.
+    $trial_days = (int)($package['trial_days'] ?? 0);
+    if ($trial_days > 0) {
+        $conn->begin_transaction();
+        try {
+            activateTrialSubscription($conn, $company_id, $package, $trial_days, $now);
+            $conn->commit();
+        } catch (Exception $e) {
+            $conn->rollback();
+            error_log('register-owner trial activation failed: ' . $e->getMessage());
+            authResponse(500, 'Your account was created but the free trial could not be started. Please contact support.');
+            return;
+        }
+        authResponse(201, 'Registration successful. Your free trial has started.', null, [
+            'user_id'        => $user_id,
+            'email'          => $email,
+            'company_name'   => $business_name,
+            'company_code'   => $company_code,
+            'account_status' => 'verified',
+            'package'        => ['service_id' => $package['service_id'], 'service_name' => $package['service_name'], 'amount' => $package['service_price']],
+            'trial'          => ['days' => $trial_days, 'ends_on' => date('Y-m-d', strtotime("+{$trial_days} days"))],
+            'payment'        => null,
+        ]);
+        return;
+    }
+
     // Payment is created after the account commits: if the gateway is down the owner keeps the
     // account and retries from the login screen (POST /subscription/owner-checkout).
     $payment = null;

@@ -25,8 +25,10 @@ function ownerCheckout($conn, array $input): void {
     }
 
     $stmt = $conn->prepare(
-        "SELECT user_id, password, account_status, company_id FROM " . CORE_SCHEMA . ".app_user
-         WHERE email = ? AND app_id = '" . APP_ID . "' LIMIT 1"
+        "SELECT u.user_id, u.password, u.account_status, u.company_id, r.role_name
+         FROM " . CORE_SCHEMA . ".app_user u
+         LEFT JOIN " . CORE_SCHEMA . ".app_role r ON r.app_role_id = u.app_role_id
+         WHERE u.email = ? AND u.app_id = '" . APP_ID . "' LIMIT 1"
     );
     $stmt->bind_param('s', $email);
     $stmt->execute();
@@ -39,7 +41,12 @@ function ownerCheckout($conn, array $input): void {
         authResponse(401, 'Invalid email or password', 'AUTH_001');
         return;
     }
-    if ($user['account_status'] !== 'waiting_payment') {
+    // Two cases may pay from the login screen: a sign-up that never paid (waiting_payment), and an
+    // owner whose free trial has ended (login answers AUTH_007 until the first payment lands).
+    $trial_lapsed = $user['account_status'] === 'verified'
+        && $user['role_name'] === 'Business Owner'
+        && isTrialLapsed($conn, $user['company_id']);
+    if ($user['account_status'] !== 'waiting_payment' && !$trial_lapsed) {
         authResponse(409, 'This account does not have a payment pending.', 'PAY_001');
         return;
     }
@@ -63,6 +70,13 @@ function ownerCheckout($conn, array $input): void {
     if ($service_id === '') {
         $result = mysqli_query($conn, "SELECT service_id FROM " . APP_SCHEMA . ".subscription_payment
             WHERE company_id = '$company_id' ORDER BY created_at DESC LIMIT 1");
+        $last = $result ? mysqli_fetch_assoc($result) : null;
+        $service_id = $last['service_id'] ?? '';
+    }
+    if ($service_id === '') {
+        // Trial owners never had a payment row: use the package they signed up for.
+        $result = mysqli_query($conn, "SELECT service_id FROM " . CORE_SCHEMA . ".app_subscription
+            WHERE app_company_id = '$company_id' AND app_id = '" . APP_ID . "' ORDER BY created_at DESC LIMIT 1");
         $last = $result ? mysqli_fetch_assoc($result) : null;
         $service_id = $last['service_id'] ?? '';
     }
