@@ -5,15 +5,9 @@ require_once __DIR__ . '/../connection/db.php';
 require_once __DIR__ . '/../helpers/permission.php';
 require_once __DIR__ . '/../helpers/audit_log.php';
 require_once __DIR__ . '/../helpers/sumopod.php';
+require_once __DIR__ . '/../helpers/subscription.php';
 
 const SUBSCRIPTION_MANAGE_PERMISSION = 'subscription.manage';
-const SUBSCRIPTION_PAYMENT_EXPIRES_IN_HOURS = 24;
-
-function expireStaleSubscriptionPayments($conn, $company_id) {
-    $now = date('Y-m-d H:i:s');
-    mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".subscription_payment SET status = 'expired', updated_at = '$now'
-        WHERE company_id = '$company_id' AND status = 'pending' AND expires_at IS NOT NULL AND expires_at < '$now'");
-}
 
 function getAllPackages($conn, $company_id) {
     $company_result = mysqli_query($conn, "SELECT customer_id FROM " . CORE_SCHEMA . ".app_company
@@ -24,28 +18,7 @@ function getAllPackages($conn, $company_id) {
         return;
     }
 
-    $private_sql = '';
-    if ($company['customer_id'] !== null) {
-        $customer_id = mysqli_real_escape_string($conn, $company['customer_id']);
-        $private_sql = " OR customer_id = '$customer_id'";
-    }
-
-    $result = mysqli_query($conn, "SELECT service_id, service_name, service_description, service_price, billing_cycle, customer_id
-        FROM " . CORE_SCHEMA . ".app_services
-        WHERE app_id = '" . APP_ID . "' AND is_active = 1 AND pricing_model = 'fixed'
-          AND billing_cycle IN ('monthly', 'yearly') AND service_price > 0
-          AND (customer_id IS NULL$private_sql)
-        ORDER BY sort_order ASC, service_price ASC");
-
-    $packages = [];
-    while ($row = mysqli_fetch_assoc($result)) {
-        $row['service_price'] = (int)$row['service_price'];
-        $row['is_private']    = $row['customer_id'] !== null;
-        unset($row['customer_id']);
-        $packages[] = $row;
-    }
-
-    jsonResponse(200, 'Packages found', $packages);
+    jsonResponse(200, 'Packages found', fetchPurchasablePackages($conn, $company['customer_id']));
 }
 
 function getDetailSubscription($conn, $company_id) {
@@ -84,15 +57,10 @@ function getDetailSubscription($conn, $company_id) {
 }
 
 function createSubscriptionPayment($conn, $input, $username, $company_id) {
-    $required = ['service_id'];
-    foreach ($required as $field) {
-        if (!isset($input[$field]) || trim($input[$field]) === '') {
-            jsonResponse(400, "$field is required");
-            return;
-        }
+    if (!isset($input['service_id']) || trim($input['service_id']) === '') {
+        jsonResponse(400, 'service_id is required');
+        return;
     }
-
-    $service_id = mysqli_real_escape_string($conn, trim($input['service_id']));
 
     $company_result = mysqli_query($conn, "SELECT customer_id FROM " . CORE_SCHEMA . ".app_company
         WHERE company_id = '$company_id' AND app_id = '" . APP_ID . "' LIMIT 1");
@@ -102,104 +70,15 @@ function createSubscriptionPayment($conn, $input, $username, $company_id) {
         return;
     }
 
-    $service_result = mysqli_query($conn, "SELECT service_id, service_name, service_price, billing_cycle, pricing_model, customer_id
-        FROM " . CORE_SCHEMA . ".app_services
-        WHERE service_id = '$service_id' AND app_id = '" . APP_ID . "' AND is_active = 1 LIMIT 1");
-    $service = $service_result ? mysqli_fetch_assoc($service_result) : null;
-    if (!$service || ($service['customer_id'] !== null && $service['customer_id'] !== $company['customer_id'])) {
-        jsonResponse(404, 'Package not found');
+    // Price comes from Movira's current package (campaigns included), never from the client.
+    $packages = fetchPurchasablePackages($conn, $company['customer_id'], trim($input['service_id']));
+    if (!$packages) {
+        jsonResponse(404, 'Package not found or cannot be purchased online');
         return;
     }
 
-    $amount = (int)$service['service_price'];
-    if ($service['pricing_model'] !== 'fixed' || !in_array($service['billing_cycle'], ['monthly', 'yearly'], true) || $amount <= 0) {
-        jsonResponse(400, 'This package cannot be purchased online');
-        return;
-    }
-
-    expireStaleSubscriptionPayments($conn, $company_id);
-
-    $now                 = date('Y-m-d H:i:s');
-    $payment_id          = 'spy_' . uniqid();
-    $order_id            = 'ALU-SUB-' . strtoupper(uniqid());
-    $billing_cycle       = $service['billing_cycle'];
-    $username_escaped    = mysqli_real_escape_string($conn, (string)$username);
-
-    $conn->begin_transaction();
-    try {
-        $dup_result = mysqli_query($conn, "SELECT id AS payment_id, order_id, payment_link_url, expires_at
-            FROM " . APP_SCHEMA . ".subscription_payment
-            WHERE company_id = '$company_id' AND status = 'pending' LIMIT 1 FOR UPDATE");
-        $dup = $dup_result ? mysqli_fetch_assoc($dup_result) : null;
-        if ($dup) {
-            $conn->rollback();
-            jsonResponse(409, 'A payment is already pending for this company', $dup);
-            return;
-        }
-
-        mysqli_query($conn, "INSERT INTO " . APP_SCHEMA . ".subscription_payment
-            (id, company_id, service_id, order_id, amount, billing_cycle, status, created_by, created_at, updated_at)
-            VALUES ('$payment_id', '$company_id', '$service_id', '$order_id', $amount, '$billing_cycle', 'pending', '$username_escaped', '$now', '$now')");
-
-        $conn->commit();
-    } catch (mysqli_sql_exception $e) {
-        $conn->rollback();
-        if ($e->getCode() === 1062) {
-            jsonResponse(409, 'A payment is already pending for this company');
-            return;
-        }
-        throw $e;
-    } catch (Exception $e) {
-        $conn->rollback();
-        throw $e;
-    }
-
-    $gateway_payload = [
-        'order_id'                  => $order_id,
-        'amount'                    => $amount,
-        'currency'                  => 'IDR',
-        'expires_in_hours'          => SUBSCRIPTION_PAYMENT_EXPIRES_IN_HOURS,
-        'payment_method_type_code'  => 'QRIS',
-    ];
-    if (SUMOPOD_SUCCESS_URL !== '') $gateway_payload['success_return_url'] = SUMOPOD_SUCCESS_URL;
-    if (SUMOPOD_CANCEL_URL !== '')  $gateway_payload['cancel_return_url']  = SUMOPOD_CANCEL_URL;
-
-    $gateway = createSumoPodPayment($gateway_payload);
-    $gateway_data = $gateway['data'] ?? [];
-
-    if (!$gateway['success'] || empty($gateway_data['payment_id']) || empty($gateway_data['payment_link_url'])) {
-        mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".subscription_payment SET status = 'failed', updated_at = '$now' WHERE id = '$payment_id'");
-        jsonResponse(502, 'Payment gateway is unavailable, please try again');
-        return;
-    }
-
-    $gateway_payment_id = mysqli_real_escape_string($conn, $gateway_data['payment_id']);
-    $payment_link_url   = mysqli_real_escape_string($conn, $gateway_data['payment_link_url']);
-    $fee_sql            = isset($gateway_data['fee']) ? (int)$gateway_data['fee'] : 'NULL';
-    $net_amount_sql     = isset($gateway_data['net_amount']) ? (int)$gateway_data['net_amount'] : 'NULL';
-    $expires_at         = !empty($gateway_data['expires_at']) && strtotime($gateway_data['expires_at']) !== false
-        ? date('Y-m-d H:i:s', strtotime($gateway_data['expires_at']))
-        : date('Y-m-d H:i:s', time() + SUBSCRIPTION_PAYMENT_EXPIRES_IN_HOURS * 3600);
-
-    mysqli_query($conn, "UPDATE " . APP_SCHEMA . ".subscription_payment SET
-            gateway_payment_id = '$gateway_payment_id', payment_link_url = '$payment_link_url',
-            fee = $fee_sql, net_amount = $net_amount_sql, expires_at = '$expires_at', updated_at = '$now'
-        WHERE id = '$payment_id'");
-
-    insertAuditLog($conn, $company_id, 'subscription', $payment_id, 'checkout_created', $username, "order_id=$order_id service_id=$service_id amount=$amount");
-
-    jsonResponse(201, 'Payment created', [
-        'payment_id'       => $payment_id,
-        'order_id'         => $order_id,
-        'service_id'       => $service['service_id'],
-        'service_name'     => $service['service_name'],
-        'amount'           => $amount,
-        'fee'              => $fee_sql === 'NULL' ? null : $fee_sql,
-        'net_amount'       => $net_amount_sql === 'NULL' ? null : $net_amount_sql,
-        'status'           => 'pending',
-        'payment_link_url' => $gateway_data['payment_link_url'],
-        'expires_at'       => $expires_at,
-    ]);
+    $result = startSubscriptionPayment($conn, $company_id, $packages[0], $username);
+    jsonResponse($result['code'], $result['message'], $result['data']);
 }
 
 function getDetailSubscriptionPayment($conn, $payment_id, $company_id) {
