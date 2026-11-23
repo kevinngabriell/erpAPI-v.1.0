@@ -158,6 +158,18 @@ function coreTrialSupportAvailable($conn): bool {
     return $available;
 }
 
+// Card label (movira_api migration 2026_11_23): app_services.badge, e.g. "Paling populer".
+function coreBadgeSupportAvailable($conn): bool {
+    static $available = null;
+    if ($available === null) {
+        $result = mysqli_query($conn, "SELECT COUNT(*) AS n FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = '" . CORE_SCHEMA . "' AND TABLE_NAME = 'app_services' AND COLUMN_NAME = 'badge'");
+        $row = $result ? mysqli_fetch_assoc($result) : null;
+        $available = $row && (int)$row['n'] === 1;
+    }
+    return $available;
+}
+
 // Same rule as Booku: a running campaign only applies when cheaper than the base price; the strike
 // price is list_price when higher than the selling price, else the base price while a campaign runs.
 function effectivePackagePrice(int $base, ?int $list, ?int $campaign): array {
@@ -175,9 +187,9 @@ function splitPackageFeatures(?string $features): array {
     return array_values(array_filter(array_map('trim', preg_split('/\R/', $features))));
 }
 
-// Active fixed-price monthly/yearly packages for Aluria: public ones plus, when $customer_id is
+// Active fixed-price packages for Aluria (monthly/yearly, plus one_time when $include_one_time): public ones plus, when $customer_id is
 // given, that customer's private offers. Packages whose effective price is 0 are not sold online.
-function fetchPurchasablePackages($conn, ?string $customer_id, ?string $only_service_id = null): array {
+function fetchPurchasablePackages($conn, ?string $customer_id, ?string $only_service_id = null, bool $include_one_time = false): array {
     $has_extensions = corePricingExtensionsAvailable($conn);
 
     $private_sql = '';
@@ -196,12 +208,15 @@ function fetchPurchasablePackages($conn, ?string $customer_id, ?string $only_ser
         : ", NULL AS list_price, NULL AS tagline, NULL AS features, NULL AS campaign_price";
 
     $trial_column = coreTrialSupportAvailable($conn) ? ', s.trial_days' : ', NULL AS trial_days';
+    $badge_column = coreBadgeSupportAvailable($conn) ? ', s.badge' : ', NULL AS badge';
+    // One-time ("beli putus") plans are quoted by sales: only the public catalog lists them, never checkout.
+    $cycles_sql = $include_one_time ? "'monthly', 'yearly', 'one_time'" : "'monthly', 'yearly'";
 
     $result = mysqli_query($conn, "SELECT s.service_id, s.service_name, s.service_description, s.service_price,
-            s.billing_cycle, s.customer_id $trial_column $extension_columns
+            s.billing_cycle, s.customer_id $trial_column $badge_column $extension_columns
         FROM " . CORE_SCHEMA . ".app_services s
         WHERE s.app_id = '" . APP_ID . "' AND s.is_active = 1 AND s.pricing_model = 'fixed'
-          AND s.billing_cycle IN ('monthly', 'yearly') AND (s.customer_id IS NULL$private_sql) $only_sql
+          AND s.billing_cycle IN ($cycles_sql) AND (s.customer_id IS NULL$private_sql) $only_sql
         ORDER BY s.sort_order ASC, s.service_price ASC");
 
     $packages = [];
@@ -223,6 +238,7 @@ function fetchPurchasablePackages($conn, ?string $customer_id, ?string $only_ser
             'features'            => splitPackageFeatures($row['features']),
             'is_private'          => $row['customer_id'] !== null,
             'trial_days'          => max(0, min(90, (int)($row['trial_days'] ?? 0))),
+            'badge'               => $row['badge'] !== null && trim((string)$row['badge']) !== '' ? trim((string)$row['badge']) : null,
         ];
     }
     return $packages;

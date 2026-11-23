@@ -6,8 +6,11 @@ require_once __DIR__ . '/../helpers/auth_log.php';
 require_once __DIR__ . '/../connection/db.php';
 require_once __DIR__ . '/../helpers/subscription.php';
 
+// Default: what can be bought online (sign-up). ?catalog=1 is the landing-page price list, which also
+// shows one-time plans (billing_cycle = 'one_time') that are sold through sales.
 function listPublicPlans($conn): void {
-    jsonResponse(200, 'Packages found', fetchPurchasablePackages($conn, null));
+    $catalog = ($_GET['catalog'] ?? '') === '1';
+    jsonResponse(200, 'Packages found', fetchPurchasablePackages($conn, null, null, $catalog));
 }
 
 function ownerCheckout($conn, array $input): void {
