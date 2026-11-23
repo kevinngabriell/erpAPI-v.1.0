@@ -8,6 +8,8 @@ Related: [v39_subscription_payment_schema.md](migrations/v39_subscription_paymen
 
 ---
 
+> **Implemented** in `movira_api` as `POST /webhooks/sumopod` (`WebhookController`, `SvixSignature`). Set `SUMOPOD_WEBHOOK_SECRET` and `ALURIA_WEBHOOK_URL` in Movira's `.env`; point SumoPod's webhook at `https://<movira-api>/webhooks/sumopod`.
+
 ## 1. Why forwarding is needed
 
 - SumoPod allows **one webhook URL per project** (Settings → Webhook). That URL points at Movira.

@@ -28,6 +28,7 @@ switch ($module) {
         $actionMap = [
             'login'            => 'login.php',
             'register'         => 'register.php',
+            'register-owner'   => 'register-owner.php',
             'send-otp'         => 'send-otp.php',
             'forgot-password'  => 'forgot-password.php',
             'reset-password'   => 'reset-password.php',
@@ -50,6 +51,8 @@ switch ($module) {
     case 'subscription':
         if ($action === 'webhook') {
             require __DIR__ . '/subscription/webhook.php';
+        } elseif ($action === 'plans' || $action === 'owner-checkout') {
+            require __DIR__ . '/subscription/public.php';
         } else {
             require __DIR__ . '/subscription/index.php';
         }
