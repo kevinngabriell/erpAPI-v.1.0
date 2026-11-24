@@ -209,7 +209,7 @@ Create a new finance payment. If `supplier_id` is provided (A/P), `invoice_numbe
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | invoice_number | string | Yes | Must match an existing invoice's `invoice_display_number` in the same company (`purchase_invoice` if `supplier_id` is set, otherwise `sales_invoice`), and that invoice must currently be `Approved` |
-| paid_amount | number | Yes | — |
+| paid_amount | number | Yes | Non-negative decimal (frontend sends up to 2 dp); non-numeric → 400 |
 | customer_id | string | No | If provided, must reference an existing, non-deleted customer in the company |
 | supplier_id | string | No | If provided, must reference an existing, non-deleted supplier in the company |
 | due_amount | number | No | — |
@@ -222,7 +222,7 @@ Create a new finance payment. If `supplier_id` is provided (A/P), `invoice_numbe
 | cheque_amount | number | No | — |
 | memo | string | No | — |
 | recipient | string | No | — |
-| discount_amount | number | No | Defaults to `0` |
+| discount_amount | number | No | Defaults to `0`. Non-negative decimal (up to 2 dp) |
 
 #### Response `201 Created`
 
