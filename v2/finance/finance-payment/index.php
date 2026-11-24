@@ -235,6 +235,16 @@ function exportFinancePayments($conn, $company_id, $params) {
     streamXlsx($spreadsheet, ($type === 'penerimaan' ? 'penerimaan_' : 'pembayaran_') . sanitizeFilename("{$date_from}_{$date_to}") . '.xlsx');
 }
 
+// Money/rate fields are interpolated unquoted into SQL, so they must be plain decimals (up to 2 dp
+// for amounts). Returns the first offending field name, or null when all present fields are valid.
+function invalidFinancePaymentNumber(array $input, array $fields): ?string {
+    foreach ($fields as $field) {
+        if (!isset($input[$field]) || $input[$field] === '') continue;
+        if (!is_scalar($input[$field]) || !preg_match('/^\d+(\.\d+)?$/', trim((string)$input[$field]))) return $field;
+    }
+    return null;
+}
+
 function createFinancePayment($conn, $input, $username, $company_id) {
     $required = ['invoice_number', 'paid_amount'];
     foreach ($required as $field) {
@@ -242,6 +252,12 @@ function createFinancePayment($conn, $input, $username, $company_id) {
             jsonResponse(400, "$field is required");
             return;
         }
+    }
+
+    $bad_number = invalidFinancePaymentNumber($input, ['paid_amount', 'due_amount', 'exchange_rate', 'cheque_amount', 'discount_amount']);
+    if ($bad_number !== null) {
+        jsonResponse(400, "$bad_number must be a non-negative number");
+        return;
     }
 
     $invoice_number    = trim(mysqli_real_escape_string($conn, $input['invoice_number']));
@@ -397,6 +413,11 @@ function updateFinancePayment($conn, $finance_payment_id, $input, $username, $co
     }
 
     $numeric_fields = ['paid_amount', 'due_amount', 'exchange_rate', 'cheque_amount', 'discount_amount'];
+    $bad_number = invalidFinancePaymentNumber($input, $numeric_fields);
+    if ($bad_number !== null) {
+        jsonResponse(400, "$bad_number must be a non-negative number");
+        return;
+    }
     foreach ($numeric_fields as $field) {
         if (isset($input[$field]) && $input[$field] !== '') {
             $val = mysqli_real_escape_string($conn, (string)$input[$field]);
